@@ -192,3 +192,7 @@ export {
   WatchlistResponse,
   XRayRulesSettings
 };
+
+export * from './chat-message.interface';
+export * from './financial-profile.interface';
+export * from './rebalancing-response.interface';
