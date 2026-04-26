@@ -1,11 +1,12 @@
+import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.service';
 import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.event';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
+import ms from 'ms';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -39,7 +40,7 @@ import { SnowflakeClientFactory } from './snowflake-client.factory';
  * Hard rules enforced by this class (see AAP § 0.7):
  *
  *  - Rule 1 (Module Isolation): the service injects only services that
- *    are explicitly exported by their source modules — `ConfigService`,
+ *    are explicitly exported by their source modules — `MetricsService`,
  *    `PrismaService`, `PortfolioService`, and the sibling
  *    `SnowflakeClientFactory`. No imports reach into other feature
  *    module directories.
@@ -129,12 +130,63 @@ export class SnowflakeSyncService implements OnModuleInit {
       ')'
   ];
 
+  /**
+   * Debounce delay for `PortfolioChangedEvent`-driven Snowflake syncs.
+   *
+   * Mirrors the canonical 5-second window established by the existing
+   * `apps/api/src/events/portfolio-changed.listener.ts`. Burst events
+   * caused by bulk-import operations or rapid-fire CRUD activity coalesce
+   * into a single per-user sync invocation, avoiding `N` parallel MERGE
+   * statements per user when only a single full mirror is required (per
+   * AAP § 0.4.3 and review feedback for this checkpoint).
+   */
+  private static readonly EVENT_DEBOUNCE_DELAY_MS = ms('5 seconds');
+
+  /**
+   * Allow-list pattern for the leading SQL keyword in `queryHistory()`.
+   *
+   * The chat agent's `query_history` tool is a READ-ONLY surface — DML
+   * (`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and DDL (`CREATE`/`DROP`/`ALTER`/
+   * `TRUNCATE`) statements MUST be rejected. The semicolon detector
+   * (`containsSemicolonOutsideStringLiterals`) already prevents statement
+   * batching, but a single-statement DML/DDL query without a trailing
+   * semicolon would otherwise pass through.
+   *
+   * The regex anchors to the first non-comment, non-whitespace token of
+   * the query and admits only `SELECT` and `WITH` (case-insensitive).
+   * Comments are stripped via `stripSqlComments` before this check is
+   * applied, so a leading `/* ... *\/` or `-- ...` does not bypass it.
+   */
+  private static readonly READ_ONLY_LEADING_KEYWORD_PATTERN =
+    /^\s*(SELECT|WITH)\b/i;
+
+  /**
+   * Per-userId debounce timer registry. The map is private and keyed on
+   * the JWT-authenticated user id supplied by `PortfolioChangedEvent`.
+   * Re-arming the timer for an in-flight userId clears the prior timer
+   * via `clearTimeout` to coalesce burst events into a single MERGE.
+   */
+  private readonly eventDebounceTimers = new Map<string, NodeJS.Timeout>();
+
   public constructor(
-    private readonly configService: ConfigService,
+    private readonly metricsService: MetricsService,
     private readonly prismaService: PrismaService,
     private readonly portfolioService: PortfolioService,
     private readonly snowflakeClientFactory: SnowflakeClientFactory
-  ) {}
+  ) {
+    // Register Prometheus help descriptions once per process start. The
+    // metrics registry is a singleton, so subsequent `registerHelp` calls
+    // for the same name are no-ops; doing this in the constructor keeps
+    // the metric definitions co-located with their first emission.
+    this.metricsService.registerHelp(
+      'snowflake_sync_runs_total',
+      'Total Snowflake sync invocations partitioned by trigger and outcome'
+    );
+    this.metricsService.registerHelp(
+      'snowflake_sync_latency_seconds',
+      'Latency of a Snowflake sync invocation in seconds'
+    );
+  }
 
   /**
    * Daily Snowflake sync cron, scheduled at `02:00 UTC` exactly.
@@ -155,13 +207,11 @@ export class SnowflakeSyncService implements OnModuleInit {
    *      failures are caught locally so a single user's failure does
    *      not abort the entire daily sync.
    *
-   * The optional `ANTHROPIC_MODEL` configuration value is read here
-   * to establish a non-credential `ConfigService.get(...)` invocation
-   * in this service — the `ConfigService` import is only meaningful
-   * if it is referenced at runtime, and reading the optional model
-   * identifier is the natural place to consume it without depending
-   * on any of the credential variables (which are read by
-   * `SnowflakeClientFactory` per Rule 3).
+   * Observability (AAP § 0.7.2): the cron records:
+   *   - `snowflake_sync_runs_total{trigger="cron", outcome=...}` counter
+   *     for each per-user attempt (success/failure).
+   *   - `snowflake_sync_latency_seconds{trigger="cron"}` histogram for
+   *     the total wall-clock time of the daily run.
    */
   @Cron('0 2 * * *', {
     name: 'snowflake-daily-sync',
@@ -169,11 +219,10 @@ export class SnowflakeSyncService implements OnModuleInit {
   })
   public async runDailySync(): Promise<void> {
     const correlationId = randomUUID();
-    const anthropicModel =
-      this.configService.get<string>('ANTHROPIC_MODEL') ?? 'default';
+    const startTime = Date.now();
 
     Logger.log(
-      `[${correlationId}] Daily Snowflake sync started (model=${anthropicModel})`,
+      `[${correlationId}] Daily Snowflake sync started`,
       'SnowflakeSyncService'
     );
 
@@ -192,8 +241,16 @@ export class SnowflakeSyncService implements OnModuleInit {
           await this.syncSnapshots(user.id, today);
           await this.syncMetrics(user.id, today);
           succeeded += 1;
+          this.metricsService.incrementCounter('snowflake_sync_runs_total', 1, {
+            outcome: 'success',
+            trigger: 'cron'
+          });
         } catch (error) {
           failed += 1;
+          this.metricsService.incrementCounter('snowflake_sync_runs_total', 1, {
+            outcome: 'failure',
+            trigger: 'cron'
+          });
           Logger.error(
             `[${correlationId}] Failed to sync user ${user.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -215,6 +272,12 @@ export class SnowflakeSyncService implements OnModuleInit {
         }`,
         'SnowflakeSyncService'
       );
+    } finally {
+      this.metricsService.observeHistogram(
+        'snowflake_sync_latency_seconds',
+        (Date.now() - startTime) / 1000,
+        { trigger: 'cron' }
+      );
     }
   }
 
@@ -228,43 +291,45 @@ export class SnowflakeSyncService implements OnModuleInit {
    * operation; this listener mirrors the affected user's order history
    * to Snowflake within the same request lifecycle.
    *
-   * Idempotency (Rule 7) means there is no need to debounce: every call
-   * to `syncOrders(userId)` is upsert-only, so concurrent invocations
-   * (e.g., from the existing `PortfolioChangedListener` debounce window
-   * coexisting with this listener) are safe and self-correcting.
+   * Per-user 5-second debounce (AAP § 0.4.3): bursts of events from the
+   * same user (e.g., bulk-import, rapid-fire CRUD) are coalesced into a
+   * single `syncOrders(userId)` invocation. The debounce mirrors the
+   * existing `PortfolioChangedListener` pattern: each new event clears
+   * the prior timer for that userId and schedules a fresh one. The
+   * MERGE-based idempotency (Rule 7) ensures correctness regardless of
+   * coalescing — debouncing simply avoids redundant Snowflake round
+   * trips.
    *
-   * Errors are caught and logged but NOT re-thrown — this is an event
-   * handler, not a request handler. Re-throwing would bubble into the
-   * `EventEmitter2` "uncaughtException" path and is not the right
-   * failure boundary for a background sync.
+   * Errors emitted by the deferred sync are caught and logged but NOT
+   * re-thrown — this is an event handler, not a request handler.
+   * Re-throwing would bubble into the `EventEmitter2` "uncaughtException"
+   * path and is not the right failure boundary for a background sync.
+   *
+   * Observability (AAP § 0.7.2): records:
+   *   - `snowflake_sync_runs_total{trigger="event", outcome=...}` counter
+   *     for each deferred per-user invocation.
+   *   - `snowflake_sync_latency_seconds{trigger="event"}` histogram of
+   *     the deferred sync duration (excludes the 5-second debounce
+   *     window).
    */
   @OnEvent(PortfolioChangedEvent.getName())
-  public async handlePortfolioChanged(
-    event: PortfolioChangedEvent
-  ): Promise<void> {
+  public handlePortfolioChanged(event: PortfolioChangedEvent): void {
     const userId = event.getUserId();
-    const correlationId = randomUUID();
 
-    Logger.log(
-      `[${correlationId}] PortfolioChangedEvent received for user ${userId}`,
-      'SnowflakeSyncService'
-    );
+    const existingTimer = this.eventDebounceTimers.get(userId);
 
-    try {
-      const rowsMerged = await this.syncOrders(userId);
-      Logger.log(
-        `[${correlationId}] Order sync triggered by event for user ${userId} ` +
-          `(rowsMerged=${rowsMerged})`,
-        'SnowflakeSyncService'
-      );
-    } catch (error) {
-      Logger.error(
-        `[${correlationId}] Event-driven sync failed for user ${userId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        'SnowflakeSyncService'
-      );
+    if (existingTimer) {
+      clearTimeout(existingTimer);
     }
+
+    this.eventDebounceTimers.set(
+      userId,
+      setTimeout(() => {
+        this.eventDebounceTimers.delete(userId);
+
+        void this.processDebouncedEventSync(userId);
+      }, SnowflakeSyncService.EVENT_DEBOUNCE_DELAY_MS)
+    );
   }
 
   /**
@@ -355,6 +420,7 @@ export class SnowflakeSyncService implements OnModuleInit {
     const correlationId = randomUUID();
     const targetUserId = overrideUserId ?? callerUserId;
     const targetDate = overrideDate ?? this.getIsoDate(new Date());
+    const startTime = Date.now();
 
     Logger.log(
       `[${correlationId}] Manual sync triggered by ${callerUserId} for ` +
@@ -366,6 +432,11 @@ export class SnowflakeSyncService implements OnModuleInit {
       await this.syncOrders(targetUserId);
       await this.syncSnapshots(targetUserId, targetDate);
       await this.syncMetrics(targetUserId, targetDate);
+
+      this.metricsService.incrementCounter('snowflake_sync_runs_total', 1, {
+        outcome: 'success',
+        trigger: 'manual'
+      });
 
       Logger.log(
         `[${correlationId}] Manual sync completed for user=${targetUserId}`,
@@ -379,6 +450,10 @@ export class SnowflakeSyncService implements OnModuleInit {
         userId: targetUserId
       };
     } catch (error) {
+      this.metricsService.incrementCounter('snowflake_sync_runs_total', 1, {
+        outcome: 'failure',
+        trigger: 'manual'
+      });
       Logger.error(
         `[${correlationId}] Manual sync failed: ${
           error instanceof Error ? error.message : String(error)
@@ -387,6 +462,12 @@ export class SnowflakeSyncService implements OnModuleInit {
       );
 
       throw error;
+    } finally {
+      this.metricsService.observeHistogram(
+        'snowflake_sync_latency_seconds',
+        (Date.now() - startTime) / 1000,
+        { trigger: 'manual' }
+      );
     }
   }
 
@@ -666,18 +747,25 @@ export class SnowflakeSyncService implements OnModuleInit {
    * The chat agent supplies an LLM-generated `sql` string and a typed
    * `binds` array. This method:
    *   1. Validates that `sql` is a non-empty string.
-   *   2. Rejects any `sql` containing a `;` outside string literals via
+   *   2. Strips comments and verifies the leading non-whitespace token
+   *      is `SELECT` or `WITH` (case-insensitive). DML (`INSERT`,
+   *      `UPDATE`, `DELETE`, `MERGE`) and DDL (`CREATE`, `DROP`,
+   *      `ALTER`, `TRUNCATE`) statements are rejected — `query_history`
+   *      is a READ-ONLY tool surface (defense-in-depth on top of the
+   *      Snowflake account-level permissions configured for the
+   *      `SNOWFLAKE_USER` principal).
+   *   3. Rejects any `sql` containing a `;` outside string literals via
    *      a hand-rolled state machine that tracks single- and double-
    *      quote nesting (defense-in-depth against the LLM batching
    *      multiple statements into a single tool invocation per AAP
    *      § 0.5.1.5).
-   *   3. Wraps the LLM-supplied `sql` in an outer `SELECT * FROM (<sql>)
+   *   4. Wraps the LLM-supplied `sql` in an outer `SELECT * FROM (<sql>)
    *      LIMIT N` to cap the row count at `QUERY_HISTORY_ROW_LIMIT`.
    *      The numeric limit is interpolated from a constant static class
    *      field — this is the only template-literal interpolation in
    *      this file and is permitted by Rule 2 because the value is
    *      not caller-controlled.
-   *   4. Forwards the `binds` array unchanged to `executeQuery(...)`.
+   *   5. Forwards the `binds` array unchanged to `executeQuery(...)`.
    *      The `snowflake-sdk` driver handles bind escaping at the
    *      transport layer, so no string-level escaping is performed
    *      here.
@@ -690,8 +778,8 @@ export class SnowflakeSyncService implements OnModuleInit {
    *
    * @returns Up to `QUERY_HISTORY_ROW_LIMIT` rows from the underlying
    *          Snowflake query.
-   * @throws {Error} when `sql` is empty or contains a top-level
-   *                 semicolon.
+   * @throws {Error} when `sql` is empty, is not a SELECT/WITH query, or
+   *                 contains a top-level semicolon.
    */
   public async queryHistory(
     userId: string,
@@ -700,6 +788,21 @@ export class SnowflakeSyncService implements OnModuleInit {
   ): Promise<unknown[]> {
     if (typeof sql !== 'string' || sql.length === 0) {
       throw new Error('queryHistory: sql must be a non-empty string');
+    }
+
+    // Strip comments BEFORE the leading-keyword check so that a comment
+    // prefix (e.g., `-- explain\nSELECT ...` or `/* note */ SELECT ...`)
+    // does not mask the leading SELECT/WITH token.
+    const sqlWithoutComments = this.stripSqlComments(sql);
+
+    if (
+      !SnowflakeSyncService.READ_ONLY_LEADING_KEYWORD_PATTERN.test(
+        sqlWithoutComments
+      )
+    ) {
+      throw new Error(
+        'queryHistory: only SELECT or WITH queries are permitted'
+      );
     }
 
     if (this.containsSemicolonOutsideStringLiterals(sql)) {
@@ -725,6 +828,53 @@ export class SnowflakeSyncService implements OnModuleInit {
     const limitedSql = `SELECT * FROM (${sql}) LIMIT ${SnowflakeSyncService.QUERY_HISTORY_ROW_LIMIT}`;
 
     return this.executeQuery(limitedSql, safeBinds);
+  }
+
+  /**
+   * Deferred body of the `PortfolioChangedEvent` handler that fires
+   * after the 5-second debounce window. Generates its own correlation
+   * id (since the original event handler returns immediately and the
+   * sync runs asynchronously) and emits the matching latency/outcome
+   * metrics.
+   */
+  private async processDebouncedEventSync(userId: string): Promise<void> {
+    const correlationId = randomUUID();
+    const startTime = Date.now();
+
+    Logger.log(
+      `[${correlationId}] Debounced PortfolioChangedEvent firing for user ${userId}`,
+      'SnowflakeSyncService'
+    );
+
+    try {
+      const rowsMerged = await this.syncOrders(userId);
+      this.metricsService.incrementCounter('snowflake_sync_runs_total', 1, {
+        outcome: 'success',
+        trigger: 'event'
+      });
+      Logger.log(
+        `[${correlationId}] Order sync triggered by event for user ${userId} ` +
+          `(rowsMerged=${rowsMerged})`,
+        'SnowflakeSyncService'
+      );
+    } catch (error) {
+      this.metricsService.incrementCounter('snowflake_sync_runs_total', 1, {
+        outcome: 'failure',
+        trigger: 'event'
+      });
+      Logger.error(
+        `[${correlationId}] Event-driven sync failed for user ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'SnowflakeSyncService'
+      );
+    } finally {
+      this.metricsService.observeHistogram(
+        'snowflake_sync_latency_seconds',
+        (Date.now() - startTime) / 1000,
+        { trigger: 'event' }
+      );
+    }
   }
 
   /**

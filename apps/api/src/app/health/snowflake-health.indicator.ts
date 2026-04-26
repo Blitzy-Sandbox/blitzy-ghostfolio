@@ -53,6 +53,16 @@ import { Injectable, Logger } from '@nestjs/common';
  *   execution failure, malformed SDK response) is funneled through the
  *   single catch block to `false`.
  *
+ * - Bounded execution time (defense-in-depth): The probe is wrapped in
+ *   a `Promise.race` against a 5,000 ms timeout guard so that a hung
+ *   `getConnection()` or `connection.execute(...)` call cannot stall
+ *   the upstream `/health/snowflake` route indefinitely. The Snowflake
+ *   SDK and `SnowflakeClientFactory` already include their own retry
+ *   and connect-timeout semantics; the explicit guard here is a
+ *   belt-and-suspenders bound that funnels any hang into the same
+ *   fail-closed `false` return path. The timeout handle is cleared
+ *   in a `finally` block to avoid timer leaks on the success path.
+ *
  * Module registration: This class is delivered as a stand-alone
  * injectable provider. Wiring it into `HealthModule.providers` and
  * exposing a `/api/v1/health/snowflake` route from `HealthController`
@@ -66,6 +76,19 @@ import { Injectable, Logger } from '@nestjs/common';
  */
 @Injectable()
 export class SnowflakeHealthIndicator {
+  /**
+   * Maximum duration (milliseconds) the readiness probe is allowed to
+   * run before being forcibly failed. Both `getConnection()` and
+   * `connection.execute(...)` are subject to this bound via
+   * `Promise.race` so that a hang in either layer cannot stall the
+   * upstream `/health/snowflake` route. The value is intentionally
+   * larger than the typical Snowflake `SELECT 1` round-trip latency
+   * (sub-second on a warm warehouse) but small enough to keep the
+   * health endpoint responsive for orchestrators (Kubernetes, ECS)
+   * whose readiness probes commonly use 5- to 10-second timeouts.
+   */
+  private static readonly PROBE_TIMEOUT_MS = 5000;
+
   private readonly logger = new Logger(SnowflakeHealthIndicator.name);
 
   public constructor(
@@ -117,34 +140,68 @@ export class SnowflakeHealthIndicator {
    *     `/health/snowflake` endpoint) do not establish a new
    *     connection per request.
    *
+   * Bounded execution time (defense-in-depth): The work is wrapped in
+   * a `Promise.race` against a `SnowflakeHealthIndicator.PROBE_TIMEOUT_MS`
+   * guard. If the factory call or the SDK execute callback hangs, the
+   * guard fires after 5,000 ms, the rejection is funneled through the
+   * single catch block, the warning is logged, and `false` is returned
+   * — the upstream route maps this to HTTP 503. The timeout handle is
+   * cleared in a `finally` block on every exit path to avoid leaking
+   * a `setTimeout` handle on the success path (which would otherwise
+   * keep the Node.js event loop alive for an extra 5 seconds per
+   * probe and cause Jest "worker process did not exit gracefully"
+   * warnings under test runners).
+   *
    * @returns `true` when a Snowflake connection is acquired and
-   *          `SELECT 1` returns successfully; `false` on any failure
-   *          path (with a redacted warning logged).
+   *          `SELECT 1` returns successfully within
+   *          `PROBE_TIMEOUT_MS`; `false` on any failure path (with a
+   *          redacted warning logged), including the explicit timeout.
    */
   public async isHealthy(): Promise<boolean> {
-    try {
-      const connection = await this.snowflakeClientFactory.getConnection();
+    let timeoutHandle: NodeJS.Timeout | undefined;
 
-      await new Promise<void>((resolve, reject) => {
-        connection.execute({
-          binds: [],
-          complete: (err) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve();
-            }
-          },
-          sqlText: 'SELECT 1'
+    try {
+      const probeWork = async (): Promise<void> => {
+        const connection = await this.snowflakeClientFactory.getConnection();
+
+        await new Promise<void>((resolve, reject) => {
+          connection.execute({
+            binds: [],
+            complete: (err) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve();
+              }
+            },
+            sqlText: 'SELECT 1'
+          });
         });
+      };
+
+      const timeoutGuard = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Snowflake health probe timed out after ${SnowflakeHealthIndicator.PROBE_TIMEOUT_MS}ms`
+              )
+            ),
+          SnowflakeHealthIndicator.PROBE_TIMEOUT_MS
+        );
       });
+
+      await Promise.race([probeWork(), timeoutGuard]);
 
       return true;
     } catch (error: unknown) {
       // Redaction (AAP § 0.7.3): emit only the SDK's own `error.message`
       // (or a safe fallback for non-Error throwables). No credential
       // value is in scope at this layer; even so, the message string is
-      // the only field surfaced to the log line.
+      // the only field surfaced to the log line. The explicit timeout
+      // path also lands here — its `Error.message` is the static
+      // `Snowflake health probe timed out after Nms` string with no
+      // sensitive data.
       let errorMessage: string;
 
       if (error instanceof Error) {
@@ -158,6 +215,13 @@ export class SnowflakeHealthIndicator {
       this.logger.warn(`Snowflake health probe failed: ${errorMessage}`);
 
       return false;
+    } finally {
+      // Clear the timeout regardless of which path completed first to
+      // avoid a leaking timer handle (success path) or a duplicate
+      // settle attempt on an already-rejected guard (failure path).
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 }

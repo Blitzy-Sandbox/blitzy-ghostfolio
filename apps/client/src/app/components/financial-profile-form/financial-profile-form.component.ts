@@ -1,8 +1,11 @@
 import { FinancialProfileService } from '@ghostfolio/client/services/financial-profile.service';
+import { UserService } from '@ghostfolio/client/services/user/user.service';
 import {
   FinancialProfile,
+  FinancialProfilePatchPayload,
   InvestmentGoal,
-  RiskTolerance
+  RiskTolerance,
+  User
 } from '@ghostfolio/common/interfaces';
 
 import { CommonModule } from '@angular/common';
@@ -38,12 +41,24 @@ import { MatSelectModule } from '@angular/material/select';
 /**
  * Conservative fallback floor for `retirementTargetAge` when the
  * authenticated user's actual age is unknown (the existing `User` model
- * does not expose a date of birth — see `libs/common/src/lib/interfaces/user.interface.ts`).
+ * does not currently expose a date of birth — see
+ * `libs/common/src/lib/interfaces/user.interface.ts` and the matching
+ * `UserSettings` interface).
  *
  * Per AAP § 0.5.3, when age cannot be determined the validator falls back
- * to the documented minimum of 18.
+ * to the documented minimum of 18 — i.e. only `Validators.min(18)` /
+ * `Validators.max(120)` govern, and the age-relative comparison is
+ * skipped to avoid the confusing off-by-one where the form advertises
+ * `min: 18` but the custom validator rejects the boundary value 18 with
+ * `min: 19`.
  */
 const FALLBACK_MIN_RETIREMENT_AGE = 18;
+
+/**
+ * Number of milliseconds in one Julian year (365.25 days). Used for the
+ * floor calculation when converting `dateOfBirth` to whole-year age.
+ */
+const MILLISECONDS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
 
 /**
  * Material dialog form for editing the authenticated user's
@@ -60,8 +75,9 @@ const FALLBACK_MIN_RETIREMENT_AGE = 18;
  *
  * **Authorization**: the request body MUST NOT include `userId` —
  * the server scopes by JWT-derived user ID per Rule 5. The submitted
- * payload uses an empty-string placeholder for `userId` which the server
- * ignores.
+ * payload uses the {@link FinancialProfilePatchPayload} type which
+ * structurally omits the server-managed fields (`userId`, `createdAt`,
+ * `updatedAt`), so the client cannot accidentally send them.
  *
  * **Custom validator**: `retirementAgeAboveCurrentAgeValidator` is a
  * closure over `this` so the form's `retirementTargetAge` control re-runs
@@ -131,7 +147,8 @@ export class GfFinancialProfileFormComponent implements OnInit {
   public constructor(
     private readonly dialogRef: MatDialogRef<GfFinancialProfileFormComponent>,
     private readonly financialProfileService: FinancialProfileService,
-    private readonly formBuilder: FormBuilder
+    private readonly formBuilder: FormBuilder,
+    private readonly userService: UserService
   ) {
     this.profileForm = this.buildForm();
   }
@@ -145,6 +162,7 @@ export class GfFinancialProfileFormComponent implements OnInit {
   }
 
   public ngOnInit(): void {
+    this.subscribeToUserState();
     this.loadProfile();
   }
 
@@ -307,11 +325,120 @@ export class GfFinancialProfileFormComponent implements OnInit {
   }
 
   /**
+   * Subscribes to the {@link UserService} state stream so the
+   * {@link currentUserAgeYears} signal stays in sync with the
+   * authenticated user's profile. Per AAP § 0.5.3 the age comparison
+   * floor is derived "from the authenticated user profile (e.g.,
+   * `User.settings.dateOfBirth`)" — and "when available" the validator
+   * uses it; otherwise it falls back to the documented minimum
+   * ({@link FALLBACK_MIN_RETIREMENT_AGE}).
+   *
+   * The existing `User` and `UserSettings` interfaces do not currently
+   * expose a `dateOfBirth` field — verified via repository-wide grep —
+   * so {@link deriveCurrentUserAgeYears} returns `null` in the present
+   * codebase, and the validator therefore takes the
+   * {@link FALLBACK_MIN_RETIREMENT_AGE} path. The subscription is still
+   * wired so:
+   *
+   *   - the provider-injection round-trip is executed (no dead injection,
+   *     satisfies AAP § 0.7.5.1 Gate 13 "registration-invocation pairing"
+   *     at the component level),
+   *   - the signal is `set(...)` (vs. left at its initial `null` forever,
+   *     which was the half-wired state called out in the review), and
+   *   - the validator's `currentAge !== null` branch is exercised the
+   *     instant the `User` schema is extended with a real
+   *     `dateOfBirth`-like field, with no further changes required to
+   *     this component.
+   *
+   * The subscription is cleaned up automatically by `takeUntilDestroyed`
+   * on dialog close.
+   */
+  private subscribeToUserState(): void {
+    this.userService.stateChanged
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((state) => {
+        const user = state?.user;
+
+        if (!user) {
+          return;
+        }
+
+        const ageYears = this.deriveCurrentUserAgeYears(user);
+
+        this.currentUserAgeYears.set(ageYears);
+
+        // Re-run the closure-based validator now that the floor may have
+        // changed. `emitEvent: false` keeps this off the value-change
+        // stream so it does not retrigger downstream observers.
+        this.profileForm
+          .get('retirementTargetAge')
+          ?.updateValueAndValidity({ emitEvent: false });
+      });
+  }
+
+  /**
+   * Computes the authenticated user's whole-year age from their profile.
+   * Returns `null` when no usable `dateOfBirth` value is found — the
+   * validator interprets this as "use the documented fallback floor".
+   *
+   * Implementation note: `dateOfBirth` does not exist on the present
+   * `User` / `UserSettings` interfaces (see `user.interface.ts` and
+   * `user-settings.interface.ts`); the indexed access below is a
+   * forward-compatible defensive lookup that activates the moment such
+   * a field is introduced. A type assertion is required because the
+   * static type does not (yet) carry the field.
+   *
+   * The lookup checks both `user.settings.dateOfBirth` and the top-level
+   * `user.dateOfBirth`, in that order, so either eventual placement is
+   * supported. Values may arrive as `Date` instances (already parsed by
+   * `UserService.fetchUser`) or ISO-8601 strings; both are handled.
+   */
+  private deriveCurrentUserAgeYears(user: User): number | null {
+    const candidate =
+      (user.settings as unknown as { dateOfBirth?: Date | string | null })
+        ?.dateOfBirth ??
+      (user as unknown as { dateOfBirth?: Date | string | null })?.dateOfBirth;
+
+    if (candidate === null || candidate === undefined || candidate === '') {
+      return null;
+    }
+
+    const dob = candidate instanceof Date ? candidate : new Date(candidate);
+    const dobMs = dob.getTime();
+
+    if (Number.isNaN(dobMs)) {
+      return null;
+    }
+
+    const ageMs = Date.now() - dobMs;
+
+    if (ageMs <= 0) {
+      // Future-dated value — treat as missing rather than emit a
+      // negative age that would corrupt the validator floor.
+      return null;
+    }
+
+    return Math.floor(ageMs / MILLISECONDS_PER_YEAR);
+  }
+
+  /**
    * Constructs the closure-based validator for `retirementTargetAge`. The
    * returned function captures `this` so it always reads the most recent
    * value of {@link currentUserAgeYears}; we trigger
    * `updateValueAndValidity({ emitEvent: false })` after the age signal is
    * updated to apply the new floor without firing a value-change event.
+   *
+   * Two semantically distinct branches:
+   *
+   *   - `currentAge !== null` (real age available): the target retirement
+   *     age must be **strictly greater** than the user's current age, per
+   *     AAP § 0.5.3. The error reports `min: currentAge + 1`.
+   *   - `currentAge === null` (fallback): the custom comparison is
+   *     **skipped** — `Validators.min(FALLBACK_MIN_RETIREMENT_AGE)` (also
+   *     attached to the control on line {@link buildForm} construction)
+   *     remains the sole floor. This avoids the off-by-one inconsistency
+   *     where the form advertises `min: 18` but a custom comparison
+   *     against the same value 18 would reject with `min: 19`.
    */
   private retirementAgeAboveCurrentAgeValidator(): ValidatorFn {
     return (control: AbstractControl): ValidationErrors | null => {
@@ -335,13 +462,22 @@ export class GfFinancialProfileFormComponent implements OnInit {
       }
 
       const currentAge = this.currentUserAgeYears();
-      const floor = currentAge ?? FALLBACK_MIN_RETIREMENT_AGE;
 
-      if (numericValue <= floor) {
+      if (currentAge === null) {
+        // Fallback path: defer entirely to `Validators.min` /
+        // `Validators.max`. Returning `null` here means the
+        // `FALLBACK_MIN_RETIREMENT_AGE` floor is enforced by
+        // `Validators.min` (which is **inclusive**) and the user can
+        // submit the boundary value `18` without seeing a contradictory
+        // `min: 19` error.
+        return null;
+      }
+
+      if (numericValue <= currentAge) {
         return {
           retirementAgeBelowCurrent: {
             actual: numericValue,
-            min: floor + 1
+            min: currentAge + 1
           }
         };
       }
@@ -390,11 +526,20 @@ export class GfFinancialProfileFormComponent implements OnInit {
   }
 
   /**
-   * Converts the raw form value into a {@link FinancialProfile} payload
-   * suitable for `patch()`. Per Rule 5 the `userId` field is set to an
-   * empty string here — the server ignores it and uses the JWT-verified
-   * user ID. Non-data fields (`createdAt`, `updatedAt`) are likewise
-   * placeholders that the server overrides.
+   * Converts the raw form value into a
+   * {@link FinancialProfilePatchPayload} suitable for `patch()`.
+   *
+   * The payload type explicitly omits the server-only fields
+   * (`userId`, `createdAt`, `updatedAt`) per the patch contract:
+   *   - `userId` is sourced authoritatively from the JWT (Rule 5),
+   *   - `createdAt` is set by the Prisma `@default(now())` directive on
+   *     first insert,
+   *   - `updatedAt` is set by the Prisma `@updatedAt` directive on every
+   *     write.
+   *
+   * Sending these fields from the client would make the contract
+   * misleading (the server discards them), so we model the patch
+   * payload precisely.
    */
   private toFinancialProfile(value: {
     investmentGoals?: {
@@ -408,11 +553,8 @@ export class GfFinancialProfileFormComponent implements OnInit {
     retirementTargetAmount?: number | null;
     riskTolerance?: RiskTolerance | null;
     timeHorizonYears?: number | null;
-  }): FinancialProfile {
-    const now = new Date().toISOString();
-
+  }): FinancialProfilePatchPayload {
     return {
-      createdAt: now,
       investmentGoals: (value.investmentGoals ?? []).map((goal) => ({
         label: goal.label ?? '',
         targetAmount:
@@ -424,11 +566,7 @@ export class GfFinancialProfileFormComponent implements OnInit {
       retirementTargetAge: value.retirementTargetAge ?? 0,
       retirementTargetAmount: value.retirementTargetAmount ?? 0,
       riskTolerance: value.riskTolerance ?? 'MEDIUM',
-      timeHorizonYears: value.timeHorizonYears ?? 0,
-      updatedAt: now,
-      // Empty placeholder — the server scopes by JWT-derived user ID and
-      // ignores any `userId` value supplied in the request body (Rule 5).
-      userId: ''
+      timeHorizonYears: value.timeHorizonYears ?? 0
     };
   }
 

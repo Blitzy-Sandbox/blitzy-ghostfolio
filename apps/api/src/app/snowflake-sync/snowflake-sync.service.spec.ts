@@ -1,3 +1,4 @@
+import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.service';
 import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.event';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
@@ -30,7 +31,10 @@ import { SnowflakeSyncService } from './snowflake-sync.service';
  *     accompany every `?` placeholder with a `binds` array entry.
  *   - Rule 3 (Credential Access via ConfigService) — Test 6 asserts the
  *     service-source file does NOT reference `process.env.SNOWFLAKE_*`
- *     and that `ConfigService.get(...)` is the runtime config channel.
+ *     or `process.env.ANTHROPIC_API_KEY`. Per the Checkpoint C remediation,
+ *     `SnowflakeSyncService` no longer reads any configuration directly —
+ *     all SNOWFLAKE_* env vars are read inside `SnowflakeClientFactory`,
+ *     which is the only consumer of `ConfigService` in this feature module.
  *   - Rule 7 (Snowflake Sync Idempotency) — Test 4 asserts running
  *     `syncOrders(...)` twice never produces an `INSERT INTO orders_history`
  *     statement outside of a MERGE block.
@@ -50,19 +54,20 @@ import { SnowflakeSyncService } from './snowflake-sync.service';
 /**
  * Mocks the global `ConfigService` from `@nestjs/config` at module-load
  * time. The mock returns a stub instance whose `get(key)` resolves the six
- * `SNOWFLAKE_*` env vars and the optional `ANTHROPIC_MODEL` from a static
- * lookup table.
+ * `SNOWFLAKE_*` env vars from a static lookup table.
  *
- * Test 6 (Rule 3) introspects the spy's `mock.calls` to assert that any
- * configuration access went through `configService.get(...)` rather than
- * direct `process.env.*` reads.
+ * `ConfigService` is consumed by the sibling `SnowflakeClientFactory` (which
+ * reads the SNOWFLAKE_* values when constructing the snowflake-sdk
+ * connection); `SnowflakeSyncService` itself no longer takes a
+ * `ConfigService` dependency post-Checkpoint-C remediation. This mock
+ * therefore exists exclusively to satisfy the factory's typed constructor
+ * signature when the factory is instantiated in `beforeEach`.
  */
 jest.mock('@nestjs/config', () => {
   return {
     ConfigService: jest.fn().mockImplementation(() => ({
       get: jest.fn((key: string) => {
         const values: Record<string, string> = {
-          ANTHROPIC_MODEL: 'claude-sonnet-test',
           SNOWFLAKE_ACCOUNT: 'test-account',
           SNOWFLAKE_DATABASE: 'TEST_DB',
           SNOWFLAKE_PASSWORD: 'test-password',
@@ -72,6 +77,34 @@ jest.mock('@nestjs/config', () => {
         };
         return values[key];
       })
+    }))
+  };
+});
+
+/**
+ * Mocks `MetricsService` so `SnowflakeSyncService.constructor`,
+ * `runDailySync`, `processDebouncedEventSync`, and `triggerManualSync` can
+ * record their counter and histogram observations without touching the
+ * real in-process registry.
+ *
+ * The mock implementation returns a fresh stub instance per
+ * `new MetricsService()` call. Each stub exposes the three public methods
+ * that the production service consumes (`registerHelp`, `incrementCounter`,
+ * `observeHistogram`) as `jest.fn()` spies; tests can introspect
+ * `mock.calls` to verify counter/histogram emission, although the
+ * Checkpoint C review feedback only requires WIRING (constructor injection),
+ * not assertion-level behavioral coverage of metric labels.
+ *
+ * The stub deliberately omits the internal Map-based registry of the real
+ * service — counters and histograms accumulate as jest call records, not
+ * as Prometheus exposition state.
+ */
+jest.mock('@ghostfolio/api/app/metrics/metrics.service', () => {
+  return {
+    MetricsService: jest.fn().mockImplementation(() => ({
+      incrementCounter: jest.fn(),
+      observeHistogram: jest.fn(),
+      registerHelp: jest.fn()
     }))
   };
 });
@@ -223,6 +256,7 @@ describe('SnowflakeSyncService', () => {
 
   let configService: ConfigService;
   let factory: SnowflakeClientFactory;
+  let metricsService: MetricsService;
   let portfolioService: PortfolioService;
   let prismaService: PrismaService;
   let service: SnowflakeSyncService;
@@ -233,7 +267,17 @@ describe('SnowflakeSyncService', () => {
     // constructs a fresh closure with its own `executedQueries` array.
     jest.clearAllMocks();
 
+    // `ConfigService` is no longer a dependency of `SnowflakeSyncService`
+    // (post-Checkpoint-C remediation). The instance is retained here
+    // exclusively to satisfy the typed constructor signature of the
+    // sibling `SnowflakeClientFactory`, which still reads the
+    // SNOWFLAKE_* env vars via the injected `ConfigService.get(...)`.
     configService = new ConfigService();
+
+    // Fresh `MetricsService` stub per test (see `jest.mock(...)` block
+    // at module scope above). The stub exposes `registerHelp`,
+    // `incrementCounter`, and `observeHistogram` as `jest.fn()` spies.
+    metricsService = new MetricsService();
 
     // PrismaService's real constructor takes a single ConfigService
     // argument — passing `null` bypasses the real Prisma adapter
@@ -263,8 +307,12 @@ describe('SnowflakeSyncService', () => {
 
     factory = new SnowflakeClientFactory(configService);
 
+    // Constructor signature post-Checkpoint-C remediation:
+    // `(metricsService, prismaService, portfolioService, snowflakeClientFactory)`.
+    // The previous `configService` first-argument was removed because the
+    // service body no longer reads any configuration directly.
     service = new SnowflakeSyncService(
-      configService,
+      metricsService,
       prismaService,
       portfolioService,
       factory
@@ -314,21 +362,50 @@ describe('SnowflakeSyncService', () => {
   // -------------------------------------------------------------------------
 
   it('invokes syncOrders when handlePortfolioChanged receives a PortfolioChangedEvent (AAP § 0.4.3 event-driven sync flow)', async () => {
-    // Spy on the public `syncOrders` method to verify the event
-    // handler delegates to it with the user ID extracted from the
-    // event payload. Returning a sentinel value `7` proves the
-    // handler awaits the result and feeds it into the structured
-    // log line (visible in coverage but not asserted here).
-    const syncOrdersSpy = jest
-      .spyOn(service, 'syncOrders')
-      .mockResolvedValue(7);
+    // Per Checkpoint C remediation, `handlePortfolioChanged` is a
+    // synchronous void method that schedules the actual `syncOrders`
+    // call via a 5-second debounce timer (mirroring the existing
+    // `PortfolioChangedListener` pattern). The test therefore uses
+    // Jest fake timers to advance past the debounce window and
+    // verifies the deferred dispatch.
+    jest.useFakeTimers();
 
-    const event = new PortfolioChangedEvent({ userId: TEST_USER_ID });
+    try {
+      // Spy on the public `syncOrders` method to verify the event
+      // handler delegates to it with the user ID extracted from the
+      // event payload. Returning a sentinel value `7` proves the
+      // deferred dispatch reaches the production code path.
+      const syncOrdersSpy = jest
+        .spyOn(service, 'syncOrders')
+        .mockResolvedValue(7);
 
-    await service.handlePortfolioChanged(event);
+      const event = new PortfolioChangedEvent({ userId: TEST_USER_ID });
 
-    expect(syncOrdersSpy).toHaveBeenCalledTimes(1);
-    expect(syncOrdersSpy).toHaveBeenCalledWith(TEST_USER_ID);
+      service.handlePortfolioChanged(event);
+
+      // Before the 5-second debounce window elapses, syncOrders is
+      // not yet invoked.
+      expect(syncOrdersSpy).not.toHaveBeenCalled();
+
+      // Advance past the debounce window (5 seconds). The deferred
+      // callback fires synchronously inside `advanceTimersByTime`.
+      jest.advanceTimersByTime(5000);
+
+      // The deferred body of `handlePortfolioChanged` is async — its
+      // body runs `await this.syncOrders(...)`. The `syncOrders` call
+      // itself happens before the first `await`, so it is observable
+      // immediately after timer advancement; the awaited resolution
+      // chains onto the microtask queue.
+      expect(syncOrdersSpy).toHaveBeenCalledTimes(1);
+      expect(syncOrdersSpy).toHaveBeenCalledWith(TEST_USER_ID);
+
+      // Flush the microtask queue so the deferred async path
+      // (logger calls, metric emission) completes before the test
+      // ends; this prevents unhandled-promise warnings on Jest exit.
+      await Promise.resolve();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('decorates handlePortfolioChanged with @OnEvent("portfolio.changed") (AAP § 0.4.3 wiring)', () => {
@@ -362,19 +439,44 @@ describe('SnowflakeSyncService', () => {
   });
 
   it('handlePortfolioChanged swallows downstream syncOrders failures (event listener boundary)', async () => {
-    // Per the service's documented contract, the event handler logs and
-    // re-throws nothing — re-throwing would surface inside the
-    // EventEmitter2 "uncaughtException" path, which is the wrong
-    // failure boundary for a background sync.
-    jest
-      .spyOn(service, 'syncOrders')
-      .mockRejectedValueOnce(new Error('snowflake unavailable'));
+    // Per the service's documented contract, the deferred body of the
+    // event handler logs and re-throws nothing — re-throwing would
+    // surface inside the EventEmitter2 "uncaughtException" path, which
+    // is the wrong failure boundary for a background sync.
+    //
+    // Post-Checkpoint-C remediation, the handler returns synchronous
+    // `void` and schedules the actual sync inside a 5-second
+    // debounce timer. The test therefore advances fake timers past
+    // the debounce window and asserts that the deferred async body
+    // completes without throwing.
+    jest.useFakeTimers();
 
-    const event = new PortfolioChangedEvent({ userId: TEST_USER_ID });
+    try {
+      jest
+        .spyOn(service, 'syncOrders')
+        .mockRejectedValueOnce(new Error('snowflake unavailable'));
 
-    await expect(
-      service.handlePortfolioChanged(event)
-    ).resolves.toBeUndefined();
+      const event = new PortfolioChangedEvent({ userId: TEST_USER_ID });
+
+      // Synchronous-void return; calling does not throw and does not
+      // need to be awaited.
+      expect(service.handlePortfolioChanged(event)).toBeUndefined();
+
+      // Fire the debounced callback. The deferred async body
+      // `processDebouncedEventSync(...)` will catch the rejection
+      // from `syncOrders(...)`, log it, and increment the failure
+      // counter — but MUST NOT propagate the error.
+      jest.advanceTimersByTime(5000);
+
+      // Flush microtasks so the deferred async body finishes
+      // (the `try/catch/finally` inside `processDebouncedEventSync`).
+      // If the failure path re-threw, this `await` would surface an
+      // unhandled rejection and fail the test.
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -625,23 +727,17 @@ describe('SnowflakeSyncService', () => {
 
   // -------------------------------------------------------------------------
   // Test 6 — NO process.env.SNOWFLAKE_* access (Rule 3)
+  //
+  // The historical "behavioral" Test 6 verified that `runDailySync()`
+  // exercised `configService.get(...)` at least once. Post-Checkpoint-C
+  // remediation, `SnowflakeSyncService` no longer injects `ConfigService`
+  // — the only consumer of SNOWFLAKE_* values is the sibling
+  // `SnowflakeClientFactory` (which has its own spec coverage). The
+  // behavioral assertion is therefore no longer applicable to this
+  // class. Rule 3 remains fully verified by the static-source checks
+  // below, which match the AAP § 0.7.5.2 Security sweep gate ("Grep for
+  // `process.env.SNOWFLAKE` in new modules returns zero results").
   // -------------------------------------------------------------------------
-
-  it('routes all configuration access through the injected ConfigService (AAP § 0.7.1.3 Rule 3 — behavioral)', async () => {
-    // Trigger any code path that reads a configuration value. The
-    // daily-sync entry point reads the optional `ANTHROPIC_MODEL`
-    // setting via `configService.get(...)` — the only direct
-    // ConfigService access in the service body.
-    await service.runDailySync();
-
-    // Behavioral assertion: the injected ConfigService.get spy was
-    // invoked at least once during the runDailySync code path, proving
-    // the service uses the DI-resolved channel rather than reaching
-    // for `process.env` directly.
-    expect((configService.get as jest.Mock).mock.calls.length).toBeGreaterThan(
-      0
-    );
-  });
 
   it('contains no `process.env.SNOWFLAKE_*` reference in the service source file (AAP § 0.7.1.3 Rule 3 — static)', () => {
     // Static source-level verification: the service file MUST NOT

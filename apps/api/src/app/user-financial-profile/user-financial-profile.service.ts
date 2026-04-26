@@ -24,6 +24,15 @@ import { FinancialProfileDto } from './dtos/financial-profile.dto';
  * downstream service) is responsible for sourcing `userId` from
  * `request.user.id` — this service does NOT read any HTTP request context,
  * keeping it transport-agnostic.
+ *
+ * OBSERVABILITY (AAP § 0.7.2): Every public method accepts an optional
+ * `correlationId` (UUID-shaped) generated at the controller boundary and
+ * propagated through to the structured `Logger` calls so a single request
+ * can be traced end-to-end through the structured-log channel. When the
+ * caller omits `correlationId` (e.g., a unit test or an internal cross-
+ * module invocation that does not yet propagate one), log lines are
+ * emitted without the `[<correlationId>]` prefix — preserving backward
+ * compatibility with the prior signature.
  */
 @Injectable()
 export class UserFinancialProfileService {
@@ -41,11 +50,33 @@ export class UserFinancialProfileService {
    *
    * Rule 5 compliance: the `where: { userId }` clause is required and
    * sourced from the caller — never from the request body.
+   *
+   * @param userId        Authenticated user id (from JWT, NEVER from request body).
+   * @param correlationId Optional request-scoped correlation id propagated
+   *                      from the controller boundary for end-to-end log
+   *                      tracing per AAP § 0.7.2 (Observability rule).
    */
-  public async findByUserId(userId: string): Promise<FinancialProfile | null> {
-    return this.prismaService.financialProfile.findUnique({
-      where: { userId }
-    });
+  public async findByUserId(
+    userId: string,
+    correlationId?: string
+  ): Promise<FinancialProfile | null> {
+    try {
+      return await this.prismaService.financialProfile.findUnique({
+        where: { userId }
+      });
+    } catch (error) {
+      Logger.error(
+        this.formatLogMessage(
+          `Failed to read FinancialProfile for user ${userId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          correlationId
+        ),
+        'UserFinancialProfileService'
+      );
+
+      throw error;
+    }
   }
 
   /**
@@ -63,13 +94,17 @@ export class UserFinancialProfileService {
    * `update`) is scoped to the `userId` parameter, which the caller MUST
    * source from the JWT-verified user — never from the request body.
    *
-   * @param userId Authenticated user id (from JWT, NEVER from request body).
-   * @param dto    Validated `FinancialProfileDto` payload.
-   * @returns      The persisted `FinancialProfile` row.
+   * @param userId        Authenticated user id (from JWT, NEVER from request body).
+   * @param dto           Validated `FinancialProfileDto` payload.
+   * @param correlationId Optional request-scoped correlation id propagated
+   *                      from the controller boundary for end-to-end log
+   *                      tracing per AAP § 0.7.2 (Observability rule).
+   * @returns             The persisted `FinancialProfile` row.
    */
   public async upsertForUser(
     userId: string,
-    dto: FinancialProfileDto
+    dto: FinancialProfileDto,
+    correlationId?: string
   ): Promise<FinancialProfile> {
     try {
       const profileData = this.mapDtoToPrismaInput(dto);
@@ -83,7 +118,15 @@ export class UserFinancialProfileService {
         where: { userId }
       });
     } catch (error) {
-      Logger.error(error, 'UserFinancialProfileService');
+      Logger.error(
+        this.formatLogMessage(
+          `Failed to upsert FinancialProfile for user ${userId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          correlationId
+        ),
+        'UserFinancialProfileService'
+      );
 
       throw error;
     }
@@ -121,5 +164,20 @@ export class UserFinancialProfileService {
       riskTolerance: dto.riskTolerance,
       timeHorizonYears: dto.timeHorizonYears
     };
+  }
+
+  /**
+   * Prefixes a structured log message with `[<correlationId>] ` when a
+   * non-empty correlation id was propagated from the caller, otherwise
+   * returns the message unchanged. This keeps the log format consistent
+   * with the cross-cutting Observability convention established by the
+   * sibling Feature A/B/C services (e.g., `SnowflakeSyncService`,
+   * `AiChatService`, `RebalancingService`).
+   */
+  private formatLogMessage(
+    message: string,
+    correlationId: string | undefined
+  ): string {
+    return correlationId ? `[${correlationId}] ${message}` : message;
   }
 }

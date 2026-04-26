@@ -13,7 +13,7 @@ import type { AssetClassSelectorOption } from './asset-class-selector-option.int
 import type { AssetProfileIdentifier } from './asset-profile-identifier.interface';
 import type { BenchmarkProperty } from './benchmark-property.interface';
 import type { Benchmark } from './benchmark.interface';
-import type { ChatMessage } from './chat-message.interface';
+import type { ChatMessage, ChatMessageRole } from './chat-message.interface';
 import type { Coupon } from './coupon.interface';
 import type { DataProviderInfo } from './data-provider-info.interface';
 import type { EnhancedSymbolProfile } from './enhanced-symbol-profile.interface';
@@ -21,6 +21,7 @@ import type { FilterGroup } from './filter-group.interface';
 import type { Filter } from './filter.interface';
 import type {
   FinancialProfile,
+  FinancialProfilePatchPayload,
   InvestmentGoal,
   RiskTolerance
 } from './financial-profile.interface';
@@ -138,6 +139,7 @@ export {
   BenchmarkProperty,
   BenchmarkResponse,
   ChatMessage,
+  ChatMessageRole,
   Coupon,
   CreateStripeCheckoutSessionResponse,
   DataEnhancerHealthResponse,
@@ -153,6 +155,7 @@ export {
   Filter,
   FilterGroup,
   FinancialProfile,
+  FinancialProfilePatchPayload,
   FireCalculationCompleteEvent,
   FireWealth,
   HistoricalDataItem,

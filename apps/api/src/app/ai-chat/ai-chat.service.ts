@@ -1,8 +1,10 @@
+import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.service';
 import { SnowflakeSyncService } from '@ghostfolio/api/app/snowflake-sync/snowflake-sync.service';
 import { SymbolService } from '@ghostfolio/api/app/symbol/symbol.service';
 import { UserFinancialProfileService } from '@ghostfolio/api/app/user-financial-profile/user-financial-profile.service';
 import type { ChatMessage } from '@ghostfolio/common/interfaces';
+import type { DateRange } from '@ghostfolio/common/types';
 
 import Anthropic from '@anthropic-ai/sdk';
 import { Injectable, Logger, MessageEvent } from '@nestjs/common';
@@ -61,6 +63,23 @@ import { Observable } from 'rxjs';
  *   per-request `userId`. The Anthropic API key NEVER appears in any log line.
  *   The static-Logger convention (`Logger.log(message, 'AiChatService')`)
  *   matches the project-wide pattern (e.g., `snowflake-sync.service.ts`).
+ *   The injected `MetricsService` emits three metrics on every request:
+ *   `ai_chat_streams_total{outcome}` (counter; `outcome` ∈
+ *   `{success, error, cancelled}`), `ai_chat_first_token_latency_seconds`
+ *   (histogram, no labels), and `ai_chat_tool_invocations_total{tool}`
+ *   (counter; `tool` ∈ {`get_current_positions`, `get_performance_metrics`,
+ *   `query_history`, `get_market_data`}). All label values are bounded to a
+ *   small fixed set per the MetricsService cardinality guard.
+ *
+ * - **PII minimization (AAP § 0.7.3):** The personalized system prompt does
+ *   NOT embed the JWT-authenticated user's literal id; it inserts the
+ *   placeholder constant {@link AiChatService.AUTHENTICATED_USER_PLACEHOLDER}
+ *   ("`<authenticated-user>`") instead. The model is instructed to pass that
+ *   placeholder string through verbatim in every tool input — and
+ *   `dispatchTool(...)` substitutes the real JWT-authenticated user id at
+ *   dispatch time, so the model can NEVER act on a different user's data
+ *   even if it tried. This keeps the real Ghostfolio user id from being
+ *   transmitted to Anthropic on every chat request.
  */
 @Injectable()
 export class AiChatService {
@@ -107,6 +126,46 @@ export class AiChatService {
   private static readonly DEFAULT_MODEL = 'claude-3-5-sonnet-20241022';
 
   /**
+   * Placeholder string substituted into the personalized system prompt in
+   * place of the JWT-authenticated user's literal id. The model is told to
+   * pass this string through verbatim in every tool input; `dispatchTool(...)`
+   * then substitutes the JWT-authenticated id at dispatch time, so the model
+   * never needs to (and never sees) the real user id. This keeps Anthropic
+   * receiving zero Ghostfolio user identifiers on every chat request and
+   * preserves Rule 5's JWT-authoritative authorization guarantee — the
+   * downstream service calls are unaffected because dispatch-time substitution
+   * is independent of whatever userId Claude decides to emit.
+   */
+  private static readonly AUTHENTICATED_USER_PLACEHOLDER =
+    '<authenticated-user>';
+
+  /**
+   * Counter metric name for chat-stream terminal outcomes. Labelled with
+   * `outcome` ∈ {`success`, `error`, `cancelled`}. Cardinality is bounded
+   * to 3 distinct label sets — well below the MetricsService cardinality
+   * guard threshold.
+   */
+  private static readonly METRIC_STREAMS_TOTAL = 'ai_chat_streams_total';
+
+  /**
+   * Histogram metric name for the latency between request start and the
+   * first model-emitted text delta on the SSE stream. No labels — first-
+   * token latency is a single user-experience signal regardless of outcome.
+   * Recorded only when the request reached the first text event, so error
+   * paths that fail before any token arrives do NOT corrupt this signal.
+   */
+  private static readonly METRIC_FIRST_TOKEN_LATENCY_SECONDS =
+    'ai_chat_first_token_latency_seconds';
+
+  /**
+   * Counter metric name for individual chat-tool invocations. Labelled with
+   * `tool` ∈ the four AAP § 0.5.1.5 tool names. Cardinality is bounded to 4
+   * distinct label sets.
+   */
+  private static readonly METRIC_TOOL_INVOCATIONS_TOTAL =
+    'ai_chat_tool_invocations_total';
+
+  /**
    * Lazily-constructed Anthropic SDK client. The `apiKey` is read once at
    * service construction time via `ConfigService.get<string>('ANTHROPIC_API_KEY')`
    * — never via the `process` global (Rule 3 / AAP § 0.7.1.3).
@@ -122,6 +181,7 @@ export class AiChatService {
 
   public constructor(
     private readonly configService: ConfigService,
+    private readonly metricsService: MetricsService,
     private readonly portfolioService: PortfolioService,
     private readonly snowflakeSyncService: SnowflakeSyncService,
     private readonly symbolService: SymbolService,
@@ -138,6 +198,24 @@ export class AiChatService {
     this.model =
       this.configService.get<string>('ANTHROPIC_MODEL') ??
       AiChatService.DEFAULT_MODEL;
+
+    // Register help text for the three Observability metrics (AAP § 0.7.2).
+    // `registerHelp` is idempotent — calling it on every service construction
+    // is safe and ensures the `# HELP` lines are present in the
+    // `/api/v1/metrics` Prometheus exposition output regardless of which
+    // service was instantiated first.
+    this.metricsService.registerHelp(
+      AiChatService.METRIC_STREAMS_TOTAL,
+      'Total chat streams completed by terminal outcome (success, error, cancelled).'
+    );
+    this.metricsService.registerHelp(
+      AiChatService.METRIC_FIRST_TOKEN_LATENCY_SECONDS,
+      'Latency in seconds between request start and the first text token emitted by Claude.'
+    );
+    this.metricsService.registerHelp(
+      AiChatService.METRIC_TOOL_INVOCATIONS_TOTAL,
+      'Total chat-tool invocations dispatched, labelled by tool name.'
+    );
   }
 
   /**
@@ -187,6 +265,14 @@ export class AiChatService {
       let cancelled = false;
 
       const run = async () => {
+        // Capture the request start time once, before any I/O. The first-
+        // token latency histogram is observed when the FIRST `text` event
+        // fires below; if the request fails before any token arrives, no
+        // observation is recorded — keeping the latency signal clean of
+        // failure-path noise.
+        const startTime = Date.now();
+        let firstTokenObserved = false;
+
         try {
           Logger.log(
             `[${correlationId}] chat stream start userId=${userId} ` +
@@ -233,6 +319,20 @@ export class AiChatService {
               if (cancelled) {
                 return;
               }
+
+              // Record the first-token latency once per request. The flag
+              // closure-scoped to `run()` ensures we observe the histogram
+              // exactly once even across multiple turns of the multi-turn
+              // tool loop (only the FIRST text token across the whole
+              // conversation counts as "first token").
+              if (!firstTokenObserved) {
+                firstTokenObserved = true;
+                this.metricsService.observeHistogram(
+                  AiChatService.METRIC_FIRST_TOKEN_LATENCY_SECONDS,
+                  (Date.now() - startTime) / 1000
+                );
+              }
+
               subscriber.next({
                 data: { type: 'text', value: textDelta }
               } as MessageEvent);
@@ -280,6 +380,17 @@ export class AiChatService {
               if (cancelled) {
                 break;
               }
+
+              // Record the tool invocation BEFORE the dispatch — counting
+              // attempts is more useful than counting only successes
+              // because tool errors are surfaced back to the model as
+              // is_error tool results (line ~340 below) rather than
+              // aborting the stream.
+              this.metricsService.incrementCounter(
+                AiChatService.METRIC_TOOL_INVOCATIONS_TOTAL,
+                1,
+                { tool: toolUse.name }
+              );
 
               try {
                 const toolResult = await this.dispatchTool({
@@ -343,8 +454,30 @@ export class AiChatService {
               data: { correlationId, type: 'done' }
             } as MessageEvent);
             subscriber.complete();
+            // Success terminal outcome (AAP § 0.7.2). Emitted exactly once
+            // per request — the `cancelled` short-circuit below ensures the
+            // cancellation path emits `cancelled` instead.
+            this.metricsService.incrementCounter(
+              AiChatService.METRIC_STREAMS_TOTAL,
+              1,
+              { outcome: 'success' }
+            );
             Logger.log(
               `[${correlationId}] chat stream end userId=${userId}`,
+              'AiChatService'
+            );
+          } else {
+            // Cancellation terminal outcome (AAP § 0.7.2). Reached when the
+            // SSE subscriber unsubscribed mid-stream (browser closed the
+            // EventSource, controller request aborted) and the loop bailed
+            // out cleanly without an exception.
+            this.metricsService.incrementCounter(
+              AiChatService.METRIC_STREAMS_TOTAL,
+              1,
+              { outcome: 'cancelled' }
+            );
+            Logger.log(
+              `[${correlationId}] chat stream cancelled userId=${userId}`,
               'AiChatService'
             );
           }
@@ -354,6 +487,16 @@ export class AiChatService {
           Logger.error(
             `[${correlationId}] chat stream error userId=${userId}: ${errorMessage}`,
             'AiChatService'
+          );
+
+          // Error terminal outcome (AAP § 0.7.2). Recorded regardless of
+          // whether the subscriber is still attached so failures are always
+          // counted; the SSE error frame is only emitted while the
+          // subscriber is still subscribed.
+          this.metricsService.incrementCounter(
+            AiChatService.METRIC_STREAMS_TOTAL,
+            1,
+            { outcome: 'error' }
           );
 
           if (!cancelled) {
@@ -554,13 +697,30 @@ export class AiChatService {
       ? this.summarizeProfile(profile)
       : '(no financial profile on file)';
 
+    // PII MINIMIZATION (AAP § 0.7.3): the literal `authenticatedUserId`
+    // (the JWT-authenticated UUID for this request) is used above to
+    // fetch the user's portfolio and financial profile (server-side
+    // calls — the id never leaves the Ghostfolio API), but is
+    // intentionally NOT embedded into the system prompt text that is
+    // transmitted to Anthropic. The placeholder constant
+    // `AUTHENTICATED_USER_PLACEHOLDER` is sent instead. The model is told
+    // to pass that placeholder string through verbatim in every tool
+    // input, and `dispatchTool(...)` substitutes the real JWT-
+    // authenticated user id at dispatch time. This means the model can
+    // echo `<authenticated-user>` in its tool-call inputs and the server
+    // still routes the call to the correct user — Rule 5's JWT-
+    // authoritative authorization remains intact, but Anthropic never
+    // receives a Ghostfolio user identifier.
+
     return [
       `You are a helpful AI portfolio assistant integrated with Ghostfolio.`,
       `The authenticated user has the following placeholder identifier in ` +
-        `tool calls: "${authenticatedUserId}".`,
-      `Tool inputs that include a "userId" field will be overridden ` +
-        `server-side with this value; you should pass through the same ` +
-        `string verbatim.`,
+        `tool calls: "${AiChatService.AUTHENTICATED_USER_PLACEHOLDER}".`,
+      `Tool inputs that include a "userId" field MUST be set to that exact ` +
+        `placeholder string ("${AiChatService.AUTHENTICATED_USER_PLACEHOLDER}"); ` +
+        `the server overrides the field at dispatch time with the ` +
+        `JWT-authenticated user id, so the placeholder will always resolve ` +
+        `to the correct user. Do not attempt to substitute a real user id.`,
       ``,
       `# Current Portfolio`,
       portfolioSummary,
@@ -773,28 +933,31 @@ export class AiChatService {
       }
 
       case 'get_performance_metrics': {
-        // PortfolioService.getPerformance accepts a `dateRange` enum rather
-        // than free-form startDate/endDate; the LLM-supplied date strings
-        // are logged for telemetry but the safe `'max'` range is passed to
-        // the service so the response always covers the user's full
-        // investment history. The service itself is responsible for date
-        // arithmetic against the user's first-order date.
+        // PortfolioService.getPerformance accepts a `DateRange` enum rather
+        // than free-form startDate/endDate. The LLM-supplied date strings
+        // are translated to the closest matching `DateRange` value via
+        // `mapDatesToDateRange(...)` so the model's date-range request is
+        // honored as faithfully as the existing service supports. Falls
+        // back to `'max'` for malformed dates, missing inputs, or NaN
+        // durations.
         const startDate =
           typeof args.startDate === 'string' ? args.startDate : undefined;
         const endDate =
           typeof args.endDate === 'string' ? args.endDate : undefined;
 
+        const dateRange = this.mapDatesToDateRange(startDate, endDate);
+
         if (startDate || endDate) {
           Logger.log(
-            `get_performance_metrics requested startDate=${
+            `get_performance_metrics startDate=${
               startDate ?? '(unset)'
-            } endDate=${endDate ?? '(unset)'} (using dateRange=max)`,
+            } endDate=${endDate ?? '(unset)'} → dateRange=${dateRange}`,
             'AiChatService'
           );
         }
 
         const result = await this.portfolioService.getPerformance({
-          dateRange: 'max',
+          dateRange,
           impersonationId: null,
           userId: authenticatedUserId
         });
@@ -864,5 +1027,78 @@ export class AiChatService {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+  }
+
+  /**
+   * Maps an LLM-supplied (startDate, endDate) pair to the closest
+   * `DateRange` enum value supported by `PortfolioService.getPerformance`.
+   *
+   * AAP § 0.5.1.5 specifies the `get_performance_metrics` tool input schema
+   * accepts free-form `startDate` and `endDate` ISO 8601 strings, but the
+   * existing `PortfolioService.getPerformance(...)` API accepts only the
+   * enum values defined in `libs/common/src/lib/types/date-range.type.ts`.
+   * This helper bridges the two contracts so the model's date-range request
+   * is honored as faithfully as the existing service supports. The mapping
+   * is deliberately conservative — when in doubt it widens to `'max'`
+   * because returning MORE history than asked for is benign (the model can
+   * always filter), whereas returning LESS would be a silent contract
+   * violation.
+   *
+   * Mapping (based on the duration `endDate - startDate`):
+   *
+   * | duration              | DateRange |
+   * |-----------------------|-----------|
+   * | <= 1 day              | `'1d'`    |
+   * | <= 7 days             | `'wtd'`   |
+   * | <= 31 days            | `'mtd'`   |
+   * | <= 365 days           | `'1y'`    |
+   * | <= 1825 days (~5 yrs) | `'5y'`    |
+   * | else / unparseable    | `'max'`   |
+   *
+   * @param startDate Caller-supplied ISO 8601 start date string.
+   * @param endDate   Caller-supplied ISO 8601 end date string.
+   * @returns         A valid `DateRange` value safe to pass to
+   *                  `PortfolioService.getPerformance(...)`.
+   */
+  private mapDatesToDateRange(
+    startDate: string | undefined,
+    endDate: string | undefined
+  ): DateRange {
+    if (!startDate || !endDate) {
+      return 'max';
+    }
+
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+
+    if (
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      Number.isNaN(start) ||
+      Number.isNaN(end) ||
+      end < start
+    ) {
+      return 'max';
+    }
+
+    const dayMillis = 24 * 60 * 60 * 1000;
+    const days = (end - start) / dayMillis;
+
+    if (days <= 1) {
+      return '1d';
+    }
+    if (days <= 7) {
+      return 'wtd';
+    }
+    if (days <= 31) {
+      return 'mtd';
+    }
+    if (days <= 365) {
+      return '1y';
+    }
+    if (days <= 1825) {
+      return '5y';
+    }
+    return 'max';
   }
 }

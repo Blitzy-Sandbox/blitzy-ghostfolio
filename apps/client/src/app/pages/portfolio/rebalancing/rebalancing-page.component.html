@@ -60,9 +60,22 @@
                 <span class="action">{{ recommendation.action }}</span>
                 <span class="ticker">{{ recommendation.ticker }}</span>
                 <span class="allocation">
-                  <span class="from-pct">{{ recommendation.fromPct }}%</span>
+                  <!--
+                    The backend tool schema (see RebalancingService.buildRebalancingTool)
+                    documents fromPct/toPct as DECIMAL FRACTIONS (0.0–1.0). For
+                    example, 0.10 means 10%. We use Angular's `percent` pipe which
+                    automatically multiplies by 100 and appends the `%` sign, so
+                    0.10 renders as "10%" (not "0.1%"). The format `'1.0-2'`
+                    keeps a minimum of 1 integer digit and up to 2 fraction
+                    digits, matching the precision of the LLM-emitted values.
+                  -->
+                  <span class="from-pct">{{
+                    recommendation.fromPct | percent: '1.0-2'
+                  }}</span>
                   <span aria-hidden="true" class="arrow">→</span>
-                  <span class="to-pct">{{ recommendation.toPct }}%</span>
+                  <span class="to-pct">{{
+                    recommendation.toPct | percent: '1.0-2'
+                  }}</span>
                 </span>
                 <span class="goal-reference" i18n-title title="Goal Reference">
                   {{ recommendation.goalReference }}
