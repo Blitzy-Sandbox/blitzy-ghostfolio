@@ -1,0 +1,234 @@
+:host {
+  color: rgb(var(--dark-primary-text));
+  display: block;
+
+  .container {
+    padding-top: 1rem;
+  }
+
+  .summary-card {
+    .summary {
+      margin-bottom: 0;
+      white-space: pre-wrap;
+    }
+  }
+
+  .warnings {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+
+    .warning {
+      align-items: flex-start;
+      background-color: rgba(255, 193, 7, 0.12);
+      border: 1px solid rgba(255, 193, 7, 0.6);
+      border-radius: 0.25rem;
+      color: rgb(var(--dark-primary-text));
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+
+      .warning-icon {
+        color: rgb(255, 152, 0);
+        flex-shrink: 0;
+        font-size: 1.25rem;
+        line-height: 1;
+      }
+
+      .warning-text {
+        flex: 1;
+      }
+    }
+  }
+
+  .recommendations {
+    .recommendation {
+      &.action-buy {
+        border-left: 4px solid rgb(76, 175, 80);
+
+        .action {
+          background-color: rgba(76, 175, 80, 0.15);
+          color: rgb(46, 125, 50);
+        }
+      }
+
+      &.action-sell {
+        border-left: 4px solid rgb(244, 67, 54);
+
+        .action {
+          background-color: rgba(244, 67, 54, 0.15);
+          color: rgb(198, 40, 40);
+        }
+      }
+
+      &.action-hold {
+        border-left: 4px solid rgb(158, 158, 158);
+
+        .action {
+          background-color: rgba(158, 158, 158, 0.15);
+          color: rgb(97, 97, 97);
+        }
+      }
+
+      .recommendation-header {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+
+        .action {
+          border-radius: 0.25rem;
+          font-size: 0.75rem;
+          font-weight: 600;
+          letter-spacing: 0.05em;
+          padding: 0.25rem 0.5rem;
+          text-transform: uppercase;
+        }
+
+        .ticker {
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            'Liberation Mono', 'Courier New', monospace;
+          font-size: 1rem;
+          font-weight: 600;
+        }
+
+        .allocation {
+          align-items: center;
+          color: rgba(0, 0, 0, 0.7);
+          display: inline-flex;
+          font-size: 0.875rem;
+          gap: 0.25rem;
+
+          .arrow {
+            opacity: 0.6;
+          }
+        }
+
+        .goal-reference {
+          background-color: rgba(63, 81, 181, 0.1);
+          border-radius: 0.25rem;
+          color: rgb(63, 81, 181);
+          font-size: 0.75rem;
+          margin-left: auto;
+          padding: 0.25rem 0.5rem;
+        }
+      }
+
+      .rationale {
+        color: rgba(0, 0, 0, 0.75);
+        line-height: 1.5;
+        margin-bottom: 0;
+        white-space: pre-wrap;
+      }
+    }
+  }
+
+  .error-card {
+    .error-message {
+      color: rgb(198, 40, 40);
+      margin-bottom: 0.75rem;
+    }
+
+    .reload-button {
+      background-color: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.3);
+      border-radius: 0.25rem;
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.875rem;
+      padding: 0.375rem 0.75rem;
+      transition: background-color 0.15s ease-in-out;
+
+      &:hover {
+        background-color: rgba(0, 0, 0, 0.05);
+      }
+
+      &:focus-visible {
+        outline: 2px solid rgb(63, 81, 181);
+        outline-offset: 2px;
+      }
+    }
+  }
+}
+
+:host-context(.theme-dark) {
+  color: rgb(var(--light-primary-text));
+
+  .warnings {
+    .warning {
+      background-color: rgba(255, 193, 7, 0.16);
+      border-color: rgba(255, 193, 7, 0.5);
+      color: rgb(var(--light-primary-text));
+
+      .warning-icon {
+        color: rgb(255, 183, 77);
+      }
+    }
+  }
+
+  .recommendations {
+    .recommendation {
+      &.action-buy {
+        border-left-color: rgb(129, 199, 132);
+
+        .action {
+          background-color: rgba(129, 199, 132, 0.2);
+          color: rgb(165, 214, 167);
+        }
+      }
+
+      &.action-sell {
+        border-left-color: rgb(229, 115, 115);
+
+        .action {
+          background-color: rgba(229, 115, 115, 0.2);
+          color: rgb(239, 154, 154);
+        }
+      }
+
+      &.action-hold {
+        border-left-color: rgb(189, 189, 189);
+
+        .action {
+          background-color: rgba(189, 189, 189, 0.18);
+          color: rgb(224, 224, 224);
+        }
+      }
+
+      .recommendation-header {
+        .allocation {
+          color: rgba(255, 255, 255, 0.7);
+        }
+
+        .goal-reference {
+          background-color: rgba(159, 168, 218, 0.18);
+          color: rgb(159, 168, 218);
+        }
+      }
+
+      .rationale {
+        color: rgba(255, 255, 255, 0.75);
+      }
+    }
+  }
+
+  .error-card {
+    .error-message {
+      color: rgb(239, 154, 154);
+    }
+
+    .reload-button {
+      border-color: rgba(255, 255, 255, 0.4);
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+      }
+
+      &:focus-visible {
+        outline-color: rgb(159, 168, 218);
+      }
+    }
+  }
+}
