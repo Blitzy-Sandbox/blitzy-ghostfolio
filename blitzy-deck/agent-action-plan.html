@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Executive briefing for the AI Portfolio Intelligence Layer additions to Ghostfolio v3.0.0." />
+  <title>AI Portfolio Intelligence Layer &mdash; Executive Presentation</title>
+
+  <!--
+    CDN-pinned dependencies per AAP Section 0.7.2 (Executive Presentation rule):
+      - reveal.js 5.1.0
+      - mermaid   11.4.0
+      - lucide    0.460.0
+    All assets are loaded from jsDelivr; no local files are bundled.
+  -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css" id="theme" />
+
+  <style>
+    /* ============================================================
+       Blitzy Theme Override
+       Palette sourced from AAP Section 0.7.2 + Section 0.4.2 Mermaid classDef:
+         primary    #5B39F3 (purple)
+         mint       #94FAD5
+         dark       #1A105F (deep navy)
+         accent     #2D1C77
+         light      #F2F0FE
+         off-white  #F4EFF6
+       ============================================================ */
+    :root {
+      --blitzy-primary: #5B39F3;
+      --blitzy-mint: #94FAD5;
+      --blitzy-dark: #1A105F;
+      --blitzy-accent: #2D1C77;
+      --blitzy-light: #F2F0FE;
+      --blitzy-off-white: #F4EFF6;
+      --blitzy-warning: #FFB547;
+      --blitzy-danger: #FF5C7A;
+      --blitzy-text: #FFFFFF;
+      --blitzy-muted: rgba(255, 255, 255, 0.72);
+    }
+
+    html, body {
+      background: var(--blitzy-dark);
+    }
+
+    .reveal {
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(91, 57, 243, 0.35) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 100%, rgba(148, 250, 213, 0.18) 0%, transparent 55%),
+        linear-gradient(135deg, var(--blitzy-dark) 0%, var(--blitzy-accent) 100%);
+      font-family: 'Helvetica Neue', 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: var(--blitzy-text);
+      letter-spacing: -0.005em;
+    }
+
+    /* Generic typography */
+    .reveal h1,
+    .reveal h2,
+    .reveal h3,
+    .reveal h4 {
+      color: var(--blitzy-text);
+      font-family: inherit;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      text-transform: none;
+      text-shadow: 0 2px 24px rgba(0, 0, 0, 0.25);
+    }
+    .reveal h1 { font-size: 3.4em; line-height: 1.05; }
+    .reveal h2 { font-size: 2.0em; line-height: 1.15; }
+    .reveal h3 { font-size: 1.25em; color: var(--blitzy-mint); }
+    .reveal p, .reveal li {
+      font-size: 0.92em;
+      line-height: 1.55;
+      color: var(--blitzy-text);
+    }
+    .reveal a { color: var(--blitzy-mint); }
+    .reveal code {
+      background: rgba(244, 239, 246, 0.10);
+      color: var(--blitzy-mint);
+      padding: 0.06em 0.42em;
+      border-radius: 4px;
+      font-size: 0.86em;
+      font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+      border: 1px solid rgba(148, 250, 213, 0.20);
+    }
+
+    /* Lucide icon sizing helpers (Lucide replaces <i data-lucide="..."> with <svg>) */
+    .reveal i[data-lucide],
+    .reveal svg.lucide {
+      display: inline-block;
+      vertical-align: -0.18em;
+      width: 0.95em;
+      height: 0.95em;
+      stroke-width: 2;
+      color: var(--blitzy-mint);
+    }
+    .reveal h1 i[data-lucide], .reveal h1 svg.lucide,
+    .reveal h2 i[data-lucide], .reveal h2 svg.lucide {
+      width: 0.92em; height: 0.92em; margin-right: 0.18em;
+    }
+    .reveal li i[data-lucide], .reveal li svg.lucide {
+      width: 1.05em; height: 1.05em; margin-right: 0.45em;
+    }
+
+    /* ============================================================
+       Universal slide sizing: include padding inside the 1920x1080
+       reveal.js coordinate space so content never overflows.
+       ============================================================ */
+    .reveal .slides section.title-slide,
+    .reveal .slides section.section-divider,
+    .reveal .slides section.content-slide,
+    .reveal .slides section.closing-slide {
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    /* ============================================================
+       Slide type 1: TITLE
+       ============================================================ */
+    .reveal .title-slide {
+      text-align: center;
+      padding: 0 6%;
+    }
+    .reveal .title-slide .lucide-icon-large {
+      display: inline-block;
+      margin-bottom: 0.35em;
+    }
+    .reveal .title-slide .lucide-icon-large svg.lucide,
+    .reveal .title-slide .lucide-icon-large i[data-lucide] {
+      width: 96px;
+      height: 96px;
+      color: var(--blitzy-mint);
+      filter: drop-shadow(0 0 24px rgba(148, 250, 213, 0.45));
+    }
+    .reveal .title-slide h1 {
+      font-size: 4.0em;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.1em 0 0.3em 0;
+    }
+    .reveal .title-slide h3 {
+      font-size: 1.4em;
+      color: var(--blitzy-light);
+      font-weight: 500;
+      margin-bottom: 0.5em;
+    }
+    .reveal .title-slide .subtitle {
+      font-size: 1.05em;
+      color: var(--blitzy-muted);
+      max-width: 60%;
+      margin: 0.6em auto 1.2em;
+      font-weight: 400;
+    }
+    .reveal .title-slide .footer-note {
+      font-size: 0.65em;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--blitzy-mint);
+      margin-top: 1.6em;
+      opacity: 0.85;
+    }
+
+    /* ============================================================
+       Slide type 2: SECTION DIVIDER
+       ============================================================ */
+    .reveal .section-divider {
+      text-align: left;
+      padding: 0 8%;
+      position: relative;
+    }
+    .reveal .section-divider .chapter-number {
+      display: block;
+      font-size: 9em;
+      font-weight: 800;
+      line-height: 0.9;
+      color: rgba(91, 57, 243, 0.55);
+      background: linear-gradient(135deg, var(--blitzy-primary) 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.04em;
+      margin-bottom: -0.05em;
+    }
+    .reveal .section-divider .chapter-icon {
+      display: inline-block;
+      margin: 0.2em 0;
+    }
+    .reveal .section-divider .chapter-icon svg.lucide,
+    .reveal .section-divider .chapter-icon[data-lucide] {
+      width: 72px;
+      height: 72px;
+      color: var(--blitzy-mint);
+      stroke-width: 1.6;
+    }
+    .reveal .section-divider h1 {
+      font-size: 3.2em;
+      margin: 0.1em 0 0;
+      color: var(--blitzy-text);
+    }
+    .reveal .section-divider h2 {
+      font-size: 1.8em;
+      margin: 0.1em 0 0.3em 0;
+      color: var(--blitzy-mint);
+      font-weight: 500;
+    }
+    .reveal .section-divider .chapter-tagline {
+      font-size: 1.0em;
+      color: var(--blitzy-muted);
+      max-width: 70%;
+      margin-top: 0.6em;
+      font-weight: 400;
+    }
+
+    /* ============================================================
+       Slide type 3: CONTENT
+       ============================================================ */
+    .reveal .content-slide {
+      text-align: left;
+      padding: 0 6%;
+    }
+    .reveal .content-slide h2 {
+      color: var(--blitzy-text);
+      border-bottom: 2px solid var(--blitzy-primary);
+      padding-bottom: 0.28em;
+      margin-bottom: 0.5em;
+      display: inline-block;
+      font-size: 1.7em;
+      line-height: 1.12;
+    }
+    .reveal .content-slide h2 i[data-lucide],
+    .reveal .content-slide h2 svg.lucide {
+      color: var(--blitzy-mint);
+    }
+    .reveal .content-slide h3 {
+      font-size: 0.85em;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--blitzy-mint);
+      margin-bottom: 0.35em;
+    }
+
+    /* Feature lists */
+    .reveal .feature-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .reveal .feature-list li {
+      margin: 0.30em 0;
+      padding: 0.42em 0.85em;
+      background: rgba(244, 239, 246, 0.05);
+      border-left: 3px solid var(--blitzy-mint);
+      border-radius: 6px;
+      font-size: 0.78em;
+      line-height: 1.42;
+      transition: background 0.2s ease;
+    }
+    .reveal .feature-list li:hover {
+      background: rgba(244, 239, 246, 0.12);
+    }
+    .reveal .feature-list li i[data-lucide],
+    .reveal .feature-list li svg.lucide {
+      color: var(--blitzy-mint);
+      width: 1em;
+      height: 1em;
+      vertical-align: -0.12em;
+    }
+    /* Tighter feature-list spacing inside multi-column layouts. */
+    .reveal .two-col .feature-list li,
+    .reveal .three-col .feature-list li {
+      font-size: 0.72em;
+      padding: 0.36em 0.75em;
+      margin: 0.24em 0;
+    }
+
+    /* Multi-column layout */
+    .reveal .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.2em;
+      margin: 0.45em 0;
+    }
+    .reveal .three-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.9em;
+      margin: 0.45em 0;
+    }
+    .reveal .col {
+      background: rgba(91, 57, 243, 0.08);
+      border: 1px solid rgba(148, 250, 213, 0.18);
+      border-radius: 12px;
+      padding: 0.75em 0.9em;
+    }
+
+    /* Callout */
+    .reveal .callout {
+      margin-top: 0.55em;
+      padding: 0.6em 0.95em;
+      background: rgba(148, 250, 213, 0.08);
+      border: 1px solid rgba(148, 250, 213, 0.30);
+      border-radius: 10px;
+      font-size: 0.68em;
+      line-height: 1.45;
+      color: var(--blitzy-light);
+    }
+    .reveal .callout i[data-lucide],
+    .reveal .callout svg.lucide {
+      color: var(--blitzy-mint);
+      margin-right: 0.3em;
+    }
+
+    /* ============================================================
+       KPI Grid (slide 12)
+       ============================================================ */
+    .reveal .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1.0em;
+      margin: 0.7em 0;
+    }
+    .reveal .kpi-grid.second-row {
+      margin-top: 0.6em;
+    }
+    .reveal .kpi-card {
+      background: linear-gradient(160deg, rgba(91, 57, 243, 0.55) 0%, rgba(45, 28, 119, 0.35) 100%);
+      border: 1px solid rgba(148, 250, 213, 0.30);
+      border-radius: 14px;
+      padding: 1.2em 0.6em 1.0em;
+      text-align: center;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      position: relative;
+      overflow: hidden;
+    }
+    .reveal .kpi-card.secondary {
+      background: linear-gradient(160deg, rgba(45, 28, 119, 0.55) 0%, rgba(26, 16, 95, 0.55) 100%);
+      border-color: rgba(148, 250, 213, 0.20);
+    }
+    .reveal .kpi-card .kpi-icon {
+      display: inline-block;
+      margin-bottom: 0.35em;
+    }
+    .reveal .kpi-card .kpi-icon svg.lucide,
+    .reveal .kpi-card .kpi-icon[data-lucide] {
+      width: 32px;
+      height: 32px;
+      color: var(--blitzy-mint);
+    }
+    .reveal .kpi-card .kpi-value {
+      font-size: 3.4em;
+      font-weight: 800;
+      line-height: 1;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.05em 0 0.15em;
+      letter-spacing: -0.03em;
+    }
+    .reveal .kpi-card .kpi-label {
+      font-size: 0.65em;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--blitzy-muted);
+      font-weight: 500;
+    }
+
+    /* ============================================================
+       Risk Table
+       ============================================================ */
+    .reveal table.risk-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin-top: 0.25em;
+      background: rgba(244, 239, 246, 0.06);
+      border-radius: 12px;
+      overflow: hidden;
+      font-size: 0.62em;
+      line-height: 1.32;
+    }
+    .reveal table.risk-table thead {
+      background: rgba(91, 57, 243, 0.55);
+    }
+    .reveal table.risk-table thead th {
+      padding: 0.55em 0.9em;
+      text-align: left;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.88em;
+      color: var(--blitzy-text);
+      border-bottom: 2px solid var(--blitzy-mint);
+    }
+    .reveal table.risk-table tbody td {
+      padding: 0.42em 0.9em;
+      border-bottom: 1px solid rgba(148, 250, 213, 0.10);
+      vertical-align: top;
+    }
+    .reveal table.risk-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .reveal table.risk-table tbody tr:nth-child(even) {
+      background: rgba(244, 239, 246, 0.04);
+    }
+    .reveal table.risk-table tbody tr:hover {
+      background: rgba(148, 250, 213, 0.08);
+    }
+    .reveal table.risk-table td i[data-lucide],
+    .reveal table.risk-table td svg.lucide {
+      color: var(--blitzy-mint);
+      margin-right: 0.35em;
+      width: 14px;
+      height: 14px;
+    }
+
+    /* ============================================================
+       Slide type 4: CLOSING
+       ============================================================ */
+    .reveal .closing-slide {
+      text-align: left;
+      padding: 0 8%;
+    }
+    .reveal .closing-slide h2 {
+      font-size: 1.9em;
+      margin-bottom: 0.3em;
+      padding-bottom: 0.22em;
+      line-height: 1.12;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      border-bottom: 3px solid var(--blitzy-mint);
+    }
+    .reveal .onboarding-list {
+      list-style: none;
+      counter-reset: step-counter;
+      padding: 0;
+      margin: 0.35em 0 0.5em;
+    }
+    .reveal .onboarding-list li {
+      counter-increment: step-counter;
+      position: relative;
+      padding: 0.42em 0.95em 0.42em 3.0em;
+      margin-bottom: 0.32em;
+      background: rgba(244, 239, 246, 0.06);
+      border-left: 3px solid var(--blitzy-primary);
+      border-radius: 8px;
+      font-size: 0.66em;
+      line-height: 1.45;
+    }
+    .reveal .onboarding-list li::before {
+      content: counter(step-counter);
+      position: absolute;
+      left: 0.65em;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 1.7em;
+      height: 1.7em;
+      line-height: 1.7em;
+      text-align: center;
+      background: var(--blitzy-primary);
+      color: var(--blitzy-text);
+      font-weight: 700;
+      border-radius: 50%;
+      font-size: 0.95em;
+    }
+    .reveal .onboarding-list li i[data-lucide],
+    .reveal .onboarding-list li svg.lucide {
+      color: var(--blitzy-mint);
+      margin-right: 0.3em;
+      width: 14px;
+      height: 14px;
+    }
+    .reveal .closing-footer {
+      margin-top: 0.6em;
+      padding-top: 0.55em;
+      border-top: 1px solid rgba(148, 250, 213, 0.20);
+    }
+    .reveal .closing-footer .contact-line,
+    .reveal .closing-footer .thanks-line {
+      font-size: 0.72em;
+      margin: 0.18em 0;
+      color: var(--blitzy-light);
+      line-height: 1.4;
+    }
+    .reveal .closing-footer .thanks-line {
+      color: var(--blitzy-mint);
+      font-weight: 500;
+    }
+
+    /* ============================================================
+       Mermaid container
+       ------------------------------------------------------------
+       When the natural SVG width exceeds the container, we let the
+       SVG scale down responsively (preserveAspectRatio="xMidYMid").
+       ============================================================ */
+    .reveal .mermaid {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: rgba(244, 239, 246, 0.04);
+      border: 1px solid rgba(148, 250, 213, 0.18);
+      border-radius: 12px;
+      padding: 0.6em;
+      margin: 0.4em 0;
+      min-height: 720px;
+      max-height: 880px;
+      overflow: hidden;
+    }
+    .reveal .mermaid svg {
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      max-height: 860px;
+    }
+    /* Force the same font on Mermaid's foreignObject HTML labels that Mermaid
+       used during text-width measurement. This guarantees the calculated rect
+       widths match the actually-rendered glyphs and avoids the 1-char clip
+       that occurs when the parent reveal.js CSS injects a different font. */
+    .reveal .mermaid svg foreignObject *,
+    .reveal .mermaid svg foreignObject {
+      font-family: Arial, Helvetica, sans-serif !important;
+    }
+    .reveal .mermaid svg foreignObject {
+      overflow: visible !important;
+    }
+    .reveal .mermaid svg foreignObject > div,
+    .reveal .mermaid svg foreignObject > span {
+      overflow: visible !important;
+      white-space: nowrap !important;
+    }
+    /* Labels remain crisp on dark theme. */
+    .reveal .mermaid .nodeLabel,
+    .reveal .mermaid .edgeLabel,
+    .reveal .mermaid .cluster-label {
+      color: #FFFFFF;
+      fill: #FFFFFF;
+      font-family: Arial, Helvetica, sans-serif !important;
+    }
+    .reveal .mermaid .nodeLabel p,
+    .reveal .mermaid .edgeLabel p,
+    .reveal .mermaid .cluster-label p {
+      font-family: Arial, Helvetica, sans-serif !important;
+      white-space: nowrap !important;
+    }
+    .reveal .architecture-slide h2 {
+      margin-bottom: 0.3em;
+    }
+
+    /* ============================================================
+       Reveal.js controls / progress bar Blitzy tint
+       ============================================================ */
+    .reveal .progress {
+      color: var(--blitzy-mint);
+      height: 4px;
+    }
+    .reveal .controls {
+      color: var(--blitzy-mint);
+    }
+    .reveal .slide-number {
+      background: rgba(91, 57, 243, 0.55);
+      color: var(--blitzy-text);
+      padding: 0.25em 0.55em;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.55em;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    /* ============================================================
+       Print / PDF export hint
+       ============================================================ */
+    @media print {
+      .reveal .progress, .reveal .controls { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- ============================================================
+           SLIDE 1 of 16 - TITLE SLIDE
+           Slide type: Title
+           ============================================================ -->
+      <section class="title-slide">
+        <div class="lucide-icon-large">
+          <i data-lucide="brain-circuit"></i>
+        </div>
+        <h1>AI Portfolio Intelligence Layer</h1>
+        <h3>Ghostfolio v3.0.0 &mdash; Additive Feature Suite</h3>
+        <p class="subtitle">Three independently demoable, narratively connected features that turn portfolio data into actionable insight.</p>
+        <p class="footer-note">Executive Briefing &middot; Blitzy Agent Action Plan</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 2 of 16 - HEADLINE / SCOPE
+           Slide type: Content
+           Mandated topic: Scope
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="target"></i> Scope at a Glance</h2>
+        <ul class="feature-list">
+          <li>
+            <i data-lucide="database"></i>
+            <b>Feature A &mdash; Snowflake Sync Layer.</b>
+            Daily cron at <code>02:00 UTC</code> plus event-driven mirror of portfolio data into Snowflake; three analytical tables, MERGE-based idempotency.
+          </li>
+          <li>
+            <i data-lucide="message-square"></i>
+            <b>Feature B &mdash; AI Portfolio Chat Agent.</b>
+            Streaming Claude-powered chat with four live data tools, served over Server-Sent Events on <code>POST /api/v1/ai/chat</code>.
+          </li>
+          <li>
+            <i data-lucide="scale"></i>
+            <b>Feature C &mdash; Explainable Rebalancing Engine.</b>
+            Structured JSON trade recommendations with goal-anchored rationales on <code>POST /api/v1/ai/rebalancing</code>.
+          </li>
+          <li>
+            <i data-lucide="shield-check"></i>
+            <b>Strictly Additive.</b>
+            Eight wiring-only edits to existing files. Zero refactors, zero behavior changes outside scope.
+          </li>
+          <li>
+            <i data-lucide="check-circle-2"></i>
+            <b>Compliance.</b>
+            Eight numbered engineering rules plus four project-level rules verified by 13 acceptance gates.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 3 of 16 - INTEGRATION TOPOLOGY (MERMAID)
+           Slide type: Content
+           Mandated topic: Architectural change
+
+           Labels are intentionally short so the diagram fits cleanly
+           in the 1920x1080 slide. New components are highlighted with
+           the "newNode" classDef; existing surfaces use "existingNode".
+           ============================================================ -->
+      <section class="content-slide architecture-slide">
+        <h2><i data-lucide="network"></i> Integration Topology</h2>
+        <div class="mermaid">
+graph LR
+  subgraph Client["Angular Client"]
+    ChatPanel["ChatPanel"]:::newNode
+    RebalPage["RebalancingPage"]:::newNode
+    ProfileForm["ProfileForm"]:::newNode
+    ExistingPortfolio["Portfolio Page"]:::existingNode
+    ExistingAccount["Account Page"]:::existingNode
+  end
+  subgraph API["NestJS API"]
+    AiChatCtrl["POST /ai/chat (SSE)"]:::newNode
+    RebalCtrl["POST /ai/rebalancing"]:::newNode
+    ProfileCtrl["GET PATCH /user/financial-profile"]:::newNode
+    SyncCtrl["POST /snowflake-sync/trigger"]:::newNode
+    AiChatSvc["AiChatService"]:::newNode
+    RebalSvc["RebalancingService"]:::newNode
+    ProfileSvc["UserFinancialProfileService"]:::newNode
+    SyncSvc["SnowflakeSyncService"]:::newNode
+    ExistingPortSvc["PortfolioService"]:::existingNode
+    ExistingSymSvc["SymbolService"]:::existingNode
+    ExistingActSvc["ActivitiesService"]:::existingNode
+    ExistingPrisma["PrismaService"]:::existingNode
+  end
+  subgraph External["External Services"]
+    Anthropic["Anthropic API"]:::externalNode
+    Snowflake["Snowflake"]:::externalNode
+    Postgres["PostgreSQL"]:::existingNode
+  end
+  ChatPanel -- "SSE" --> AiChatCtrl
+  RebalPage -- "POST" --> RebalCtrl
+  ProfileForm -- "GET / PATCH" --> ProfileCtrl
+  ExistingPortfolio -- "embeds" --> ChatPanel
+  ExistingAccount -- "MatDialog" --> ProfileForm
+  AiChatCtrl --> AiChatSvc
+  RebalCtrl --> RebalSvc
+  ProfileCtrl --> ProfileSvc
+  SyncCtrl --> SyncSvc
+  AiChatSvc --> ExistingPortSvc
+  AiChatSvc --> ExistingSymSvc
+  AiChatSvc --> SyncSvc
+  AiChatSvc --> ProfileSvc
+  AiChatSvc -- "stream" --> Anthropic
+  RebalSvc --> ExistingPortSvc
+  RebalSvc --> ProfileSvc
+  RebalSvc -- "tool_use" --> Anthropic
+  ProfileSvc --> ExistingPrisma
+  ExistingPrisma --> Postgres
+  SyncSvc --> ExistingPortSvc
+  SyncSvc --> ExistingPrisma
+  SyncSvc -- "MERGE binds" --> Snowflake
+  ExistingActSvc -- "PortfolioChangedEvent" --> SyncSvc
+  classDef newNode fill:#5B39F3,stroke:#94FAD5,stroke-width:2px,color:#FFFFFF;
+  classDef existingNode fill:#2D1C77,stroke:#F2F0FE,stroke-width:1px,color:#F2F0FE;
+  classDef externalNode fill:#1A105F,stroke:#94FAD5,stroke-width:2px,color:#94FAD5;
+        </div>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 4 of 16 - SECTION DIVIDER FOR FEATURE A
+           Slide type: Section Divider
+           ============================================================ -->
+      <section class="section-divider">
+        <span class="chapter-number">01</span>
+        <div class="chapter-icon"><i data-lucide="database"></i></div>
+        <h1>Feature A</h1>
+        <h2>Snowflake Sync Layer</h2>
+        <p class="chapter-tagline">An append-only analytical mirror of every portfolio change.</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 5 of 16 - FEATURE A CONTENT
+           Slide type: Content
+           Mandated topic: Architectural change
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="database"></i> Feature A &mdash; Snowflake Sync Layer</h2>
+        <div class="two-col">
+          <div class="col">
+            <h3>What It Does</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="clock"></i> Daily cron at <code>02:00 UTC</code></li>
+              <li><i data-lucide="zap"></i> Event-driven via <code>PortfolioChangedEvent</code></li>
+              <li><i data-lucide="git-merge"></i> MERGE upserts (Rule 7 &mdash; idempotent)</li>
+              <li><i data-lucide="shield"></i> Bind variables only (Rule 2 &mdash; no SQL injection)</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3>Three Snowflake Tables</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="table"></i> <code>portfolio_snapshots</code></li>
+              <li><i data-lucide="table"></i> <code>orders_history</code></li>
+              <li><i data-lucide="table"></i> <code>performance_metrics</code></li>
+            </ul>
+          </div>
+        </div>
+        <p class="callout">
+          <i data-lucide="info"></i>
+          The sync layer&rsquo;s <code>queryHistory(userId, sql, binds)</code> method is also consumed by the AI Chat Agent&rsquo;s <code>query_history</code> tool &mdash; one bind-variable code path serves both batch sync and ad-hoc analytics.
+        </p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 6 of 16 - SECTION DIVIDER FOR FEATURE B
+           Slide type: Section Divider
+           ============================================================ -->
+      <section class="section-divider">
+        <span class="chapter-number">02</span>
+        <div class="chapter-icon"><i data-lucide="message-square"></i></div>
+        <h1>Feature B</h1>
+        <h2>AI Portfolio Chat Agent</h2>
+        <p class="chapter-tagline">Streaming Claude that knows your portfolio.</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 7 of 16 - FEATURE B CONTENT
+           Slide type: Content
+           Mandated topic: Architectural change
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="message-square"></i> Feature B &mdash; AI Portfolio Chat Agent</h2>
+        <div class="two-col">
+          <div class="col">
+            <h3>API Surface</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="server"></i> <code>POST /api/v1/ai/chat</code></li>
+              <li><i data-lucide="radio"></i> Server-Sent Events streaming</li>
+              <li><i data-lucide="shield-check"></i> JWT-authenticated (<code>AuthGuard('jwt')</code>)</li>
+              <li><i data-lucide="layers"></i> Stateless server-side; client carries 4 prior turns</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3>Four Tool Calls</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="briefcase"></i> <code>get_current_positions</code></li>
+              <li><i data-lucide="line-chart"></i> <code>get_performance_metrics</code></li>
+              <li><i data-lucide="history"></i> <code>query_history</code> &rarr; Snowflake</li>
+              <li><i data-lucide="search"></i> <code>get_market_data</code></li>
+            </ul>
+          </div>
+        </div>
+        <p class="callout">
+          <i data-lucide="user"></i>
+          The system prompt is personalized per request with the caller&rsquo;s portfolio state and <code>FinancialProfile</code>; tool-supplied <code>userId</code> is always overridden by the JWT-verified user (Rule 5).
+        </p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 8 of 16 - SECTION DIVIDER FOR FEATURE C
+           Slide type: Section Divider
+           ============================================================ -->
+      <section class="section-divider">
+        <span class="chapter-number">03</span>
+        <div class="chapter-icon"><i data-lucide="scale"></i></div>
+        <h1>Feature C</h1>
+        <h2>Explainable Rebalancing Engine</h2>
+        <p class="chapter-tagline">Every recommendation cites the goal it serves.</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 9 of 16 - FEATURE C CONTENT
+           Slide type: Content
+           Mandated topic: Business value (explainability)
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="scale"></i> Feature C &mdash; Explainable Rebalancing Engine</h2>
+        <div class="two-col">
+          <div class="col">
+            <h3>How It Works</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="server"></i> <code>POST /api/v1/ai/rebalancing</code></li>
+              <li><i data-lucide="package-check"></i> Single JSON payload (no streaming)</li>
+              <li><i data-lucide="lock"></i> <code>tool_use</code> exclusively (Rule 4)</li>
+              <li><i data-lucide="ban"></i> No text-content parsing</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3>Per-Recommendation Schema</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="arrow-right-circle"></i> <code>action</code>: BUY / SELL / HOLD</li>
+              <li><i data-lucide="ticket"></i> <code>ticker</code>, <code>fromPct</code> &rarr; <code>toPct</code></li>
+              <li><i data-lucide="message-circle"></i> <code>rationale</code> (plain language)</li>
+              <li><i data-lucide="anchor"></i> <code>goalReference</code> (FinancialProfile field or goal label)</li>
+            </ul>
+          </div>
+        </div>
+        <p class="callout">
+          <i data-lucide="info"></i>
+          A single Anthropic <code>tools</code> array element with <code>tool_choice: { type: 'tool', name: 'rebalancing_recommendations' }</code> forces Claude to emit a structured object &mdash; never free-form text.
+        </p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 10 of 16 - SECTION DIVIDER FOR CROSS-CUTTING
+           Slide type: Section Divider
+           ============================================================ -->
+      <section class="section-divider">
+        <span class="chapter-number">04</span>
+        <div class="chapter-icon"><i data-lucide="layers"></i></div>
+        <h1>Cross-Cutting</h1>
+        <h2>Observability &middot; Decisions &middot; Review</h2>
+        <p class="chapter-tagline">Production-grade hygiene from day one.</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 11 of 16 - CROSS-CUTTING CONTENT
+           Slide type: Content
+           Mandated topic: Business value (production hygiene + traceability)
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="layers"></i> Cross-Cutting Concerns</h2>
+        <div class="three-col">
+          <div class="col">
+            <h3><i data-lucide="activity"></i> Observability</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="file-text"></i> Structured logs + correlation IDs</li>
+              <li><i data-lucide="bar-chart-2"></i> <code>/api/v1/metrics</code> endpoint</li>
+              <li><i data-lucide="heart-pulse"></i> Health probes for Snowflake + Anthropic</li>
+              <li><i data-lucide="layout-dashboard"></i> 3 dashboard templates in <code>docs/observability/</code></li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3><i data-lucide="book-open"></i> Decision Log</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="file-text"></i> <code>docs/decisions/agent-action-plan-decisions.md</code></li>
+              <li><i data-lucide="git-compare"></i> Bidirectional traceability matrix</li>
+              <li><i data-lucide="check-square"></i> Captures version reconciliation, rule resolutions, design choices</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3><i data-lucide="git-pull-request"></i> Segmented PR Review</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="file-text"></i> <code>CODE_REVIEW.md</code> at repo root</li>
+              <li><i data-lucide="list-checks"></i> YAML frontmatter + 8 phases</li>
+              <li><i data-lucide="user-check"></i> Domain SMEs + Principal Reviewer sign-off</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 12 of 16 - KPI DASHBOARD
+           Slide type: Content
+           Mandated topic: Business value (the numbers)
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="bar-chart-3"></i> The Numbers</h2>
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="server"></i></div>
+            <div class="kpi-value">4</div>
+            <div class="kpi-label">New API Endpoints</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="component"></i></div>
+            <div class="kpi-value">3</div>
+            <div class="kpi-label">New Angular Components</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="database"></i></div>
+            <div class="kpi-value">1</div>
+            <div class="kpi-label">New Prisma Model</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="key"></i></div>
+            <div class="kpi-value">7</div>
+            <div class="kpi-label">New Env Variables</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="package"></i></div>
+            <div class="kpi-value">3</div>
+            <div class="kpi-label">New npm Packages</div>
+          </div>
+        </div>
+        <div class="kpi-grid second-row">
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="file-code"></i></div>
+            <div class="kpi-value">4</div>
+            <div class="kpi-label">New NestJS Modules</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="git-branch"></i></div>
+            <div class="kpi-value">8</div>
+            <div class="kpi-label">Wiring-Only Edits</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="check-circle"></i></div>
+            <div class="kpi-value">8</div>
+            <div class="kpi-label">Engineering Rules</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="shield-check"></i></div>
+            <div class="kpi-value">13</div>
+            <div class="kpi-label">Validation Gates</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="cloud"></i></div>
+            <div class="kpi-value">3</div>
+            <div class="kpi-label">Snowflake Tables</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 13 of 16 - SECTION DIVIDER FOR RISKS
+           Slide type: Section Divider
+           ============================================================ -->
+      <section class="section-divider">
+        <span class="chapter-number">05</span>
+        <div class="chapter-icon"><i data-lucide="alert-triangle"></i></div>
+        <h1>Risks</h1>
+        <h2>And How We Mitigate Them</h2>
+        <p class="chapter-tagline">Anticipated failure modes and the controls that contain them.</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 14 of 16 - RISKS TABLE
+           Slide type: Content
+           Mandated topic: Risks
+           ============================================================ -->
+      <section class="content-slide">
+        <h2><i data-lucide="alert-triangle"></i> Risk &amp; Mitigation Register</h2>
+        <table class="risk-table">
+          <thead>
+            <tr>
+              <th style="width: 28%;">Risk</th>
+              <th style="width: 12%;">Likelihood</th>
+              <th style="width: 60%;">Mitigation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><i data-lucide="cloud-off"></i> Anthropic API outage</td>
+              <td>Low</td>
+              <td><code>/api/v1/health/anthropic</code> probe + degraded UX with reconnect button (Rule 6).</td>
+            </tr>
+            <tr>
+              <td><i data-lucide="key"></i> Snowflake credential leakage</td>
+              <td>Low</td>
+              <td><code>ConfigService</code> only (Rule 3); structured logger redacts <code>SNOWFLAKE_PASSWORD</code> and bind values that resemble credentials.</td>
+            </tr>
+            <tr>
+              <td><i data-lucide="bug"></i> SQL injection via tool input</td>
+              <td>Low</td>
+              <td>Bind variables exclusively (Rule 2); semicolon rejection in <code>query_history</code>; row-count cap on every SELECT.</td>
+            </tr>
+            <tr>
+              <td><i data-lucide="alert-circle"></i> LLM hallucination of trade actions</td>
+              <td>Medium</td>
+              <td>Forced <code>tool_use</code> JSON shape (Rule 4) + structural validation; <code>warnings</code> array surfaced in every response.</td>
+            </tr>
+            <tr>
+              <td><i data-lucide="user-x"></i> Cross-user data leak</td>
+              <td>Low</td>
+              <td>JWT-derived <code>userId</code> overrides any tool-supplied value; <code>where: { userId }</code> on every Prisma query (Rule 5).</td>
+            </tr>
+            <tr>
+              <td><i data-lucide="repeat"></i> Duplicate Snowflake rows on re-sync</td>
+              <td>Low</td>
+              <td>MERGE upserts keyed on documented unique constraints (Rule 7); cron + event handler converge on the same code path.</td>
+            </tr>
+            <tr>
+              <td><i data-lucide="wifi-off"></i> SSE stream disconnect</td>
+              <td>Medium</td>
+              <td>Non-empty <code>errorMessage</code> + visible reconnect button in <code>ChatPanelComponent</code> (Rule 6).</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 15 of 16 - SECTION DIVIDER FOR ONBOARDING
+           Slide type: Section Divider
+           ============================================================ -->
+      <section class="section-divider">
+        <span class="chapter-number">06</span>
+        <div class="chapter-icon"><i data-lucide="rocket"></i></div>
+        <h1>Onboarding</h1>
+        <h2>Where to Start</h2>
+        <p class="chapter-tagline">A 5-minute orientation for new engineers.</p>
+      </section>
+
+      <!-- ============================================================
+           SLIDE 16 of 16 - CLOSING (TEAM ONBOARDING)
+           Slide type: Closing
+           Mandated topic: Onboarding
+           ============================================================ -->
+      <section class="closing-slide">
+        <h2><i data-lucide="rocket"></i> Get Started in Five Steps</h2>
+        <ol class="onboarding-list">
+          <li>
+            <i data-lucide="folder"></i>
+            <b>Read the Agent Action Plan.</b>
+            The full mission briefing &mdash; scope, rules, gates &mdash; lives in the PR description.
+          </li>
+          <li>
+            <i data-lucide="key"></i>
+            <b>Populate seven new env vars.</b>
+            See <code>.env.example</code> for the six <code>SNOWFLAKE_*</code> entries and <code>ANTHROPIC_API_KEY</code>.
+          </li>
+          <li>
+            <i data-lucide="terminal"></i>
+            <b>Run <code>npm install</code> + <code>npx prisma migrate dev</code>.</b>
+            Picks up the three new packages and creates the <code>FinancialProfile</code> table.
+          </li>
+          <li>
+            <i data-lucide="play"></i>
+            <b>Start the stack with <code>docker compose up</code> + <code>npm run start:dev</code>.</b>
+            Exercises the SSE chat at <code>/portfolio</code> and the rebalancing page at <code>/portfolio/rebalancing</code>.
+          </li>
+          <li>
+            <i data-lucide="book-open"></i>
+            <b>Review the eight rules and 13 gates.</b>
+            See AAP &sect; 0.7 for the non-negotiable engineering contract.
+          </li>
+        </ol>
+        <div class="closing-footer">
+          <p class="contact-line">
+            <i data-lucide="mail"></i>
+            Questions? Drop them in the <code>#ai-portfolio</code> Slack channel.
+          </p>
+          <p class="thanks-line">
+            <i data-lucide="heart"></i>
+            Thank you. Let&rsquo;s ship it.
+          </p>
+        </div>
+      </section>
+
+
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <script>
+    /* ------------------------------------------------------------
+       Mermaid initialization (per AAP Section 0.7.2)
+       startOnLoad: false  - manually triggered after slides render
+       ------------------------------------------------------------ */
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      /* Force a consistent font-family for both text measurement and rendering.
+         This avoids the well-known Mermaid clipping bug where the library
+         measures text with its default font but the rendered glyphs come from
+         the parent reveal.js CSS, causing rect-width underestimation. */
+      fontFamily: 'Arial, Helvetica, sans-serif',
+      themeVariables: {
+        primaryColor: '#5B39F3',
+        primaryTextColor: '#FFFFFF',
+        primaryBorderColor: '#94FAD5',
+        lineColor: '#F2F0FE',
+        secondaryColor: '#2D1C77',
+        tertiaryColor: '#1A105F',
+        background: '#1A105F',
+        mainBkg: '#5B39F3',
+        secondBkg: '#94FAD5',
+        tertiaryBkg: '#F2F0FE',
+        clusterBkg: 'rgba(45, 28, 119, 0.55)',
+        clusterBorder: '#94FAD5',
+        edgeLabelBackground: '#1A105F',
+        nodeTextColor: '#FFFFFF',
+        textColor: '#FFFFFF',
+        fontFamily: 'Arial, Helvetica, sans-serif'
+      },
+      flowchart: {
+        curve: 'basis',
+        nodeSpacing: 36,
+        rankSpacing: 56,
+        padding: 22,
+        htmlLabels: true,
+        useMaxWidth: true,
+        diagramPadding: 18,
+        wrappingWidth: 200
+      },
+      fontSize: 14,
+      securityLevel: 'loose'
+    });
+
+    /* ------------------------------------------------------------
+       Reveal.js initialization (per AAP Section 0.7.2)
+       width: 1920, height: 1080
+       ------------------------------------------------------------ */
+    Reveal.initialize({
+      width: 1920,
+      height: 1080,
+      margin: 0.04,
+      minScale: 0.2,
+      maxScale: 2.0,
+      controls: true,
+      progress: true,
+      history: true,
+      center: true,
+      transition: 'slide',
+      backgroundTransition: 'fade',
+      hash: true,
+      slideNumber: 'c/t',
+      hashOneBasedIndex: false
+    });
+
+    /* ------------------------------------------------------------
+       Render Mermaid + Lucide after Reveal is ready and on every
+       slide change. mermaid.run() is idempotent and processes only
+       unrendered .mermaid nodes; window.lucide.createIcons()
+       processes elements with [data-lucide] attribute.
+       ------------------------------------------------------------ */
+    function renderIcons() {
+      try {
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons();
+        }
+      } catch (err) {
+        console.warn('[lucide] createIcons failed:', err);
+      }
+    }
+
+    function renderMermaid() {
+      try {
+        var nodes = document.querySelectorAll('.mermaid');
+        if (nodes && nodes.length > 0) {
+          mermaid.run({ querySelector: '.mermaid' }).catch(function (err) {
+            console.warn('[mermaid] run rejected:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('[mermaid] run threw:', err);
+      }
+    }
+
+    Reveal.on('ready', function () {
+      renderIcons();
+      renderMermaid();
+    });
+
+    Reveal.on('slidechanged', function () {
+      renderIcons();
+      renderMermaid();
+    });
+  </script>
+</body>
+</html>
