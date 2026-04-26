@@ -1,0 +1,112 @@
+:host {
+  display: block;
+}
+
+.chat-panel-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 24rem;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 0.5rem;
+  max-height: 32rem;
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+
+.message {
+  border-radius: 0.5rem;
+  max-width: 90%;
+  padding: 0.5rem 0.75rem;
+  word-wrap: break-word;
+}
+
+.message-user {
+  align-self: flex-end;
+  background-color: var(--mat-sys-primary-container, rgba(63, 81, 181, 0.12));
+  color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
+}
+
+.message-assistant {
+  align-self: flex-start;
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+}
+
+.message-role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.125rem;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.message-content {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.message-empty {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-size: 0.875rem;
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+.error-banner {
+  align-items: center;
+  background-color: var(--mat-sys-error-container, rgba(176, 0, 32, 0.12));
+  border-radius: 0.5rem;
+  color: var(--mat-sys-on-error-container, rgb(176, 0, 32));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
+  margin: 0.5rem 0.75rem;
+  padding: 0.75rem;
+}
+
+.error-message {
+  flex-grow: 1;
+  font-size: 0.875rem;
+}
+
+.input-row {
+  align-items: flex-end;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.input-field {
+  flex-grow: 1;
+}
+
+:host-context(.theme-dark) {
+  .message-user {
+    background-color: var(
+      --mat-sys-primary-container,
+      rgba(140, 158, 255, 0.16)
+    );
+    color: var(--mat-sys-on-primary-container, var(--light-primary-text));
+  }
+
+  .message-assistant {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .message-empty {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+}
