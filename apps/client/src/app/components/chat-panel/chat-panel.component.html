@@ -40,7 +40,7 @@
     }
   </div>
 
-  <form class="input-row" (submit)="sendMessage(); $event.preventDefault()">
+  <form class="input-row" (submit)="onSend(); $event.preventDefault()">
     <mat-form-field appearance="outline" class="input-field">
       <mat-label i18n>Message</mat-label>
       <input
