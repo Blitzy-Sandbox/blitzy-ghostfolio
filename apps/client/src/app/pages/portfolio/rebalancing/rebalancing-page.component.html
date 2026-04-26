@@ -1,42 +1,33 @@
 <div class="container">
+  <h1 class="d-none d-sm-block h3 mb-3 text-center" i18n>Rebalancing</h1>
+
   @if (isLoading()) {
-    <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+    <mat-progress-bar mode="indeterminate" />
   }
 
-  @if (errorMessage(); as error) {
-    <mat-card appearance="outlined" class="error-card">
+  @if (errorMessage()) {
+    <mat-card appearance="outlined" class="error-card mb-3">
       <mat-card-content>
-        <p class="error-message">{{ error }}</p>
-        <button
-          class="reload-button"
-          mat-stroked-button
-          type="button"
-          [disabled]="isLoading()"
-          (click)="reload()"
-        >
-          <span i18n>Try Again</span>
+        <p class="error-message">{{ errorMessage() }}</p>
+        <button class="reload-button" i18n type="button" (click)="onReload()">
+          Try again
         </button>
       </mat-card-content>
     </mat-card>
   }
 
   @if (response(); as data) {
-    @if (data.summary) {
-      <mat-card appearance="outlined" class="summary-card">
-        <mat-card-header>
-          <mat-card-title i18n>Summary</mat-card-title>
-        </mat-card-header>
-        <mat-card-content>
-          <p class="summary">{{ data.summary }}</p>
-        </mat-card-content>
-      </mat-card>
-    }
+    <mat-card appearance="outlined" class="summary-card mb-4">
+      <mat-card-content>
+        <p class="summary">{{ data.summary }}</p>
+      </mat-card-content>
+    </mat-card>
 
-    @if (data.warnings && data.warnings.length > 0) {
-      <div class="warnings">
-        @for (warning of data.warnings; track $index) {
+    @if (data.warnings.length > 0) {
+      <div class="warnings mb-4">
+        @for (warning of data.warnings; track trackByWarning($index, warning)) {
           <div class="warning" role="alert">
-            <mat-icon aria-hidden="true" class="warning-icon">warning</mat-icon>
+            <span aria-hidden="true" class="warning-icon">⚠</span>
             <span class="warning-text">{{ warning }}</span>
           </div>
         }
@@ -44,33 +35,43 @@
     }
 
     <div class="recommendations">
-      @for (
-        recommendation of data.recommendations;
-        track trackByTicker($index, recommendation)
-      ) {
-        <mat-card
-          appearance="outlined"
-          class="recommendation"
-          [class.action-buy]="recommendation.action === 'BUY'"
-          [class.action-hold]="recommendation.action === 'HOLD'"
-          [class.action-sell]="recommendation.action === 'SELL'"
-        >
+      <h2 class="h5 mb-3" i18n>Recommendations</h2>
+
+      @if (data.recommendations.length === 0) {
+        <mat-card appearance="outlined">
           <mat-card-content>
-            <div class="recommendation-header">
-              <span class="action">{{ recommendation.action }}</span>
-              <span class="ticker">{{ recommendation.ticker }}</span>
-              <span class="allocation">
-                <span>{{ recommendation.fromPct }}%</span>
-                <span aria-hidden="true" class="arrow">→</span>
-                <span>{{ recommendation.toPct }}%</span>
-              </span>
-              <span class="goal-reference">
-                {{ recommendation.goalReference }}
-              </span>
-            </div>
-            <p class="rationale">{{ recommendation.rationale }}</p>
+            <p i18n>No rebalancing actions are required at this time.</p>
           </mat-card-content>
         </mat-card>
+      } @else {
+        @for (
+          recommendation of data.recommendations;
+          track trackByRecommendation($index, recommendation)
+        ) {
+          <mat-card
+            appearance="outlined"
+            class="recommendation mb-3"
+            [class.action-buy]="recommendation.action === 'BUY'"
+            [class.action-hold]="recommendation.action === 'HOLD'"
+            [class.action-sell]="recommendation.action === 'SELL'"
+          >
+            <mat-card-content>
+              <div class="recommendation-header">
+                <span class="action">{{ recommendation.action }}</span>
+                <span class="ticker">{{ recommendation.ticker }}</span>
+                <span class="allocation">
+                  <span class="from-pct">{{ recommendation.fromPct }}%</span>
+                  <span aria-hidden="true" class="arrow">→</span>
+                  <span class="to-pct">{{ recommendation.toPct }}%</span>
+                </span>
+                <span class="goal-reference" i18n-title title="Goal Reference">
+                  {{ recommendation.goalReference }}
+                </span>
+              </div>
+              <p class="rationale">{{ recommendation.rationale }}</p>
+            </mat-card-content>
+          </mat-card>
+        }
       }
     </div>
   }

@@ -86,11 +86,17 @@ export class RebalancingPageComponent implements OnInit {
   }
 
   /**
-   * Re-issues the rebalancing request. Idempotent — bails out early if a
-   * request is already in flight so users tapping the reload button
-   * repeatedly cannot DoS the endpoint.
+   * Re-issues the rebalancing request from the template's "Try again"
+   * reload button. Idempotent — bails out early if a request is already
+   * in flight so users tapping the button repeatedly cannot DoS the
+   * endpoint.
+   *
+   * Bound from the template: `(click)="onReload()"`. The `on`-prefixed
+   * naming aligns with Ghostfolio's existing event-handler naming
+   * convention used across analysis/fire pages (e.g.
+   * `onAnnualInterestRateChange`, `onCalculationComplete`).
    */
-  public reload(): void {
+  public onReload(): void {
     if (this.isLoading()) {
       return;
     }
@@ -111,13 +117,30 @@ export class RebalancingPageComponent implements OnInit {
   /**
    * Track function for the recommendations `@for` loop. Tickers are
    * unique within a single response, so they form a stable identity for
-   * Angular's view diffing.
+   * Angular's view diffing. The `_index` argument is required by
+   * Angular's `track` expression signature even though it is unused.
+   *
+   * Bound from the template: `track trackByRecommendation($index, recommendation)`.
    */
-  public trackByTicker(
+  public trackByRecommendation(
     _index: number,
     recommendation: RebalancingRecommendation
   ): string {
     return recommendation.ticker;
+  }
+
+  /**
+   * Track function for the warnings `@for` loop. Warning strings are not
+   * guaranteed unique within a single response (the same caveat could
+   * conceivably appear twice if the model emits redundant guidance), so
+   * we fall back to a `${index}-${value}` composite identity that is
+   * stable within a single render of an unchanged warnings array but
+   * reshuffles correctly when the array contents change.
+   *
+   * Bound from the template: `track trackByWarning($index, warning)`.
+   */
+  public trackByWarning(index: number, warning: string): string {
+    return `${index}-${warning}`;
   }
 
   private fetchRecommendations(): void {
