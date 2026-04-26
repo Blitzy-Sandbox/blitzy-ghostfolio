@@ -199,12 +199,32 @@ export class SnowflakeClientFactory {
   }
 
   /**
-   * Defensive liveness check. Uses the SDK's `Connection.isUp()` when
-   * available; if the method is missing or throws (e.g., between minor
-   * SDK versions), treats the connection as alive and lets the next
-   * `execute(...)` call surface any underlying transport error. This
-   * keeps the lazy cache lenient while avoiding a permanent stuck-state
-   * if a connection has been silently terminated by the server.
+   * Defensive liveness check. The behavior matches the actual implementation
+   * below precisely:
+   *
+   * - If `Connection.isUp` is **missing** (e.g., older or newer minor SDK
+   *   versions that omit the helper), the method short-circuits to `true`
+   *   and treats the cached connection as alive. The lazy cache then
+   *   forwards the connection to the caller; any underlying transport
+   *   failure surfaces on the next `execute(...)` call instead of
+   *   triggering an immediate reconnect.
+   *
+   * - If `Connection.isUp` is **present and runs cleanly**, its boolean
+   *   return value is forwarded directly: `true` means alive (cache is
+   *   reused), `false` means dead (caller will rebuild a fresh
+   *   connection in `getConnection()`).
+   *
+   * - If `Connection.isUp` is **present but throws** (e.g., the SDK's
+   *   internal state machine has been corrupted by a prior network blip),
+   *   the `try`/`catch` here returns `false` and forces the next
+   *   `getConnection()` call to construct a fresh connection. This
+   *   prevents a permanent stuck-state in which the cached connection
+   *   has been silently terminated by the server but the SDK refuses
+   *   to acknowledge it.
+   *
+   * This three-way handling keeps the lazy cache lenient toward SDK
+   * version drift while remaining strict about transport-level failure
+   * recovery.
    */
   private isAlive(connection: snowflake.Connection): boolean {
     try {

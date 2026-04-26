@@ -1,0 +1,236 @@
+<h2 i18n mat-dialog-title>Financial Profile</h2>
+
+<form novalidate [formGroup]="profileForm" (ngSubmit)="onSubmit()">
+  <mat-dialog-content>
+    @if (errorMessage(); as error) {
+      <p class="error-message" role="alert">{{ error }}</p>
+    }
+
+    <div class="form-section">
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Retirement Target Age</mat-label>
+        <input
+          formControlName="retirementTargetAge"
+          matInput
+          max="120"
+          min="18"
+          type="number"
+        />
+        @if (
+          profileForm.get('retirementTargetAge')?.touched &&
+          profileForm.get('retirementTargetAge')?.errors
+        ) {
+          @if (profileForm.get('retirementTargetAge')?.errors?.['required']) {
+            <mat-error i18n>Retirement target age is required</mat-error>
+          }
+          @if (profileForm.get('retirementTargetAge')?.errors?.['min']) {
+            <mat-error i18n>Must be 18 or older</mat-error>
+          }
+          @if (profileForm.get('retirementTargetAge')?.errors?.['max']) {
+            <mat-error i18n>Must be 120 or younger</mat-error>
+          }
+          @if (
+            profileForm.get('retirementTargetAge')?.errors?.[
+              'retirementAgeBelowCurrent'
+            ];
+            as detail
+          ) {
+            <mat-error i18n>
+              Retirement age must be greater than your current age
+            </mat-error>
+          }
+          @if (
+            profileForm.get('retirementTargetAge')?.errors?.[
+              'retirementAgeInvalid'
+            ]
+          ) {
+            <mat-error i18n>Retirement age must be a number</mat-error>
+          }
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Retirement Target Amount</mat-label>
+        <input
+          formControlName="retirementTargetAmount"
+          matInput
+          min="0"
+          step="0.01"
+          type="number"
+        />
+        @if (
+          profileForm.get('retirementTargetAmount')?.touched &&
+          profileForm.get('retirementTargetAmount')?.errors?.['required']
+        ) {
+          <mat-error i18n>Retirement target amount is required</mat-error>
+        }
+        @if (
+          profileForm.get('retirementTargetAmount')?.touched &&
+          profileForm.get('retirementTargetAmount')?.errors?.['min']
+        ) {
+          <mat-error i18n>Must be greater than or equal to zero</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Time Horizon (Years)</mat-label>
+        <input
+          formControlName="timeHorizonYears"
+          matInput
+          min="1"
+          type="number"
+        />
+        @if (
+          profileForm.get('timeHorizonYears')?.touched &&
+          profileForm.get('timeHorizonYears')?.errors?.['required']
+        ) {
+          <mat-error i18n>Time horizon is required</mat-error>
+        }
+        @if (
+          profileForm.get('timeHorizonYears')?.touched &&
+          profileForm.get('timeHorizonYears')?.errors?.['min']
+        ) {
+          <mat-error i18n>Must be at least 1 year</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Risk Tolerance</mat-label>
+        <mat-select formControlName="riskTolerance">
+          @for (option of riskToleranceOptions; track option) {
+            <mat-option [value]="option">{{ option }}</mat-option>
+          }
+        </mat-select>
+        @if (
+          profileForm.get('riskTolerance')?.touched &&
+          profileForm.get('riskTolerance')?.errors?.['required']
+        ) {
+          <mat-error i18n>Risk tolerance is required</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Monthly Income</mat-label>
+        <input
+          formControlName="monthlyIncome"
+          matInput
+          min="0"
+          step="0.01"
+          type="number"
+        />
+        @if (
+          profileForm.get('monthlyIncome')?.touched &&
+          profileForm.get('monthlyIncome')?.errors?.['required']
+        ) {
+          <mat-error i18n>Monthly income is required</mat-error>
+        }
+        @if (
+          profileForm.get('monthlyIncome')?.touched &&
+          profileForm.get('monthlyIncome')?.errors?.['min']
+        ) {
+          <mat-error i18n>Must be greater than or equal to zero</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Monthly Debt Obligations</mat-label>
+        <input
+          formControlName="monthlyDebtObligations"
+          matInput
+          min="0"
+          step="0.01"
+          type="number"
+        />
+        @if (
+          profileForm.get('monthlyDebtObligations')?.touched &&
+          profileForm.get('monthlyDebtObligations')?.errors?.['required']
+        ) {
+          <mat-error i18n>Monthly debt obligations are required</mat-error>
+        }
+        @if (
+          profileForm.get('monthlyDebtObligations')?.touched &&
+          profileForm.get('monthlyDebtObligations')?.errors?.['min']
+        ) {
+          <mat-error i18n>Must be greater than or equal to zero</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    <div class="investment-goals-section" formArrayName="investmentGoals">
+      <h3 i18n>Investment Goals</h3>
+
+      @for (goal of investmentGoals.controls; track $index; let i = $index) {
+        <div class="goal-row" [formGroupName]="i">
+          <mat-form-field appearance="outline" class="form-field">
+            <mat-label i18n>Label</mat-label>
+            <input formControlName="label" matInput type="text" />
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="form-field">
+            <mat-label i18n>Target Amount</mat-label>
+            <input
+              formControlName="targetAmount"
+              matInput
+              min="0"
+              step="0.01"
+              type="number"
+            />
+          </mat-form-field>
+
+          <mat-form-field appearance="outline" class="form-field">
+            <mat-label i18n>Target Date</mat-label>
+            <input
+              formControlName="targetDate"
+              matInput
+              [matDatepicker]="goalDatePicker"
+            />
+            <mat-datepicker-toggle
+              matIconSuffix
+              [for]="goalDatePicker"
+            ></mat-datepicker-toggle>
+            <mat-datepicker #goalDatePicker></mat-datepicker>
+          </mat-form-field>
+
+          <button
+            color="warn"
+            mat-icon-button
+            type="button"
+            (click)="removeInvestmentGoal(i)"
+          >
+            <mat-icon>delete</mat-icon>
+          </button>
+        </div>
+      }
+
+      <button
+        color="primary"
+        mat-stroked-button
+        type="button"
+        (click)="addInvestmentGoal()"
+      >
+        <mat-icon>add</mat-icon>
+        <span i18n>Add Goal</span>
+      </button>
+    </div>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button type="button" (click)="onCancel()">
+      <span i18n>Cancel</span>
+    </button>
+    <button
+      color="primary"
+      mat-flat-button
+      type="submit"
+      [disabled]="isLoading() || profileForm.invalid"
+    >
+      @if (isLoading()) {
+        <mat-progress-spinner
+          diameter="18"
+          mode="indeterminate"
+        ></mat-progress-spinner>
+      }
+      <span i18n>Save</span>
+    </button>
+  </mat-dialog-actions>
+</form>

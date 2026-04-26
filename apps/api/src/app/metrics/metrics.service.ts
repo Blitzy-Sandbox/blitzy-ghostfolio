@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 /**
  * Mapping from a label name to its string value as supplied by callers.
@@ -38,6 +38,29 @@ const DEFAULT_BUCKETS_SECONDS: number[] = [
 ];
 
 /**
+ * Maximum number of distinct label-set series tolerated per metric name.
+ *
+ * High-cardinality labels (e.g., `user_id`, `request_id`, `correlation_id`)
+ * cause unbounded growth of the inner registry maps and break the
+ * Prometheus scrape contract — the resulting time-series database explodes,
+ * scrape responses become large enough to exceed scrape timeouts, and the
+ * monitoring backend collapses. This ceiling exists as a defense-in-depth
+ * runtime guard against accidental high-cardinality usage. Callers MUST
+ * restrict label values to low-cardinality categorical dimensions
+ * (e.g., HTTP status code, success/failure outcome, well-known route name).
+ *
+ * When a new `(name, labelKey)` pair would push the inner series count
+ * beyond this ceiling, the observation is dropped and a warning is logged
+ * once per affected metric (via `cardinalityGuardWarnedMetrics`). Existing
+ * series continue to record observations normally.
+ *
+ * The chosen value of 100 comfortably accommodates legitimate enumerations
+ * (HTTP status codes × outcome dimensions × tool names) while rejecting
+ * obvious cardinality explosions (per-user metrics).
+ */
+const MAX_LABEL_CARDINALITY_PER_METRIC = 100;
+
+/**
  * `MetricsService` — in-process counter and histogram registry exposed via a
  * Prometheus-compatible text exposition format.
  *
@@ -48,6 +71,9 @@ const DEFAULT_BUCKETS_SECONDS: number[] = [
  * is out of scope; counters and histograms reset on every process restart.
  *
  * Public surface:
+ * - `registerHelp(name, description)` — register a human-readable description
+ *   emitted as a `# HELP <name> <description>` line above the metric's
+ *   `# TYPE` line in the exposition output.
  * - `incrementCounter(name, value?, labels?)` — increment a monotonically
  *   non-decreasing counter, optionally tagged with label values.
  * - `observeHistogram(name, value, labels?)` — record a value into a
@@ -56,12 +82,22 @@ const DEFAULT_BUCKETS_SECONDS: number[] = [
  *   Prometheus 0.0.4 text exposition format consumable by `/metrics`
  *   scrapers.
  *
+ * **Label cardinality contract**: Label values MUST be drawn from a small,
+ * bounded set of categorical dimensions (HTTP status codes, success/failure
+ * outcomes, well-known route names, tool identifiers). High-cardinality
+ * values (user IDs, request IDs, correlation IDs, raw error messages,
+ * timestamps) are PROHIBITED and will be rejected by the runtime cardinality
+ * guard at {@link MAX_LABEL_CARDINALITY_PER_METRIC} distinct series per
+ * metric name. See AAP project-level "Observability" rule.
+ *
  * Thread-safety: Node.js runs JavaScript on a single event-loop thread, so
  * `Map` mutations never interleave; no explicit locking is required. All
  * mutations are O(1) amortized.
  */
 @Injectable()
 export class MetricsService {
+  private readonly logger = new Logger(MetricsService.name);
+
   /**
    * Counter registry: outer key is the metric name (e.g.
    * `snowflake_sync_runs_total`); inner key is the serialized label set
@@ -82,6 +118,42 @@ export class MetricsService {
   >();
 
   /**
+   * Help-text registry: keyed by metric name. Populated via
+   * {@link registerHelp}; consulted during {@link getRegistryAsText} to emit
+   * the canonical `# HELP <name> <description>` line above each metric's
+   * `# TYPE` line. Metrics without a registered help description simply omit
+   * the `# HELP` line — the resulting output remains valid Prometheus 0.0.4.
+   */
+  private readonly helpDescriptions = new Map<string, string>();
+
+  /**
+   * Tracks which metric names have already triggered a cardinality-guard
+   * warning so the noisy log line is emitted at most once per metric, even
+   * under repeated high-cardinality writes (e.g., a tight loop of distinct
+   * user IDs). The Set has trivial memory cost relative to the prevented
+   * unbounded-series explosion.
+   */
+  private readonly cardinalityGuardWarnedMetrics = new Set<string>();
+
+  /**
+   * Registers a human-readable description for a metric name. The description
+   * is emitted as a `# HELP <name> <description>` line above the metric's
+   * `# TYPE` line in {@link getRegistryAsText}, matching the Prometheus 0.0.4
+   * text exposition format that most scrapers expect.
+   *
+   * Newlines and backslashes in `description` are escaped per the exposition
+   * format specification so a multi-line description does not corrupt the
+   * output stream. Calling `registerHelp` multiple times for the same name
+   * overwrites the prior description.
+   *
+   * @param name - The metric name (snake_case Prometheus identifier).
+   * @param description - Human-readable description (escaped on emission).
+   */
+  public registerHelp(name: string, description: string): void {
+    this.helpDescriptions.set(name, description);
+  }
+
+  /**
    * Increments a named counter by `value` (default `1`), optionally scoped
    * to a `labels` set. Multiple invocations for the same `(name, labels)`
    * pair accumulate into a single series; distinct label sets create
@@ -90,6 +162,12 @@ export class MetricsService {
    * Counters are expected to be monotonically non-decreasing per Prometheus
    * conventions. Negative `value` arguments are technically permitted but
    * not recommended; this method does not validate or reject them.
+   *
+   * **Cardinality guard**: If adding the supplied `labels` would push the
+   * total number of distinct label-sets for this metric beyond
+   * {@link MAX_LABEL_CARDINALITY_PER_METRIC}, the observation is silently
+   * dropped (a warning is logged once per affected metric). Callers MUST
+   * restrict label values to a bounded, low-cardinality set.
    *
    * @param name - The metric name (snake_case Prometheus identifier).
    * @param value - Increment amount (default `1`).
@@ -103,6 +181,10 @@ export class MetricsService {
     const labelKey = this.serializeLabels(labels);
     const series = this.counters.get(name) ?? new Map<string, number>();
 
+    if (!this.allowSeriesAddition(name, series, labelKey)) {
+      return;
+    }
+
     series.set(labelKey, (series.get(labelKey) ?? 0) + value);
     this.counters.set(name, series);
   }
@@ -112,6 +194,12 @@ export class MetricsService {
    * scoped to a `labels` set. The observation is added to every bucket whose
    * upper bound is `>= value` (cumulative semantics) and is folded into the
    * running `count` and `sum` of the matching series.
+   *
+   * **Cardinality guard**: If adding the supplied `labels` would push the
+   * total number of distinct label-sets for this metric beyond
+   * {@link MAX_LABEL_CARDINALITY_PER_METRIC}, the observation is silently
+   * dropped (a warning is logged once per affected metric). Callers MUST
+   * restrict label values to a bounded, low-cardinality set.
    *
    * @param name - The metric name (snake_case Prometheus identifier).
    * @param value - The observed value (in the unit implied by the metric
@@ -126,6 +214,10 @@ export class MetricsService {
     const labelKey = this.serializeLabels(labels);
     const series =
       this.histograms.get(name) ?? new Map<string, HistogramObservation>();
+
+    if (!this.allowSeriesAddition(name, series, labelKey)) {
+      return;
+    }
 
     const observation =
       series.get(labelKey) ?? this.createInitialHistogramObservation();
@@ -149,10 +241,18 @@ export class MetricsService {
   /**
    * Serializes the entire registry into the canonical Prometheus 0.0.4 text
    * exposition format, suitable for direct return from an HTTP `/metrics`
-   * endpoint. Counters render as `# TYPE <name> counter` followed by one
-   * series line per label set. Histograms render as `# TYPE <name>
-   * histogram` followed by per-bucket `<name>_bucket{le="..."} N` lines, an
-   * implicit `<name>_bucket{le="+Inf"} N` line equal to the total count, the
+   * endpoint. Each metric block is rendered as:
+   *
+   * ```
+   * # HELP <name> <description>      ← emitted only when registerHelp() called
+   * # TYPE <name> <counter|histogram>
+   * <name>{labels...} <value>
+   * ...
+   * ```
+   *
+   * Counters render one series line per label set. Histograms render
+   * per-bucket `<name>_bucket{le="..."} N` lines, an implicit
+   * `<name>_bucket{le="+Inf"} N` line equal to the total count, the
    * `<name>_sum` line, and the `<name>_count` line.
    *
    * Returns an empty string when the registry has no recorded series. A
@@ -164,6 +264,12 @@ export class MetricsService {
 
     // Render counter series.
     for (const [name, series] of this.counters.entries()) {
+      const helpLine = this.formatHelpLine(name);
+
+      if (helpLine !== null) {
+        lines.push(helpLine);
+      }
+
       lines.push(`# TYPE ${name} counter`);
 
       for (const [labelKey, value] of series.entries()) {
@@ -173,6 +279,12 @@ export class MetricsService {
 
     // Render histogram series.
     for (const [name, series] of this.histograms.entries()) {
+      const helpLine = this.formatHelpLine(name);
+
+      if (helpLine !== null) {
+        lines.push(helpLine);
+      }
+
       lines.push(`# TYPE ${name} histogram`);
 
       for (const [labelKey, observation] of series.entries()) {
@@ -204,6 +316,57 @@ export class MetricsService {
     }
 
     return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+  }
+
+  /**
+   * Formats the registered help description for `name` as a Prometheus
+   * `# HELP <name> <description>` exposition line, with the description's
+   * backslashes and newlines escaped per the format specification. Returns
+   * `null` when no help description is registered for the metric — the
+   * caller then omits the HELP line entirely (still valid 0.0.4 output).
+   */
+  private formatHelpLine(name: string): string | null {
+    const description = this.helpDescriptions.get(name);
+
+    if (!description) {
+      return null;
+    }
+
+    const escaped = description.replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
+
+    return `# HELP ${name} ${escaped}`;
+  }
+
+  /**
+   * Returns `true` when a write to `(name, labelKey)` is permitted: either
+   * the label set is already present (existing series), or adding it would
+   * not exceed {@link MAX_LABEL_CARDINALITY_PER_METRIC}. Returns `false`
+   * (and emits a single warning per metric) when adding a new label set
+   * would breach the cardinality ceiling.
+   */
+  private allowSeriesAddition(
+    name: string,
+    series: Map<string, unknown>,
+    labelKey: string
+  ): boolean {
+    if (series.has(labelKey)) {
+      return true;
+    }
+
+    if (series.size < MAX_LABEL_CARDINALITY_PER_METRIC) {
+      return true;
+    }
+
+    if (!this.cardinalityGuardWarnedMetrics.has(name)) {
+      this.cardinalityGuardWarnedMetrics.add(name);
+      this.logger.warn(
+        `Metric "${name}" exceeded ${MAX_LABEL_CARDINALITY_PER_METRIC} ` +
+          `distinct label sets; further high-cardinality writes are dropped. ` +
+          `Restrict label values to low-cardinality categorical dimensions.`
+      );
+    }
+
+    return false;
   }
 
   /**

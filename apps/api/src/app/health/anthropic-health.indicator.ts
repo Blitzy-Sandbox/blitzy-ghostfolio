@@ -38,9 +38,12 @@ import { ConfigService } from '@nestjs/config';
  * Module registration: This class is delivered as a stand-alone
  * injectable provider. Wiring it into `HealthModule.providers` and
  * exposing a `/api/v1/health/anthropic` route from `HealthController`
- * is intentionally out of scope for this AAP (per § 0.6.2.1) and will
- * be performed by a follow-up integration PR. No further changes to
- * this file are required at that point.
+ * are deferred to a later checkpoint (the final wiring checkpoint of
+ * the AI feature delivery). The probe is listed in AAP § 0.5.1.2 as
+ * an additive health indicator intended for `HealthModule`
+ * registration; it is NOT permanently out of scope. No further changes
+ * to this file are required at registration time — only the host
+ * `HealthModule` and `HealthController` will gain new entries.
  */
 @Injectable()
 export class AnthropicHealthIndicator {

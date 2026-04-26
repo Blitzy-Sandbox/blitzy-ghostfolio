@@ -1,0 +1,67 @@
+<div class="chat-panel-container">
+  @if (isStreaming()) {
+    <mat-progress-bar
+      data-testid="streaming-progress"
+      mode="indeterminate"
+    ></mat-progress-bar>
+  }
+
+  @if (errorMessage(); as message) {
+    <div class="error-banner" role="alert">
+      <span class="error-message">{{ message }}</span>
+      <button
+        color="warn"
+        data-testid="reconnect-button"
+        mat-stroked-button
+        type="button"
+        (click)="reconnect()"
+      >
+        Reconnect
+      </button>
+    </div>
+  }
+
+  <div class="message-list" data-testid="message-list">
+    @if (messages().length === 0) {
+      <div class="message-empty" i18n>
+        Ask a question about your portfolio to get started.
+      </div>
+    }
+
+    @for (message of messages(); track $index) {
+      <div
+        class="message"
+        [class.message-assistant]="message.role === 'assistant'"
+        [class.message-user]="message.role === 'user'"
+      >
+        <div class="message-role">{{ message.role }}</div>
+        <div class="message-content">{{ message.content }}</div>
+      </div>
+    }
+  </div>
+
+  <form class="input-row" (submit)="sendMessage(); $event.preventDefault()">
+    <mat-form-field appearance="outline" class="input-field">
+      <mat-label i18n>Message</mat-label>
+      <input
+        data-testid="chat-input"
+        matInput
+        name="chatInput"
+        type="text"
+        [disabled]="isStreaming()"
+        [ngModel]="inputText()"
+        (ngModelChange)="inputText.set($event)"
+      />
+    </mat-form-field>
+
+    <button
+      color="primary"
+      data-testid="send-button"
+      mat-flat-button
+      type="submit"
+      [disabled]="isStreaming() || inputText().trim().length === 0"
+    >
+      <span i18n>Send</span>
+    </button>
+  </form>
+</div>

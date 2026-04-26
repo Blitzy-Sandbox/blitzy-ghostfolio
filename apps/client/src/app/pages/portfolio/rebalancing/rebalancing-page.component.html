@@ -1,0 +1,77 @@
+<div class="container">
+  @if (isLoading()) {
+    <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+  }
+
+  @if (errorMessage(); as error) {
+    <mat-card appearance="outlined" class="error-card">
+      <mat-card-content>
+        <p class="error-message">{{ error }}</p>
+        <button
+          class="reload-button"
+          mat-stroked-button
+          type="button"
+          [disabled]="isLoading()"
+          (click)="reload()"
+        >
+          <span i18n>Try Again</span>
+        </button>
+      </mat-card-content>
+    </mat-card>
+  }
+
+  @if (response(); as data) {
+    @if (data.summary) {
+      <mat-card appearance="outlined" class="summary-card">
+        <mat-card-header>
+          <mat-card-title i18n>Summary</mat-card-title>
+        </mat-card-header>
+        <mat-card-content>
+          <p class="summary">{{ data.summary }}</p>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    @if (data.warnings && data.warnings.length > 0) {
+      <div class="warnings">
+        @for (warning of data.warnings; track $index) {
+          <div class="warning" role="alert">
+            <mat-icon aria-hidden="true" class="warning-icon">warning</mat-icon>
+            <span class="warning-text">{{ warning }}</span>
+          </div>
+        }
+      </div>
+    }
+
+    <div class="recommendations">
+      @for (
+        recommendation of data.recommendations;
+        track trackByTicker($index, recommendation)
+      ) {
+        <mat-card
+          appearance="outlined"
+          class="recommendation"
+          [class.action-buy]="recommendation.action === 'BUY'"
+          [class.action-hold]="recommendation.action === 'HOLD'"
+          [class.action-sell]="recommendation.action === 'SELL'"
+        >
+          <mat-card-content>
+            <div class="recommendation-header">
+              <span class="action">{{ recommendation.action }}</span>
+              <span class="ticker">{{ recommendation.ticker }}</span>
+              <span class="allocation">
+                <span>{{ recommendation.fromPct }}%</span>
+                <span aria-hidden="true" class="arrow">→</span>
+                <span>{{ recommendation.toPct }}%</span>
+              </span>
+              <span class="goal-reference">
+                {{ recommendation.goalReference }}
+              </span>
+            </div>
+            <p class="rationale">{{ recommendation.rationale }}</p>
+          </mat-card-content>
+        </mat-card>
+      }
+    </div>
+  }
+</div>
