@@ -4,6 +4,7 @@ import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { ConfigService } from '@nestjs/config';
+import { ModuleRef } from '@nestjs/core';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -257,6 +258,7 @@ describe('SnowflakeSyncService', () => {
   let configService: ConfigService;
   let factory: SnowflakeClientFactory;
   let metricsService: MetricsService;
+  let moduleRef: ModuleRef;
   let portfolioService: PortfolioService;
   let prismaService: PrismaService;
   let service: SnowflakeSyncService;
@@ -307,14 +309,39 @@ describe('SnowflakeSyncService', () => {
 
     factory = new SnowflakeClientFactory(configService);
 
-    // Constructor signature post-Checkpoint-C remediation:
-    // `(metricsService, prismaService, portfolioService, snowflakeClientFactory)`.
-    // The previous `configService` first-argument was removed because the
-    // service body no longer reads any configuration directly.
+    // `ModuleRef` is mocked as a minimal stand-in: the only method
+    // `SnowflakeSyncService.resolvePortfolioService()` exercises is
+    // `resolve(token, contextId, options)`. The mock returns the same
+    // `portfolioService` instance built above, mirroring the runtime
+    // behaviour where `ModuleRef.resolve(PortfolioService, ...)`
+    // produces a per-context `PortfolioService` instance scoped to a
+    // synthetic context id created by `ContextIdFactory.create()`.
+    //
+    // The double cast (`as unknown as ModuleRef`) keeps the runtime
+    // shape minimal (one method) while satisfying the strict typed
+    // signature of the constructor parameter. This is the same pattern
+    // documented in the NestJS testing guide for unit-testing
+    // services that consume `ModuleRef` outside of the testing module
+    // (https://docs.nestjs.com/fundamentals/module-ref).
+    moduleRef = {
+      resolve: jest.fn().mockResolvedValue(portfolioService)
+    } as unknown as ModuleRef;
+
+    // Constructor signature post-Checkpoint-C remediation, refined
+    // again in Checkpoint-4 to break REQUEST-scope contamination from
+    // `PortfolioService` (which @Inject(REQUEST)'s the request object,
+    // making it implicitly REQUEST-scoped). The order is now
+    // `(metricsService, moduleRef, prismaService, snowflakeClientFactory)`.
+    // The previous direct `portfolioService` second-argument was replaced
+    // with `moduleRef` so that `@nestjs/schedule`'s `ScheduleExplorer`
+    // recognizes `SnowflakeSyncService` as a static-tree provider and
+    // registers the `@Cron('0 2 * * *')` decorator at startup. See
+    // `resolvePortfolioService()` in `snowflake-sync.service.ts` for
+    // the full rationale.
     service = new SnowflakeSyncService(
       metricsService,
+      moduleRef,
       prismaService,
-      portfolioService,
       factory
     );
   });

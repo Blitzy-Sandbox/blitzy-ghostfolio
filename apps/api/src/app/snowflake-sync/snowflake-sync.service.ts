@@ -4,6 +4,7 @@ import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ContextIdFactory, ModuleRef } from '@nestjs/core';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
 import ms from 'ms';
@@ -170,8 +171,8 @@ export class SnowflakeSyncService implements OnModuleInit {
 
   public constructor(
     private readonly metricsService: MetricsService,
+    private readonly moduleRef: ModuleRef,
     private readonly prismaService: PrismaService,
-    private readonly portfolioService: PortfolioService,
     private readonly snowflakeClientFactory: SnowflakeClientFactory
   ) {
     // Register Prometheus help descriptions once per process start. The
@@ -343,19 +344,35 @@ export class SnowflakeSyncService implements OnModuleInit {
    * temporarily unavailable on cold start (e.g., the warehouse is
    * suspended and resuming) and a transient failure must not crash the
    * NestJS application bootstrap.
+   *
+   * `bootstrap()` is intentionally fire-and-forget here: this method
+   * does NOT `await` it. The reason is that `snowflake-sdk` does not
+   * apply a default timeout to `connection.execute({...})`, so a
+   * Snowflake warehouse that is suspended, unreachable, or
+   * unresponsive (e.g., placeholder credentials in a non-production
+   * environment) would otherwise block `OnModuleInit` indefinitely
+   * and prevent NestJS from invoking `app.listen(...)`. By detaching
+   * the bootstrap promise from the lifecycle hook, the HTTP server
+   * comes up immediately, the cron and event listener register on
+   * the static-tree provider as designed, and the bootstrap result
+   * is reported asynchronously via the `.then()` / `.catch()` log
+   * lines below. This honors the stated guarantee in this method's
+   * JSDoc that "a transient failure must not crash the NestJS
+   * application bootstrap" — a hang is a transient failure too.
    */
-  public async onModuleInit(): Promise<void> {
-    try {
-      await this.bootstrap();
-      Logger.log('Snowflake bootstrap completed', 'SnowflakeSyncService');
-    } catch (error) {
-      Logger.error(
-        `Snowflake bootstrap failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        'SnowflakeSyncService'
-      );
-    }
+  public onModuleInit(): void {
+    this.bootstrap()
+      .then(() => {
+        Logger.log('Snowflake bootstrap completed', 'SnowflakeSyncService');
+      })
+      .catch((error) => {
+        Logger.error(
+          `Snowflake bootstrap failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          'SnowflakeSyncService'
+        );
+      });
   }
 
   /**
@@ -597,7 +614,11 @@ export class SnowflakeSyncService implements OnModuleInit {
    * Returns the number of asset-class rows merged.
    */
   public async syncSnapshots(userId: string, date: string): Promise<number> {
-    const details = await this.portfolioService.getDetails({
+    // Lazy-resolve `PortfolioService` per invocation to avoid
+    // promoting this service to REQUEST scope. See
+    // `resolvePortfolioService()` for the rationale.
+    const portfolioService = await this.resolvePortfolioService();
+    const details = await portfolioService.getDetails({
       dateRange: 'max',
       impersonationId: null,
       userId,
@@ -692,7 +713,11 @@ export class SnowflakeSyncService implements OnModuleInit {
    *   - Running twice for the same `date` leaves row counts unchanged.
    */
   public async syncMetrics(userId: string, date: string): Promise<void> {
-    const performance = await this.portfolioService.getPerformance({
+    // Lazy-resolve `PortfolioService` per invocation to avoid
+    // promoting this service to REQUEST scope. See
+    // `resolvePortfolioService()` for the rationale.
+    const portfolioService = await this.resolvePortfolioService();
+    const performance = await portfolioService.getPerformance({
       dateRange: 'max',
       impersonationId: null,
       userId
@@ -828,6 +853,61 @@ export class SnowflakeSyncService implements OnModuleInit {
     const limitedSql = `SELECT * FROM (${sql}) LIMIT ${SnowflakeSyncService.QUERY_HISTORY_ROW_LIMIT}`;
 
     return this.executeQuery(limitedSql, safeBinds);
+  }
+
+  /**
+   * Lazily resolves a per-invocation `PortfolioService` instance.
+   *
+   * Why lazy resolution instead of constructor injection?
+   *
+   *   `PortfolioService` injects `@Inject(REQUEST)` (per
+   *   `apps/api/src/app/portfolio/portfolio.service.ts`), which forces
+   *   it to REQUEST scope. NestJS's scope-bubble-up rules
+   *   (https://docs.nestjs.com/fundamentals/injection-scopes#scope-hierarchy)
+   *   then promote any DEFAULT-scoped class that constructor-injects
+   *   `PortfolioService` to REQUEST scope as well — i.e., the entire
+   *   `SnowflakeSyncService` becomes a non-static provider in the DI
+   *   tree. The `@nestjs/schedule` `ScheduleExplorer` rejects
+   *   `@Cron(...)` decorators on non-static providers with the warning
+   *   "Cannot register cron job ... because it is defined in a non
+   *   static provider", because the scheduler needs a singleton method
+   *   reference to bind to a CronJob instance — there is no incoming
+   *   request to derive a request scope from when the cron timer
+   *   fires. The same restriction applies to `@OnEvent(...)` handlers,
+   *   which run outside any HTTP request lifecycle.
+   *
+   * The fix is to break the static-tree dependency: this service no
+   * longer constructor-injects `PortfolioService`. Instead, the daily
+   * cron, the event-driven sync, and the manual-trigger paths all
+   * call this helper, which uses `ModuleRef.resolve(...)` with a
+   * fresh `ContextIdFactory.create()` to instantiate a `PortfolioService`
+   * for the synthetic context. That instance's `request` field is
+   * undefined at the type level, but the underlying `PortfolioService`
+   * methods this class actually invokes (`getDetails(...)`,
+   * `getPerformance(...)`) accept `userId` explicitly and do not rely
+   * on `this.request.user.id`, so the synthetic context is safe.
+   *
+   * The `strict: false` flag instructs `ModuleRef.resolve()` to search
+   * the entire module hierarchy rather than only the host module's
+   * injector, since `PortfolioService` is exported by `PortfolioModule`
+   * (which is imported transitively, not directly, by this module —
+   * `SnowflakeSyncModule.imports` lists `PortfolioModule` per
+   * AAP § 0.5.1.1, but the resolve API is more robust to module-graph
+   * reorganization).
+   *
+   * Each call creates a NEW context id and therefore a NEW
+   * `PortfolioService` instance. The instances are short-lived (one
+   * per snapshot or metrics sync) and garbage-collected after the
+   * MERGE completes. This is intentionally identical in spirit to
+   * the per-request lifecycle that `PortfolioService` was designed
+   * for — the cron just synthesizes a context rather than receiving
+   * one from an HTTP layer.
+   */
+  private async resolvePortfolioService(): Promise<PortfolioService> {
+    const contextId = ContextIdFactory.create();
+    return this.moduleRef.resolve(PortfolioService, contextId, {
+      strict: false
+    });
   }
 
   /**
