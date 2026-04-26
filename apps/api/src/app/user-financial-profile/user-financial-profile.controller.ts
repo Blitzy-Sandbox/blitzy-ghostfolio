@@ -119,7 +119,48 @@ export class UserFinancialProfileController {
     @Body() dto: FinancialProfileDto
   ): Promise<FinancialProfile> {
     const userId = this.request.user.id;
+    const dateOfBirth = this.extractDateOfBirthFromJwtUser();
 
-    return this.userFinancialProfileService.upsertForUser(userId, dto);
+    return this.userFinancialProfileService.upsertForUser(
+      userId,
+      dto,
+      dateOfBirth
+    );
+  }
+
+  /**
+   * Reads the JWT-derived `dateOfBirth` from the authenticated user's
+   * `Settings.settings` JSON column, which is the same source-of-truth
+   * the client-side `FinancialProfileFormComponent` reads (see
+   * `apps/client/src/app/components/financial-profile-form/`). The
+   * shared `UserSettings` interface does not currently formally declare
+   * `dateOfBirth`, so we narrow via a local cast — the cast is safe
+   * because at runtime the field either exists (set by a forthcoming
+   * server-side schema extension or by the user's profile workflow)
+   * or evaluates to `undefined`.
+   *
+   * Rule 5 (FinancialProfile Authorization, AAP § 0.7.1.5): the value
+   * is sourced exclusively from `this.request.user.settings...` (i.e.
+   * the JWT-loaded user). It is NEVER read from the request body,
+   * query string, route parameter, or any other caller-controllable
+   * input — so a client cannot forge a different `dateOfBirth` to
+   * bypass the service-layer age validation in
+   * `UserFinancialProfileService.upsertForUser(...)`.
+   *
+   * Rule 8 (Controller Thinness, AAP § 0.7.1.8): extracting the JWT
+   * read into this helper keeps `updateFinancialProfile()` at four
+   * code lines — well under the ten-line ceiling — while preserving
+   * the security-critical guarantee that the dateOfBirth feeding the
+   * server-authoritative age check is JWT-derived, never request-body-
+   * derived.
+   *
+   * @returns The JWT-derived dateOfBirth, or `null` when absent.
+   */
+  private extractDateOfBirthFromJwtUser(): string | Date | null {
+    const settings = this.request.user.settings?.settings as
+      | { dateOfBirth?: string | Date | null }
+      | undefined;
+
+    return settings?.dateOfBirth ?? null;
   }
 }

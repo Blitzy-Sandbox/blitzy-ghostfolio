@@ -1,6 +1,6 @@
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { FinancialProfile, Prisma } from '@prisma/client';
 
 import { FinancialProfileDto } from './dtos/financial-profile.dto';
@@ -94,18 +94,44 @@ export class UserFinancialProfileService {
    * `update`) is scoped to the `userId` parameter, which the caller MUST
    * source from the JWT-verified user — never from the request body.
    *
+   * SERVER-AUTHORITATIVE AGE VALIDATION (AAP § 0.5.1.4 + § 0.5.3 +
+   * § 0.7.5.2 "Financial profile gate"): the caller is required to pass
+   * the JWT-derived `dateOfBirth` (read from `request.user.settings?.
+   * settings?.dateOfBirth`) so this method can authoritatively reject any
+   * payload whose `retirementTargetAge` is not strictly greater than the
+   * user's current whole-year age. The check fires BEFORE any Prisma
+   * operation, so a failed validation produces an HTTP 400 with no row
+   * write attempted. The DTO-level `@Min(18) @Max(100)` decorators serve
+   * as the AAP § 0.5.3 "sensible minimum" fallback when `dateOfBirth` is
+   * absent/malformed — in that case this method skips the comparative
+   * check rather than guessing a current age.
+   *
    * @param userId        Authenticated user id (from JWT, NEVER from request body).
    * @param dto           Validated `FinancialProfileDto` payload.
+   * @param dateOfBirth   Optional JWT-derived ISO-8601 date string or `Date`
+   *                      sourced from `request.user.settings?.settings?.
+   *                      dateOfBirth`. The caller MUST NOT read this from
+   *                      the request body. When `null`/`undefined` the
+   *                      comparative check is skipped and the DTO's
+   *                      `@Min(18) @Max(100)` envelope is the only gate.
    * @param correlationId Optional request-scoped correlation id propagated
    *                      from the controller boundary for end-to-end log
    *                      tracing per AAP § 0.7.2 (Observability rule).
    * @returns             The persisted `FinancialProfile` row.
+   * @throws BadRequestException when `dto.retirementTargetAge <= currentAge`
+   *                             computed from the supplied `dateOfBirth`.
    */
   public async upsertForUser(
     userId: string,
     dto: FinancialProfileDto,
+    dateOfBirth?: string | Date | null,
     correlationId?: string
   ): Promise<FinancialProfile> {
+    this.assertRetirementTargetAgeIsGreaterThanCurrentAge(
+      dto.retirementTargetAge,
+      dateOfBirth
+    );
+
     try {
       const profileData = this.mapDtoToPrismaInput(dto);
 
@@ -130,6 +156,91 @@ export class UserFinancialProfileService {
 
       throw error;
     }
+  }
+
+  /**
+   * Asserts that `retirementTargetAge` is strictly greater than the user's
+   * current whole-year age computed from the supplied `dateOfBirth`. This
+   * is the server-authoritative implementation of AAP § 0.5.1.4 and
+   * AAP § 0.7.5.2 "Financial profile gate" — `PATCH` with
+   * `retirementTargetAge < currentAge` MUST return HTTP 400.
+   *
+   * Behavior matrix:
+   *   - `dateOfBirth` null/undefined/empty → skip the comparative check
+   *     (AAP § 0.5.3 "sensible minimum" fallback; the DTO-level
+   *     `@Min(18) @Max(100)` envelope remains the gate).
+   *   - `dateOfBirth` present but unparseable → skip the comparative
+   *     check (degrades safely rather than rejecting valid payloads
+   *     because of a corrupt user-settings JSON).
+   *   - `dateOfBirth` present and parseable, AND `retirementTargetAge <=
+   *     currentAge` → throw `BadRequestException` with a descriptive
+   *     message that names both ages (no PII beyond what the caller
+   *     already submitted).
+   *   - Otherwise → return silently.
+   *
+   * The `<=` (not `<`) comparison enforces the AAP "greater than current
+   * user age" requirement strictly: if the user's current age is 65 and
+   * they request `retirementTargetAge=65`, the value is rejected because
+   * the field is meant to express a future target.
+   *
+   * Rule 8 compliance (Controller Thinness): this validation lives in
+   * the service layer, not the controller — so the controller body
+   * remains a single-line delegation while still surfacing the HTTP 400
+   * via the standard NestJS exception filter.
+   *
+   * @param retirementTargetAge The DTO-validated integer in [18, 100].
+   * @param dateOfBirth         JWT-sourced birth date (any of: ISO-8601
+   *                            string, `Date`, `null`, `undefined`).
+   * @throws BadRequestException when the target age is not strictly
+   *                             greater than the computed current age.
+   */
+  private assertRetirementTargetAgeIsGreaterThanCurrentAge(
+    retirementTargetAge: number,
+    dateOfBirth: string | Date | null | undefined
+  ): void {
+    const currentAge = this.computeCurrentAgeYears(dateOfBirth);
+
+    if (currentAge === null) {
+      // No reliable reference age — fall back to the DTO envelope.
+      return;
+    }
+
+    if (retirementTargetAge <= currentAge) {
+      throw new BadRequestException(
+        `retirementTargetAge (${retirementTargetAge}) must be greater than the user's current age (${currentAge})`
+      );
+    }
+  }
+
+  /**
+   * Computes the user's whole-year age from a `dateOfBirth` value, mirroring
+   * the client-side `FinancialProfileFormComponent.computeAgeYears(...)`
+   * helper so the server and client agree on the reference age. Returns
+   * `null` for missing or malformed inputs (the caller treats `null` as
+   * "skip the comparative check").
+   *
+   * The 365.25 millisecond-per-year constant accounts for leap years; the
+   * `Math.floor` truncation matches the conventional "whole-year age"
+   * representation used elsewhere in Ghostfolio (e.g., the client form).
+   */
+  private computeCurrentAgeYears(
+    dateOfBirth: string | Date | null | undefined
+  ): number | null {
+    if (!dateOfBirth) {
+      return null;
+    }
+
+    const dob = new Date(dateOfBirth);
+
+    if (isNaN(dob.getTime())) {
+      return null;
+    }
+
+    const now = new Date();
+    const millisecondsPerYear = 365.25 * 24 * 60 * 60 * 1000;
+    const ageYears = (now.getTime() - dob.getTime()) / millisecondsPerYear;
+
+    return Math.floor(ageYears);
   }
 
   /**
