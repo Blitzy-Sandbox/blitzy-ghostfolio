@@ -1,16 +1,19 @@
 import {
   FinancialProfile,
+  FinancialProfilePatchPayload,
   InvestmentGoal,
   RiskTolerance
 } from '@ghostfolio/common/interfaces';
 
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
   Inject,
-  OnInit
+  OnInit,
+  signal
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
@@ -50,9 +53,25 @@ import { UserService } from '../../services/user/user.service';
  *
  * Authorization: per AAP Rule 5 (§ 0.7.1.5) the request body MUST NOT
  * influence the server's `userId` scoping — the server reads the user
- * identity from the JWT. The placeholder values for `userId`,
- * `createdAt`, `updatedAt` in the constructed payload are ignored
- * server-side.
+ * identity from the JWT. The PATCH payload constructed below is typed
+ * as {@link FinancialProfilePatchPayload}, which intentionally OMITS
+ * the three server-controlled fields (`userId`, `createdAt`,
+ * `updatedAt`). The server-side `FinancialProfileDto` is configured
+ * with `forbidNonWhitelisted: true`, so any of those fields appearing
+ * in the request body would be REJECTED with HTTP 400 — which is why
+ * we do not send placeholder values for them. `userId` is sourced
+ * authoritatively by the server from the JWT; `createdAt` is set by
+ * the Prisma `@default(now())` directive on first upsert; `updatedAt`
+ * is maintained by the Prisma `@updatedAt` directive.
+ *
+ * Save error handling: the `.subscribe()` call provides BOTH `next:`
+ * and `error:` handlers. On a successful PATCH the dialog closes with
+ * a `true` result so the host page can refresh. On a failed PATCH a
+ * non-empty `saveError` signal is set, the template renders a visible
+ * alert region, and the dialog stays open so the user can correct
+ * their input and retry. Without an `error:` handler RxJS routes HTTP
+ * failures to the global error handler (which only logs to the
+ * console), leading to a silent failure with no user-visible feedback.
  *
  * Custom validator: `retirementAgeAboveCurrentAgeValidator` is a closure
  * over `this`, so the form's `retirementTargetAge` control re-runs its
@@ -78,11 +97,34 @@ import { UserService } from '../../services/user/user.service';
 })
 export class GfFinancialProfileFormComponent implements OnInit {
   public form: FormGroup;
+  /**
+   * Reactive signal-bound flag that indicates whether a PATCH request
+   * is currently in flight. The template binds the Save button's
+   * `[disabled]` attribute to `(form.invalid || isSubmitting())` so the
+   * user cannot trigger overlapping save attempts while the previous
+   * request is still pending. Reset to `false` in BOTH the `next:` and
+   * `error:` callbacks of the PATCH subscription so the user can retry
+   * after a transient failure.
+   */
+  public isSubmitting = signal<boolean>(false);
   public riskToleranceOptions: readonly RiskTolerance[] = [
     'LOW',
     'MEDIUM',
     'HIGH'
   ];
+  /**
+   * Reactive signal-bound error message rendered in the template's
+   * dedicated alert region (`role="alert"`) whenever the latest PATCH
+   * attempt has failed. Empty string -> no error displayed; non-empty
+   * string -> alert region is shown to the user. The signal is reset
+   * to `''` at the START of every {@link onSubmit} attempt so a stale
+   * error message from a prior failure does not persist after the
+   * user has corrected their input and clicked Save again. Per AAP
+   * § 0.5.3 (UX requirements) the dialog MUST surface save failures
+   * to the user — a silent failure with no UI state change is
+   * prohibited.
+   */
+  public saveError = signal<string>('');
 
   private currentUserAgeYears: number | null = null;
 
@@ -214,12 +256,34 @@ export class GfFinancialProfileFormComponent implements OnInit {
    * Submits the form. Aborts early if invalid (the disabled submit
    * button prevents this in normal UX, but a programmatic Enter key in
    * an input field can still attempt submission). On success the dialog
-   * resolves with `true` so the host page can refresh its state.
+   * resolves with `true` so the host page can refresh its state. On
+   * failure the `saveError` signal is set to a user-readable message,
+   * the dialog stays open, and `isSubmitting` is reset so the user can
+   * correct their input and retry.
+   *
+   * Payload typing: the constructed `payload` is typed as
+   * {@link FinancialProfilePatchPayload}, which intentionally OMITS
+   * the three server-controlled fields (`userId`, `createdAt`,
+   * `updatedAt`). The server-side `FinancialProfileDto` is configured
+   * with `forbidNonWhitelisted: true`, which causes those fields to
+   * trigger an HTTP 400 rejection if they appear in the request body
+   * — even with placeholder values. The tightened type at the
+   * service boundary (`FinancialProfileService.patch(p:
+   * FinancialProfilePatchPayload)`) makes accidental inclusion of
+   * those fields a compile-time error, providing defense-in-depth
+   * against the silent regression that would otherwise occur if the
+   * full `FinancialProfile` shape were used here.
    */
   public onSubmit(): void {
-    if (this.form.invalid) {
+    if (this.form.invalid || this.isSubmitting()) {
       return;
     }
+
+    // Reset any error message from a prior failed save attempt so the
+    // template's alert region is hidden during the new attempt. The
+    // alert will be re-rendered if the new attempt also fails.
+    this.saveError.set('');
+    this.isSubmitting.set(true);
 
     const raw = this.form.value as {
       retirementTargetAge: number;
@@ -235,15 +299,19 @@ export class GfFinancialProfileFormComponent implements OnInit {
       }[];
     };
 
-    // The placeholder values for `userId`, `createdAt`, `updatedAt`
-    // are intentional: per AAP Rule 5 (§ 0.7.1.5) the server scopes
-    // the upsert by JWT-derived `userId`, and Prisma fills the
-    // timestamps via `@default(now())` / `@updatedAt`. The client
-    // values are discarded server-side. Coercing numeric fields via
-    // `Number(...)` defends against HTML number inputs that return
-    // string values in some scenarios.
-    const payload: FinancialProfile = {
-      userId: '',
+    // Construct the PATCH payload as a `FinancialProfilePatchPayload`
+    // — i.e., the `Omit<FinancialProfile, 'userId' | 'createdAt' |
+    // 'updatedAt'>` type defined in `financial-profile.interface.ts`.
+    // The three omitted fields are server-controlled:
+    //   * `userId` is sourced authoritatively from the JWT.
+    //   * `createdAt` is set by Prisma `@default(now())`.
+    //   * `updatedAt` is set by Prisma `@updatedAt`.
+    // Sending placeholder values for any of these would trip the
+    // `forbidNonWhitelisted: true` server-side ValidationPipe and
+    // trigger HTTP 400 with messages like "property userId should not
+    // exist". Coercing numeric fields via `Number(...)` defends
+    // against HTML number inputs that may return string values.
+    const payload: FinancialProfilePatchPayload = {
       retirementTargetAge: Number(raw.retirementTargetAge),
       retirementTargetAmount: Number(raw.retirementTargetAmount),
       timeHorizonYears: Number(raw.timeHorizonYears),
@@ -254,19 +322,71 @@ export class GfFinancialProfileFormComponent implements OnInit {
         label: g.label,
         targetAmount: Number(g.targetAmount),
         targetDate: this.normalizeDateToString(g.targetDate)
-      })),
-      createdAt: '',
-      updatedAt: ''
+      }))
     };
 
     this.financialProfileService
       .patch(payload)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
+        error: (error) => {
+          // Surface the failure to the user via the signal-bound alert
+          // region in the template. The dialog stays open so the user
+          // can correct their input and retry; `isSubmitting` is reset
+          // so the Save button becomes clickable again.
+          this.isSubmitting.set(false);
+          this.saveError.set(this.buildSaveErrorMessage(error));
+        },
         next: () => {
+          this.isSubmitting.set(false);
           this.dialogRef.close(true);
         }
       });
+  }
+
+  /**
+   * Translates an HTTP error from the PATCH call into a user-readable
+   * string for the alert region. The branching mirrors the actual
+   * response shapes returned by the NestJS backend:
+   *
+   *   * 400 Bad Request — the global `ValidationPipe`
+   *     (`whitelist: true`, `forbidNonWhitelisted: true`) returns
+   *     `{ message: string[] | string, error, statusCode }`. We
+   *     surface the joined `message` so validation feedback (e.g.,
+   *     "retirementTargetAge must not be less than 18") is shown
+   *     verbatim to the user.
+   *   * Other status codes — surface a generic localized fallback so
+   *     the user knows the save failed without exposing implementation
+   *     details (network errors, 500s, etc.).
+   *
+   * The function NEVER returns an empty string — Rule-6-equivalent
+   * UX ensures the alert region is always rendered when an error has
+   * occurred. A defensive non-empty fallback handles edge cases (e.g.,
+   * a non-`HttpErrorResponse` thrown from a synchronous transformer).
+   */
+  private buildSaveErrorMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse) {
+      const body = error.error as
+        | { message?: string | string[] }
+        | undefined
+        | null;
+
+      if (body?.message) {
+        if (Array.isArray(body.message) && body.message.length > 0) {
+          return body.message.join(', ');
+        }
+
+        if (typeof body.message === 'string' && body.message.length > 0) {
+          return body.message;
+        }
+      }
+
+      if (typeof error.message === 'string' && error.message.length > 0) {
+        return error.message;
+      }
+    }
+
+    return $localize`Unable to save your financial profile. Please try again.`;
   }
 
   /**

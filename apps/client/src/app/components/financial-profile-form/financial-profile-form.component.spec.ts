@@ -1,5 +1,9 @@
-import { FinancialProfile } from '@ghostfolio/common/interfaces';
+import {
+  FinancialProfile,
+  FinancialProfilePatchPayload
+} from '@ghostfolio/common/interfaces';
 
+import { HttpErrorResponse } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ReactiveFormsModule } from '@angular/forms';
 // Initializes the global `$localize` function used by Angular i18n at
@@ -13,7 +17,7 @@ import '@angular/localize/init';
 import { provideNativeDateAdapter } from '@angular/material/core';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
-import { BehaviorSubject, Observable, of } from 'rxjs';
+import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
 
 import { FinancialProfileService } from '../../services/financial-profile.service';
 import { UserService } from '../../services/user/user.service';
@@ -55,10 +59,26 @@ jest.mock('../../services/user/user.service', () => ({
  *     model an HTTP 200.
  *   - test (d) re-assigns both `getReturnValue` and `patchReturnValue`
  *     to drive the full happy-path PATCH flow.
+ *   - tests (e) / (f) assert the error path — `patchReturnValue` is
+ *     replaced with a `throwError(...)` and the test verifies that the
+ *     dialog stays open AND the component's `saveError` signal is
+ *     populated with a non-empty user-readable message.
  *
  * The Jest spies (`getSpy`, `patchSpy`) allow individual tests to
  * assert call counts and call arguments after the component-under-test
  * has interacted with the mock.
+ *
+ * Type-correctness of the `patch(...)` mock signature: the parameter
+ * type is `FinancialProfilePatchPayload` — IDENTICAL to the production
+ * `FinancialProfileService.patch(...)` signature. Using
+ * `FinancialProfilePatchPayload` here (instead of the wider
+ * `FinancialProfile`) ensures that if the component were ever to
+ * regress to constructing a payload of the full `FinancialProfile`
+ * shape (which would include the server-rejected `userId`,
+ * `createdAt`, `updatedAt` fields), the TypeScript compiler would
+ * reject the call at unit-test time — preventing a recurrence of the
+ * "spec passes / runtime fails with HTTP 400" scenario captured in QA
+ * Issue #1.
  */
 class MockFinancialProfileService {
   public getReturnValue: Observable<FinancialProfile | null> = of(null);
@@ -78,7 +98,7 @@ class MockFinancialProfileService {
     return this.getSpy();
   }
 
-  public patch(p: FinancialProfile): Observable<FinancialProfile> {
+  public patch(p: FinancialProfilePatchPayload): Observable<FinancialProfile> {
     return this.patchSpy(p);
   }
 }
@@ -286,5 +306,122 @@ describe('GfFinancialProfileFormComponent', () => {
     // — the `true` is the AAP-mandated success signal to the parent.
     expect(mockFinancialProfileService.patchSpy).toHaveBeenCalled();
     expect(mockMatDialogRef.close).toHaveBeenCalledWith(true);
+  });
+
+  it('(e) PATCH payload omits server-controlled fields (userId, createdAt, updatedAt)', () => {
+    // Per QA Issue #1: the prior implementation typed the payload as
+    // the full `FinancialProfile` and included placeholder values for
+    // `userId`, `createdAt`, `updatedAt`. The server-side
+    // ValidationPipe (`forbidNonWhitelisted: true`) rejected the
+    // request with HTTP 400. This test verifies the fix: the
+    // component constructs a `FinancialProfilePatchPayload` whose
+    // shape matches `Omit<FinancialProfile, 'userId' | 'createdAt' |
+    // 'updatedAt'>`.
+    mockFinancialProfileService.getReturnValue = of(SAMPLE_PROFILE);
+    mockFinancialProfileService.patchReturnValue = of(SAMPLE_PROFILE);
+
+    fixture.detectChanges();
+
+    component.onSubmit();
+
+    // Payload arg captured from the spy must NOT include any of the
+    // three server-controlled keys.
+    const sentPayload = mockFinancialProfileService.patchSpy.mock.calls[0][0];
+    expect(sentPayload).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(sentPayload, 'userId')).toBe(
+      false
+    );
+    expect(Object.prototype.hasOwnProperty.call(sentPayload, 'createdAt')).toBe(
+      false
+    );
+    expect(Object.prototype.hasOwnProperty.call(sentPayload, 'updatedAt')).toBe(
+      false
+    );
+
+    // And the in-scope user-controlled fields ARE present and carry
+    // values from the populated form.
+    expect(sentPayload.retirementTargetAge).toBe(65);
+    expect(sentPayload.retirementTargetAmount).toBe(1_000_000);
+    expect(sentPayload.timeHorizonYears).toBe(25);
+    expect(sentPayload.riskTolerance).toBe('MEDIUM');
+    expect(sentPayload.monthlyIncome).toBe(5_000);
+    expect(sentPayload.monthlyDebtObligations).toBe(1_000);
+    expect(Array.isArray(sentPayload.investmentGoals)).toBe(true);
+  });
+
+  it('(f) Failed PATCH sets saveError and keeps the dialog open', () => {
+    // Per QA Issue #2: the prior `.subscribe({ next })` call had no
+    // `error:` handler, so save failures were silent. This test
+    // verifies the fix: on PATCH error the component sets a
+    // non-empty `saveError` signal AND does NOT close the dialog.
+    mockFinancialProfileService.getReturnValue = of(SAMPLE_PROFILE);
+
+    // Construct a realistic NestJS-style 400 response body so the
+    // component's error-message extraction path is exercised end-to-end.
+    const httpError = new HttpErrorResponse({
+      error: {
+        error: 'Bad Request',
+        message: [
+          'property userId should not exist',
+          'property createdAt should not exist'
+        ],
+        statusCode: 400
+      },
+      status: 400,
+      statusText: 'Bad Request'
+    });
+
+    mockFinancialProfileService.patchReturnValue = throwError(() => httpError);
+
+    fixture.detectChanges();
+
+    expect(component.form.valid).toBe(true);
+
+    component.onSubmit();
+
+    // saveError signal MUST be populated with a non-empty string —
+    // this is the data flowing into the `<div role="alert">` in the
+    // template. The exact joined message proves the component
+    // surfaced the server's validation feedback verbatim.
+    expect(component.saveError().length).toBeGreaterThan(0);
+    expect(component.saveError()).toContain('property userId should not exist');
+    expect(component.saveError()).toContain(
+      'property createdAt should not exist'
+    );
+
+    // dialogRef.close MUST NOT have been called — the dialog stays
+    // open so the user can retry. This is the inverse assertion of
+    // test (d) and is the central UX guarantee for save failures.
+    expect(mockMatDialogRef.close).not.toHaveBeenCalled();
+
+    // isSubmitting MUST be reset to false so the Save button becomes
+    // enabled again and the user can retry.
+    expect(component.isSubmitting()).toBe(false);
+  });
+
+  it('(g) Failed PATCH falls back to a localized message when the response has no body', () => {
+    // Defensive coverage: not every backend failure produces a typed
+    // `{message, error, statusCode}` body — network failures, gateway
+    // timeouts, and 5xx errors may carry no body at all. The
+    // component MUST still render a non-empty alert so the user knows
+    // the save did not succeed.
+    mockFinancialProfileService.getReturnValue = of(SAMPLE_PROFILE);
+
+    const opaqueError = new HttpErrorResponse({
+      error: null,
+      status: 500,
+      statusText: 'Internal Server Error'
+    });
+
+    mockFinancialProfileService.patchReturnValue = throwError(
+      () => opaqueError
+    );
+
+    fixture.detectChanges();
+
+    component.onSubmit();
+
+    expect(component.saveError().length).toBeGreaterThan(0);
+    expect(mockMatDialogRef.close).not.toHaveBeenCalled();
   });
 });

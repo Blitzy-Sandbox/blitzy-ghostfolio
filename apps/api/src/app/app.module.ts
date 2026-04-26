@@ -31,6 +31,7 @@ import { AccessModule } from './access/access.module';
 import { AccountModule } from './account/account.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { AdminModule } from './admin/admin.module';
+import { AiChatModule } from './ai-chat/ai-chat.module';
 import { AppController } from './app.controller';
 import { AssetModule } from './asset/asset.module';
 import { AuthDeviceModule } from './auth-device/auth-device.module';
@@ -55,6 +56,7 @@ import { InfoModule } from './info/info.module';
 import { LogoModule } from './logo/logo.module';
 import { PlatformModule } from './platform/platform.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
+import { RebalancingModule } from './rebalancing/rebalancing.module';
 import { RedisCacheModule } from './redis-cache/redis-cache.module';
 import { SnowflakeSyncModule } from './snowflake-sync/snowflake-sync.module';
 import { SubscriptionModule } from './subscription/subscription.module';
@@ -69,6 +71,7 @@ import { UserModule } from './user/user.module';
     AccessModule,
     AccountModule,
     ActivitiesModule,
+    AiChatModule,
     AiModule,
     ApiKeysModule,
     AssetModule,
@@ -131,6 +134,7 @@ import { UserModule } from './user/user.module';
     PrismaModule,
     PropertyModule,
     PublicModule,
+    RebalancingModule,
     RedisCacheModule,
     ScheduleModule.forRoot(),
     ServeStaticModule.forRoot({

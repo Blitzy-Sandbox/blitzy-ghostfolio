@@ -155,6 +155,17 @@
     </div>
   </mat-dialog-content>
 
+  @if (saveError()) {
+    <div
+      aria-live="assertive"
+      class="save-error"
+      data-testid="save-error"
+      role="alert"
+    >
+      {{ saveError() }}
+    </div>
+  }
+
   <mat-dialog-actions align="end">
     <button mat-button type="button" (click)="onCancel()">
       <span i18n>Cancel</span>
@@ -163,7 +174,7 @@
       color="primary"
       mat-flat-button
       type="submit"
-      [disabled]="form.invalid"
+      [disabled]="form.invalid || isSubmitting()"
     >
       <span i18n>Save</span>
     </button>
