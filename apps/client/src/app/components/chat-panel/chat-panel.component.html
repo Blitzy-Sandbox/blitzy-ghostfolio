@@ -1,26 +1,4 @@
 <div class="chat-panel-container">
-  @if (isStreaming()) {
-    <mat-progress-bar
-      data-testid="streaming-progress"
-      mode="indeterminate"
-    ></mat-progress-bar>
-  }
-
-  @if (errorMessage(); as message) {
-    <div class="error-banner" role="alert">
-      <span class="error-message">{{ message }}</span>
-      <button
-        color="warn"
-        data-testid="reconnect-button"
-        mat-stroked-button
-        type="button"
-        (click)="reconnect()"
-      >
-        Reconnect
-      </button>
-    </div>
-  }
-
   <div class="message-list" data-testid="message-list">
     @if (messages().length === 0) {
       <div class="message-empty" i18n>
@@ -34,34 +12,65 @@
         [class.message-assistant]="message.role === 'assistant'"
         [class.message-user]="message.role === 'user'"
       >
-        <div class="message-role">{{ message.role }}</div>
+        <div class="message-role">
+          @if (message.role === 'user') {
+            <ng-container i18n>You</ng-container>
+          } @else {
+            <ng-container i18n>Assistant</ng-container>
+          }
+        </div>
         <div class="message-content">{{ message.content }}</div>
       </div>
     }
   </div>
 
-  <form class="input-row" (submit)="onSend(); $event.preventDefault()">
-    <mat-form-field appearance="outline" class="input-field">
-      <mat-label i18n>Message</mat-label>
+  @if (isStreaming()) {
+    <mat-progress-bar
+      data-testid="streaming-progress"
+      mode="indeterminate"
+    ></mat-progress-bar>
+  }
+
+  @if (errorMessage()) {
+    <div class="error-banner" role="alert">
+      <span class="error-message">{{ errorMessage() }}</span>
+      <button
+        color="primary"
+        data-testid="reconnect-button"
+        i18n
+        mat-flat-button
+        type="button"
+        (click)="reconnect()"
+      >
+        Reconnect
+      </button>
+    </div>
+  }
+
+  <form class="input-row" (ngSubmit)="onSend()">
+    <mat-form-field appearance="outline" class="input-field without-hint">
+      <mat-label i18n>Ask about your portfolio</mat-label>
       <input
         data-testid="chat-input"
+        i18n-placeholder
         matInput
-        name="chatInput"
+        placeholder="Type your question..."
         type="text"
         [disabled]="isStreaming()"
         [ngModel]="inputText()"
+        [ngModelOptions]="{ standalone: true }"
         (ngModelChange)="inputText.set($event)"
       />
     </mat-form-field>
-
     <button
       color="primary"
       data-testid="send-button"
+      i18n
       mat-flat-button
       type="submit"
-      [disabled]="isStreaming() || inputText().trim().length === 0"
+      [disabled]="isStreaming() || !inputText().trim()"
     >
-      <span i18n>Send</span>
+      Send
     </button>
   </form>
 </div>
