@@ -2,7 +2,12 @@ import { HasPermissionGuard } from '@ghostfolio/api/guards/has-permission.guard'
 import { permissions } from '@ghostfolio/common/permissions';
 import type { RequestWithUser } from '@ghostfolio/common/types';
 
-import { HttpException, HttpStatus } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  UnauthorizedException
+} from '@nestjs/common';
 import { HTTP_CODE_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Reflector } from '@nestjs/core';
@@ -198,6 +203,39 @@ describe('SnowflakeSyncController', () => {
   // fail this test. This mirrors the canonical
   // `user-financial-profile.controller.spec.ts` pattern.
   // -------------------------------------------------------------------------
+
+  it('maps the 401 / 403 contract to NestJS UnauthorizedException / ForbiddenException', () => {
+    // AAP § 0.2.4.2 mandates the controller endpoint return:
+    //   - HTTP 401 when no valid JWT is supplied  (UnauthorizedException)
+    //   - HTTP 403 when the caller lacks `triggerSnowflakeSync` permission
+    //     (ForbiddenException at the framework level)
+    //
+    // The runtime exception throwing happens in @nestjs/passport (for 401)
+    // and in `HasPermissionGuard.canActivate` (for 403, which uses raw
+    // `HttpException(StatusCodes.FORBIDDEN)` — see the next test). This
+    // assertion documents the contract in terms of the named NestJS
+    // exception classes and proves the framework's HTTP status mapping
+    // is what we expect:
+    //   - UnauthorizedException -> 401
+    //   - ForbiddenException     -> 403
+    //
+    // A future NestJS upgrade that changed those mappings would fail
+    // this test loudly rather than silently breaking the AAP § 0.2.4.2
+    // contract surface.
+    expect(new UnauthorizedException().getStatus()).toBe(
+      HttpStatus.UNAUTHORIZED
+    );
+    expect(new ForbiddenException().getStatus()).toBe(HttpStatus.FORBIDDEN);
+
+    // Sanity: both extend HttpException, so the global NestJS exception
+    // filter treats them as first-class HTTP responses (no 500-with-stack
+    // leakage). This is the reason the existing 403 test (Test 6 below)
+    // can assert `instanceof HttpException` rather than the more specific
+    // `instanceof ForbiddenException`: the HasPermissionGuard throws a
+    // raw HttpException rather than constructing a ForbiddenException.
+    expect(new UnauthorizedException()).toBeInstanceOf(HttpException);
+    expect(new ForbiddenException()).toBeInstanceOf(HttpException);
+  });
 
   it("registers AuthGuard('jwt') + HasPermissionGuard on triggerSync (HTTP 401/403 wiring)", () => {
     const guards = Reflect.getMetadata(
