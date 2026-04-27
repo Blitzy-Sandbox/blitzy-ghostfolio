@@ -54,6 +54,7 @@ import { HealthModule } from './health/health.module';
 import { ImportModule } from './import/import.module';
 import { InfoModule } from './info/info.module';
 import { LogoModule } from './logo/logo.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { PlatformModule } from './platform/platform.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { RebalancingModule } from './rebalancing/rebalancing.module';
@@ -127,6 +128,7 @@ import { UserModule } from './user/user.module';
     InfoModule,
     LogoModule,
     MarketDataModule,
+    MetricsModule,
     PlatformModule,
     PlatformsModule,
     PortfolioModule,
