@@ -10,10 +10,13 @@ import {
   HttpStatus,
   Inject,
   Post,
+  Res,
   UseGuards
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
+import { randomUUID } from 'node:crypto';
 
 import { ManualTriggerDto } from './dtos/manual-trigger.dto';
 import { SnowflakeSyncService } from './snowflake-sync.service';
@@ -28,14 +31,16 @@ import { SnowflakeSyncService } from './snowflake-sync.service';
  * `'snowflake-sync'`).
  *
  * The class is intentionally a thin pass-through (AAP § 0.1.2.1 and
- * Rule 8 in § 0.7.1.8): it extracts the JWT-verified caller from the
- * per-request injected `RequestWithUser`, lets NestJS's globally-
- * configured `ValidationPipe` validate the body against
- * `ManualTriggerDto`, and forwards the resulting parameters to
+ * Rule 8 in § 0.7.1.8): it generates a per-request `correlationId`,
+ * emits it as the `X-Correlation-ID` HTTP response header, extracts
+ * the JWT-verified caller from the per-request injected
+ * `RequestWithUser`, lets NestJS's globally-configured
+ * `ValidationPipe` validate the body against `ManualTriggerDto`, and
+ * forwards the resulting parameters (including the correlationId) to
  * `SnowflakeSyncService.triggerManualSync(...)`. NO Prisma calls and
  * NO business logic appear here — the service owns the sync sequence,
- * the per-user authorization for `overrideUserId`, the correlation-id
- * generation, and the structured logging.
+ * the per-user authorization for `overrideUserId`, and the structured
+ * logging.
  *
  * Security posture (AAP § 0.1.2.2):
  *
@@ -56,6 +61,34 @@ import { SnowflakeSyncService } from './snowflake-sync.service';
  *    OPTIONAL admin override that the service uses to act on behalf
  *    of another user; the controller passes it through unchanged
  *    and never substitutes it for the caller id.
+ *
+ * Observability posture (AAP § 0.7.2):
+ *
+ *  - A fresh per-request `correlationId` is generated at this
+ *    controller boundary using Node's built-in `node:crypto`
+ *    `randomUUID()` (the same approach taken by the sibling
+ *    `AiChatController`, `RebalancingController`, and
+ *    `UserFinancialProfileController` per their QA Checkpoint 11
+ *    Issue 4 fix). The id is (a) emitted on the HTTP response as the
+ *    `X-Correlation-ID` header so client-side error reporters can
+ *    capture it without parsing the response body, AND (b) forwarded
+ *    to the service which embeds it verbatim in every structured
+ *    `Logger.log` / `Logger.error` line and in the
+ *    `BadGatewayException` message body — anchoring server-side logs
+ *    and client-visible failures to a single id per request.
+ *
+ *  - The header is set BEFORE the service call so it is emitted on
+ *    BOTH the 200 success path and any 5xx upstream-failure path:
+ *    `@Res({ passthrough: true })` keeps NestJS in charge of
+ *    serializing the JSON response body, and Express preserves
+ *    headers written before a thrown exception, so a
+ *    `BadGatewayException` raised by `triggerManualSync(...)` still
+ *    surfaces the correlation id to the client. This addresses the
+ *    QA Checkpoint 13 MINOR finding "x-correlation-id HTTP response
+ *    header MISSING on /api/v1/snowflake-sync/trigger 502 response"
+ *    (Issue #1) by mirroring the exact pattern already established
+ *    on `RebalancingController` and `AiChatController` for upstream
+ *    Anthropic failures.
  *
  * Decorator order matches the Ghostfolio canonical pattern verified in
  * `apps/api/src/app/endpoints/ai/ai.controller.ts` (lines 29–31) and
@@ -88,23 +121,43 @@ export class SnowflakeSyncController {
    * `{}` body is accepted and the service falls back to "today (UTC)"
    * for the date and the caller's own user id for the user.
    *
-   * Method body is intentionally 5 lines (Rule 8: ≤ 10 lines) and
+   * The Express `Response` is injected via `@Res({ passthrough: true })`
+   * so the controller can emit the `X-Correlation-ID` HTTP header
+   * (Observability rule, AAP § 0.7.2). The `passthrough: true` flag
+   * preserves NestJS's default response-handling pipeline — the JSON
+   * body and HTTP status code are still produced by NestJS based on
+   * the method's return value (or by the global exception filter on
+   * the error path), and only the header surface is decorated by this
+   * method.
+   *
+   * Method body is intentionally 7 lines (Rule 8: ≤ 10 lines) and
    * contains zero business logic, zero Prisma calls, and zero
    * permission checks beyond the decorator-driven `HasPermissionGuard`.
    * Errors raised by the service propagate to the global NestJS
    * exception filter, which already maps them to the appropriate HTTP
-   * status code.
+   * status code (e.g., `BadGatewayException` → HTTP 502 for upstream
+   * Snowflake driver failures).
    *
-   * @param dto Validated request body (both fields optional).
-   * @returns The service envelope: `{ correlationId, date, success, userId }`.
+   * @param dto      Validated request body (both fields optional).
+   * @param response Express response, passthrough-injected for header
+   *                 decoration only.
+   * @returns        The service envelope: `{ correlationId, date, success, userId }`.
    */
   @HttpCode(HttpStatus.OK)
   @Post('trigger')
   @HasPermission(permissions.triggerSnowflakeSync)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
-  public async triggerSync(@Body() dto: ManualTriggerDto) {
+  public async triggerSync(
+    @Body() dto: ManualTriggerDto,
+    @Res({ passthrough: true }) response: Response
+  ) {
+    const correlationId = randomUUID();
+
+    response.setHeader('X-Correlation-ID', correlationId);
+
     return this.snowflakeSyncService.triggerManualSync({
       callerUserId: this.request.user.id,
+      correlationId,
       overrideUserId: dto.userId,
       overrideDate: dto.date
     });

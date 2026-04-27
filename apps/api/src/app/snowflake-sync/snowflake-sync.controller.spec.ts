@@ -13,6 +13,7 @@ import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 
 import { ManualTriggerDto } from './dtos/manual-trigger.dto';
 import { SnowflakeSyncController } from './snowflake-sync.controller';
@@ -106,6 +107,37 @@ describe('SnowflakeSyncController', () => {
     } as unknown as RequestWithUser;
   }
 
+  /**
+   * Factory that returns a fresh, minimal Express `Response` mock per
+   * call.
+   *
+   * The controller injects `@Res({ passthrough: true }) response:
+   * Response` (added per QA Checkpoint 13 Issue #1 / AAP § 0.7.2
+   * Observability rule to expose `X-Correlation-ID` to clients on
+   * BOTH the 200 success path AND the 502 upstream-failure path).
+   * The only `Response` API touched by the controller is
+   * `setHeader(name, value)`; we capture it as a `jest.fn()` so
+   * individual tests can assert (a) the header was set and (b) its
+   * value matches the per-request `correlationId` forwarded to the
+   * service.
+   *
+   * A FACTORY (not a shared instance) is used because each `it(...)`
+   * block creates its own Response — without isolation, a regression
+   * that writes to the same `setHeader` mock from multiple tests
+   * would silently leak state across the suite.
+   *
+   * Pattern parity: this mirrors the identical helper in
+   * `apps/api/src/app/rebalancing/rebalancing.controller.spec.ts`
+   * (lines 95–99), the canonical fixture for the
+   * `@Res({ passthrough: true })` + `setHeader` test surface
+   * established by the QA Checkpoint 11 Issue 4 fix.
+   */
+  const buildMockResponse = (): jest.Mocked<Response> => {
+    return {
+      setHeader: jest.fn()
+    } as unknown as jest.Mocked<Response>;
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
     request = buildRequest(ADMIN_USER_ID);
@@ -132,7 +164,7 @@ describe('SnowflakeSyncController', () => {
     );
 
     const dto: ManualTriggerDto = {};
-    const result = await controller.triggerSync(dto);
+    const result = await controller.triggerSync(dto, buildMockResponse());
 
     // AAP § 0.7.5.2: returns the full sync envelope verbatim. The HTTP
     // 200 status code itself is asserted via the @HttpCode(HttpStatus.OK)
@@ -167,7 +199,7 @@ describe('SnowflakeSyncController', () => {
       date: '2025-01-15',
       userId: OTHER_USER_ID
     };
-    const result = await controller.triggerSync(dto);
+    const result = await controller.triggerSync(dto, buildMockResponse());
 
     expect(result).toBe(expectedEnvelope);
     const args = snowflakeSyncService.triggerManualSync.mock.calls[0][0];
@@ -190,7 +222,164 @@ describe('SnowflakeSyncController', () => {
     );
     snowflakeSyncService.triggerManualSync.mockRejectedValueOnce(upstreamError);
 
-    await expect(controller.triggerSync({})).rejects.toBe(upstreamError);
+    await expect(controller.triggerSync({}, buildMockResponse())).rejects.toBe(
+      upstreamError
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 1b — X-Correlation-ID response header (Observability rule)
+  //           QA Checkpoint 13 Issue #1 + AAP § 0.7.2
+  //
+  // Issue #1 (MINOR) at QA Checkpoint 13: "x-correlation-id HTTP
+  // response header MISSING on /api/v1/snowflake-sync/trigger 502
+  // response. Header IS present on POST /api/v1/ai/chat SSE
+  // responses and on POST /api/v1/ai/rebalancing 502 responses."
+  //
+  // The fix mirrors the identical pattern already established on
+  // `RebalancingController` (QA Checkpoint 11 Issue 4 fix at lines
+  // 156–164 of rebalancing.controller.ts) and `AiChatController`:
+  // the controller injects the Express `Response` via
+  // `@Res({ passthrough: true })` and emits the `X-Correlation-ID`
+  // HTTP header carrying the same UUID that the controller forwards
+  // to `SnowflakeSyncService.triggerManualSync(...)` as
+  // `correlationId`. The service then embeds that same id in every
+  // structured `Logger.log` / `Logger.error` line and in the
+  // `BadGatewayException` message body — so server-side logs, the
+  // 5xx response body, and the HTTP response header all share a
+  // single id per request. Operators tracing a client-visible
+  // failure can read the header directly without parsing the
+  // response body or correlating against the server log timestamp.
+  //
+  // The header is set BEFORE the service call so it is emitted on
+  // BOTH the 200 success path AND any 502 upstream-failure path:
+  // Express preserves headers written before a thrown exception, so
+  // a `BadGatewayException` raised by `triggerManualSync(...)` (e.g.,
+  // when the Snowflake driver times out, as happens against the QA
+  // mock environment) still surfaces the correlation id to the
+  // client.
+  // -------------------------------------------------------------------------
+
+  it('sets X-Correlation-ID response header matching the per-request correlationId (QA Checkpoint 13 Issue #1)', async () => {
+    snowflakeSyncService.triggerManualSync.mockResolvedValueOnce({
+      correlationId: 'corr-uuid-passthrough',
+      date: '2025-04-26',
+      success: true,
+      userId: ADMIN_USER_ID
+    });
+
+    const dto: ManualTriggerDto = {};
+    const response = buildMockResponse();
+
+    await controller.triggerSync(dto, response);
+
+    // The controller MUST call `response.setHeader('X-Correlation-ID',
+    // <id>)` exactly once per request. A regression that omits the
+    // call (or substitutes a different header name) would re-introduce
+    // the original Checkpoint 13 Issue #1 observability gap.
+    expect(response.setHeader).toHaveBeenCalledTimes(1);
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      expect.any(String)
+    );
+
+    // The header value MUST equal the same `correlationId` forwarded
+    // to the service — anchoring server-side logs (which use it in
+    // `Logger.log` / `Logger.error` lines) and client-side
+    // diagnostics (which read the header) to a single id per
+    // request. This invariant is the entire point of the fix: a
+    // header with a value that diverges from the service-side id
+    // would defeat log correlation just as effectively as the
+    // missing header would.
+    const headerCall = response.setHeader.mock.calls[0];
+    const headerValue = headerCall[1];
+    const serviceCallArg =
+      snowflakeSyncService.triggerManualSync.mock.calls[0][0];
+    expect(headerValue).toBe(serviceCallArg.correlationId);
+  });
+
+  it('emits the X-Correlation-ID header BEFORE delegating to the service (so 5xx error paths also surface it)', async () => {
+    // QA Checkpoint 13 Issue #1 surfaced specifically on the 502
+    // path (the QA mock environment's Snowflake driver times out and
+    // the service raises `BadGatewayException`). The fix's correctness
+    // therefore hinges on the header being set BEFORE the service
+    // call: Express preserves headers written before a thrown
+    // exception, but if `setHeader(...)` were called AFTER the
+    // service call (i.e., between `await ...` and `return`), the
+    // 5xx error path would skip the header assignment entirely.
+    //
+    // We verify the ordering by recording the call sequence: when
+    // the service throws, `setHeader(...)` MUST have already been
+    // invoked exactly once. If a future refactor reverses the
+    // ordering, this test fails on the 0-vs-1 setHeader call count.
+    const upstreamError = new Error(
+      'Snowflake driver timed out (mock environment)'
+    );
+    snowflakeSyncService.triggerManualSync.mockRejectedValueOnce(upstreamError);
+
+    const dto: ManualTriggerDto = {};
+    const response = buildMockResponse();
+
+    await expect(controller.triggerSync(dto, response)).rejects.toBe(
+      upstreamError
+    );
+
+    // setHeader was called BEFORE the service raised — so even on
+    // the error path, the header is present on the HTTP response
+    // surface (Express will emit it to the wire when the global
+    // exception filter writes the 502 status and body).
+    expect(response.setHeader).toHaveBeenCalledTimes(1);
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      expect.any(String)
+    );
+
+    // The header value MUST equal the same `correlationId` forwarded
+    // to the service so the 502 error-path correlationId in the
+    // exception message body matches the correlationId in the
+    // response header. The service receives the id via its
+    // `correlationId` argument; we read it from the call args.
+    const headerCall = response.setHeader.mock.calls[0];
+    const headerValue = headerCall[1];
+    const serviceCallArg =
+      snowflakeSyncService.triggerManualSync.mock.calls[0][0];
+    expect(headerValue).toBe(serviceCallArg.correlationId);
+  });
+
+  it('generates a distinct correlationId per request (Observability rule)', async () => {
+    snowflakeSyncService.triggerManualSync.mockResolvedValue({
+      correlationId: 'irrelevant-fixture',
+      date: '2025-04-26',
+      success: true,
+      userId: ADMIN_USER_ID
+    });
+
+    const dto: ManualTriggerDto = {};
+    const responseA = buildMockResponse();
+    const responseB = buildMockResponse();
+
+    await controller.triggerSync(dto, responseA);
+    await controller.triggerSync(dto, responseB);
+
+    // Two requests => two distinct correlationIds. A regression
+    // where the controller cached or shared a correlationId across
+    // requests would defeat log-correlation and obscure cross-request
+    // failure analysis. Each request gets its own id derived from
+    // a fresh `crypto.randomUUID()` call inside the controller.
+    const firstCallArg =
+      snowflakeSyncService.triggerManualSync.mock.calls[0][0];
+    const secondCallArg =
+      snowflakeSyncService.triggerManualSync.mock.calls[1][0];
+    expect(firstCallArg.correlationId).not.toEqual(secondCallArg.correlationId);
+
+    // And each response received the OTHER request's id — i.e., the
+    // header value matches its OWN request's service-call id, not
+    // the other request's id.
+    const headerA = responseA.setHeader.mock.calls[0][1];
+    const headerB = responseB.setHeader.mock.calls[0][1];
+    expect(headerA).toBe(firstCallArg.correlationId);
+    expect(headerB).toBe(secondCallArg.correlationId);
+    expect(headerA).not.toEqual(headerB);
   });
 
   // -------------------------------------------------------------------------
@@ -419,7 +608,7 @@ describe('SnowflakeSyncController', () => {
     // not substituted for `callerUserId`. This protects audit logs and
     // metrics labels from being forged via the request body.
     const dto: ManualTriggerDto = { userId: OTHER_USER_ID };
-    await controller.triggerSync(dto);
+    await controller.triggerSync(dto, buildMockResponse());
 
     const args = snowflakeSyncService.triggerManualSync.mock.calls[0][0];
     expect(args.callerUserId).toBe(ADMIN_USER_ID);
