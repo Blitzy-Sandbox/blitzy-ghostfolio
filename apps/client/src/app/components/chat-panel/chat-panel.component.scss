@@ -26,9 +26,20 @@
   word-wrap: break-word;
 }
 
+// QA Checkpoint 12 Issue #4 (Design System Inheritance):
+// The Ghostfolio host theme uses `mat.all-component-themes()` rather than
+// `mat.theme()`, so `--mat-sys-*` system tokens are not generated at runtime
+// and `var(--mat-sys-*, fallback)` references render the FALLBACK value.
+// Where the fallback represents primary-brand color, we explicitly map it
+// to the host's cyan-teal palette (defined in apps/client/src/styles/theme.scss
+// as `--gf-theme-primary-500: #36cfcc`, with palette levels 60 = #00a19f,
+// 80 = #47dbd7, 90 = #6bf7f4) rather than Material's default Indigo so the
+// chat panel visually inherits the existing Ghostfolio brand identity.
 .message-user {
   align-self: flex-end;
-  background-color: var(--mat-sys-primary-container, rgba(63, 81, 181, 0.12));
+  // Light theme: cyan-teal palette 60 (#00a19f = rgb(0, 161, 159)) tinted to
+  // 12% alpha — replaces Material Indigo (rgb(63, 81, 181)) fallback.
+  background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
   color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
 }
 
@@ -91,9 +102,13 @@
 
 :host-context(.theme-dark) {
   .message-user {
+    // QA Checkpoint 12 Issue #4 (dark theme): cyan-teal palette 80
+    // (#47dbd7 = rgb(71, 219, 215)) tinted to 16% alpha — replaces the
+    // Material bluish-purple (rgb(140, 158, 255)) fallback so the dark
+    // mode user-message bubble inherits the host brand palette.
     background-color: var(
       --mat-sys-primary-container,
-      rgba(140, 158, 255, 0.16)
+      rgba(71, 219, 215, 0.16)
     );
     color: var(--mat-sys-on-primary-container, var(--light-primary-text));
   }

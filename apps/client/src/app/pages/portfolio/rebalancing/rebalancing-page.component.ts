@@ -14,6 +14,13 @@ import {
   signal
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+// QA Checkpoint 12 Issue #2 (Component Library Adherence — AAP § 0.5.3):
+// MatButtonModule is required so the error-state "Try again" recovery action
+// can be a `mat-flat-button color="primary"` directive — bringing parity with
+// the chat-panel's "Reconnect" button and providing Material ripple, focus
+// management, ARIA semantics, and theme-token alignment that the previous
+// plain HTML <button> lacked.
+import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 
@@ -27,7 +34,7 @@ const REBALANCING_FALLBACK_ERROR_MESSAGE = $localize`Unable to load rebalancing 
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CommonModule, MatCardModule, MatProgressBarModule],
+  imports: [CommonModule, MatButtonModule, MatCardModule, MatProgressBarModule],
   selector: 'gf-rebalancing-page',
   standalone: true,
   styleUrls: ['./rebalancing-page.component.scss'],

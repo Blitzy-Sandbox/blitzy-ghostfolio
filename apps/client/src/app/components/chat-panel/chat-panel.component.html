@@ -1,5 +1,26 @@
 <div class="chat-panel-container">
-  <div class="message-list" data-testid="message-list">
+  <!--
+    QA Checkpoint 12 Issue #1 (Accessibility — WCAG 2.1 SC 4.1.3 Status Messages):
+    The message-list container hosts dynamically-appended chat content as the
+    SSE stream delivers assistant tokens. To make these incremental updates
+    perceivable by users of assistive technology, the container is declared as
+    a live region:
+      - role="log"             — semantic role for chronological message logs;
+                                 announces new entries as they arrive
+      - aria-live="polite"     — screen readers will queue announcements
+                                 without interrupting the user's current focus
+      - aria-relevant="additions text" — announce only newly-added content,
+                                 including text changes (each appended token)
+    Note: aria-atomic is intentionally OMITTED so screen readers announce the
+    delta rather than re-reading the entire conversation on each token.
+  -->
+  <div
+    aria-live="polite"
+    aria-relevant="additions text"
+    class="message-list"
+    data-testid="message-list"
+    role="log"
+  >
     @if (messages().length === 0) {
       <div class="message-empty" i18n>
         Ask a question about your portfolio to get started.

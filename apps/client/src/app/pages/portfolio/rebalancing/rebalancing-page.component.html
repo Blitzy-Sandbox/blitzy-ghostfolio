@@ -9,7 +9,22 @@
     <mat-card appearance="outlined" class="error-card mb-3">
       <mat-card-content>
         <p class="error-message">{{ errorMessage() }}</p>
-        <button class="reload-button" i18n type="button" (click)="onReload()">
+        <!--
+          QA Checkpoint 12 Issue #2 (Component Library Adherence — AAP § 0.5.3):
+          The "Try again" recovery action is a `mat-flat-button color="primary"`
+          directive — matching the chat-panel's "Reconnect" button so that both
+          error-recovery patterns share consistent Material ripple, focus
+          indicator, ARIA semantics, theme tokens, and the project's 48×48px
+          touch-target convention.
+        -->
+        <button
+          class="reload-button"
+          color="primary"
+          i18n
+          mat-flat-button
+          type="button"
+          (click)="onReload()"
+        >
           Try again
         </button>
       </mat-card-content>

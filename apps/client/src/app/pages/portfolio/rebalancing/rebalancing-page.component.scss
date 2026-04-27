@@ -16,6 +16,30 @@
 // Warning blocks use the tertiary-container surface (warning channel is not
 // part of M3's standard token set; tertiary-container is the closest M3
 // concept for cautionary backgrounds).
+//
+// QA Checkpoint 12 Issue #4 (Design System Inheritance):
+// The Ghostfolio host theme uses `mat.all-component-themes()` rather than
+// `mat.theme()`, so the `--mat-sys-*` system tokens are not generated at
+// runtime. As a result, all `var(--mat-sys-*, fallback)` references render
+// the FALLBACK value. Where the fallback represents the project's primary
+// brand color (cyan-teal, exposed at `:root` as `--gf-theme-primary-500:
+// #36cfcc`), we explicitly map the fallback to the host's cyan-teal palette
+// rather than Material's default Indigo so the new Rebalancing page
+// visually inherits the existing Ghostfolio brand identity.
+//
+// Cyan-teal palette levels (from apps/client/src/styles/theme.scss):
+//   primary 30 = #00504e   (rgb(  0,  80,  78)) — accessible text on tints
+//   primary 40 = #006a68   (rgb(  0, 106, 104)) — focus outlines, dark text
+//   primary 60 = #00a19f   (rgb(  0, 161, 159)) — palette base
+//   primary 80 = #47dbd7   (rgb( 71, 219, 215)) — dark-theme accent
+//   primary 90 = #6bf7f4   (rgb(107, 247, 244)) — dark-theme on-tint text
+//   --gf-theme-primary-500 = #36cfcc (rgb(54, 207, 204)) — host button color
+//
+// QA Checkpoint 12 Issue #3 (Accessibility — WCAG 2.1 SC 1.4.3):
+// The BUY badge text color was Material Green 800 (rgb(46, 125, 50)) which
+// computed at 4.46:1 contrast on its alpha-blended green-tinted background
+// — 0.04 below the 4.5:1 AA threshold for 12px 600-weight normal text. It
+// is now Material Green 900 (rgb(27, 94, 32) = #1B5E20) for ~6.0:1 contrast.
 
 :host {
   color: var(--mat-sys-on-surface, rgb(var(--dark-primary-text)));
@@ -76,7 +100,11 @@
             --mat-sys-tertiary-container,
             rgba(76, 175, 80, 0.15)
           );
-          color: var(--mat-sys-on-tertiary-container, rgb(46, 125, 50));
+          // QA Checkpoint 12 Issue #3: darkened from Material Green 800
+          // (rgb(46, 125, 50) → 4.46:1 contrast) to Material Green 900
+          // (#1B5E20 = rgb(27, 94, 32) → ~6.0:1 contrast) to satisfy
+          // WCAG 2.1 AA SC 1.4.3 (4.5:1 minimum for 12px 600-weight text).
+          color: var(--mat-sys-on-tertiary-container, #1b5e20);
         }
       }
 
@@ -141,12 +169,19 @@
         }
 
         .goal-reference {
+          // QA Checkpoint 12 Issue #4: cyan-teal-tinted background (host
+          // primary 60 = #00a19f = rgb(0, 161, 159)) replaces Material Indigo
+          // fallback so the badge visually inherits the host brand palette.
           background-color: var(
             --mat-sys-primary-container,
-            rgba(63, 81, 181, 0.1)
+            rgba(0, 161, 159, 0.1)
           );
           border-radius: 0.25rem;
-          color: var(--mat-sys-on-primary-container, rgb(63, 81, 181));
+          // QA Checkpoint 12 Issue #4: cyan-teal text (host primary 30 =
+          // #00504e = rgb(0, 80, 78)) replaces Material Indigo fallback for
+          // ~10:1 contrast on the cyan-teal tinted background — well above
+          // WCAG AA 4.5:1 threshold.
+          color: var(--mat-sys-on-primary-container, rgb(0, 80, 78));
           font-size: 0.75rem;
           margin-left: auto;
           padding: 0.25rem 0.5rem;
@@ -168,28 +203,12 @@
       margin-bottom: 0.75rem;
     }
 
-    .reload-button {
-      background-color: transparent;
-      border: 1px solid var(--mat-sys-outline, rgba(0, 0, 0, 0.3));
-      border-radius: 0.25rem;
-      color: inherit;
-      cursor: pointer;
-      font-size: 0.875rem;
-      padding: 0.375rem 0.75rem;
-      transition: background-color 0.15s ease-in-out;
-
-      &:hover {
-        background-color: var(
-          --mat-sys-surface-container-highest,
-          rgba(0, 0, 0, 0.05)
-        );
-      }
-
-      &:focus-visible {
-        outline: 2px solid var(--mat-sys-primary, rgb(63, 81, 181));
-        outline-offset: 2px;
-      }
-    }
+    // QA Checkpoint 12 Issue #2: the `.reload-button` element is now a
+    // `mat-flat-button color="primary"` directive (parity with the chat
+    // panel's "Reconnect" button). Material handles container, label,
+    // ripple, focus, and hover styling internally via theme tokens; the
+    // class is retained as a hook for future spacing/positioning needs
+    // but defines no visual overrides — Material's defaults apply.
   }
 }
 
@@ -266,11 +285,16 @@
         }
 
         .goal-reference {
+          // QA Checkpoint 12 Issue #4 (dark theme): cyan-teal-tinted
+          // background (host primary 80 = #47dbd7 = rgb(71, 219, 215)) and
+          // light cyan-teal text (host primary 90 = #6bf7f4 =
+          // rgb(107, 247, 244)) replace Material Indigo fallbacks so the
+          // badge inherits the host brand palette in dark mode.
           background-color: var(
             --mat-sys-primary-container,
-            rgba(159, 168, 218, 0.18)
+            rgba(71, 219, 215, 0.18)
           );
-          color: var(--mat-sys-on-primary-container, rgb(159, 168, 218));
+          color: var(--mat-sys-on-primary-container, rgb(107, 247, 244));
         }
       }
 
@@ -285,19 +309,9 @@
       color: var(--mat-sys-error, rgb(239, 154, 154));
     }
 
-    .reload-button {
-      border-color: var(--mat-sys-outline, rgba(255, 255, 255, 0.4));
-
-      &:hover {
-        background-color: var(
-          --mat-sys-surface-container-highest,
-          rgba(255, 255, 255, 0.08)
-        );
-      }
-
-      &:focus-visible {
-        outline-color: var(--mat-sys-primary, rgb(159, 168, 218));
-      }
-    }
+    // QA Checkpoint 12 Issue #2 (dark theme): see light-theme note —
+    // `.reload-button` is now a `mat-flat-button` directive; Material
+    // handles all visual styling via theme tokens. No dark-theme overrides
+    // are required.
   }
 }
