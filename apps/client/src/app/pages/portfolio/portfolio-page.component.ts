@@ -1,3 +1,4 @@
+import { ChatPanelComponent } from '@ghostfolio/client/components/chat-panel/chat-panel.component';
 import { UserService } from '@ghostfolio/client/services/user/user.service';
 import { TabConfiguration, User } from '@ghostfolio/common/interfaces';
 import { internalRoutes } from '@ghostfolio/common/routes/routes';
@@ -17,13 +18,14 @@ import {
   calculatorOutline,
   pieChartOutline,
   scanOutline,
-  swapVerticalOutline
+  swapVerticalOutline,
+  syncOutline
 } from 'ionicons/icons';
 import { DeviceDetectorService } from 'ngx-device-detector';
 
 @Component({
   host: { class: 'page has-tabs' },
-  imports: [MatTabsModule, RouterModule],
+  imports: [ChatPanelComponent, MatTabsModule, RouterModule],
   selector: 'gf-portfolio-page',
   styleUrls: ['./portfolio-page.scss'],
   templateUrl: './portfolio-page.html'
@@ -67,6 +69,12 @@ export class PortfolioPageComponent implements OnInit {
               routerLink: internalRoutes.portfolio.subRoutes.fire.routerLink
             },
             {
+              iconName: 'sync-outline',
+              label: internalRoutes.portfolio.subRoutes.rebalancing.title,
+              routerLink:
+                internalRoutes.portfolio.subRoutes.rebalancing.routerLink
+            },
+            {
               iconName: 'scan-outline',
               label: internalRoutes.portfolio.subRoutes.xRay.title,
               routerLink: internalRoutes.portfolio.subRoutes.xRay.routerLink
@@ -83,7 +91,8 @@ export class PortfolioPageComponent implements OnInit {
       calculatorOutline,
       pieChartOutline,
       scanOutline,
-      swapVerticalOutline
+      swapVerticalOutline,
+      syncOutline
     });
   }
 

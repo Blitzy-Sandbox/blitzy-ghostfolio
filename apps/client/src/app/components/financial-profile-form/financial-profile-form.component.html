@@ -1,0 +1,182 @@
+<form [formGroup]="form" (ngSubmit)="onSubmit()">
+  <h2 i18n mat-dialog-title>Financial Profile</h2>
+
+  <mat-dialog-content>
+    <div class="form-section">
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Retirement Target Age</mat-label>
+        <input formControlName="retirementTargetAge" matInput type="number" />
+        @if (
+          form
+            .get('retirementTargetAge')
+            ?.hasError('retirementAgeBelowCurrentAge')
+        ) {
+          <mat-error i18n>
+            Retirement target age must be greater than your current age
+          </mat-error>
+        } @else if (form.get('retirementTargetAge')?.hasError('min')) {
+          <mat-error i18n>Minimum value is 18</mat-error>
+        } @else if (form.get('retirementTargetAge')?.hasError('max')) {
+          <mat-error i18n>Maximum value is 100</mat-error>
+        } @else if (form.get('retirementTargetAge')?.hasError('required')) {
+          <mat-error i18n>This field is required</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Retirement Target Amount</mat-label>
+        <input
+          formControlName="retirementTargetAmount"
+          matInput
+          min="0"
+          type="number"
+        />
+        @if (form.get('retirementTargetAmount')?.hasError('min')) {
+          <mat-error i18n>Value must be zero or greater</mat-error>
+        } @else if (form.get('retirementTargetAmount')?.hasError('required')) {
+          <mat-error i18n>This field is required</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Time Horizon (Years)</mat-label>
+        <input
+          formControlName="timeHorizonYears"
+          matInput
+          min="1"
+          type="number"
+        />
+        @if (form.get('timeHorizonYears')?.hasError('min')) {
+          <mat-error i18n>Minimum value is 1</mat-error>
+        } @else if (form.get('timeHorizonYears')?.hasError('required')) {
+          <mat-error i18n>This field is required</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Risk Tolerance</mat-label>
+        <mat-select formControlName="riskTolerance">
+          @for (option of riskToleranceOptions; track option) {
+            <mat-option [value]="option">{{ option }}</mat-option>
+          }
+        </mat-select>
+        @if (form.get('riskTolerance')?.hasError('required')) {
+          <mat-error i18n>This field is required</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Monthly Income</mat-label>
+        <input formControlName="monthlyIncome" matInput min="0" type="number" />
+        @if (form.get('monthlyIncome')?.hasError('min')) {
+          <mat-error i18n>Value must be zero or greater</mat-error>
+        } @else if (form.get('monthlyIncome')?.hasError('required')) {
+          <mat-error i18n>This field is required</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="form-field">
+        <mat-label i18n>Monthly Debt Obligations</mat-label>
+        <input
+          formControlName="monthlyDebtObligations"
+          matInput
+          min="0"
+          type="number"
+        />
+        @if (form.get('monthlyDebtObligations')?.hasError('min')) {
+          <mat-error i18n>Value must be zero or greater</mat-error>
+        } @else if (form.get('monthlyDebtObligations')?.hasError('required')) {
+          <mat-error i18n>This field is required</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    <div class="investment-goals-section">
+      <h3 i18n>Investment Goals</h3>
+
+      <div formArrayName="investmentGoals">
+        @for (
+          goalGroup of investmentGoalsArray.controls;
+          track $index;
+          let i = $index
+        ) {
+          <div class="goal-row" [formGroupName]="i">
+            <mat-form-field appearance="outline" class="form-field">
+              <mat-label i18n>Goal Label</mat-label>
+              <input formControlName="label" matInput type="text" />
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="form-field">
+              <mat-label i18n>Target Amount</mat-label>
+              <input
+                formControlName="targetAmount"
+                matInput
+                min="0"
+                type="number"
+              />
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="form-field">
+              <mat-label i18n>Target Date</mat-label>
+              <input
+                formControlName="targetDate"
+                matInput
+                [matDatepicker]="picker"
+              />
+              <mat-datepicker-toggle
+                matIconSuffix
+                [for]="picker"
+              ></mat-datepicker-toggle>
+              <mat-datepicker #picker></mat-datepicker>
+            </mat-form-field>
+
+            <button
+              aria-label="Remove goal"
+              color="warn"
+              i18n-aria-label
+              mat-stroked-button
+              type="button"
+              (click)="removeInvestmentGoal(i)"
+            >
+              <span i18n>Remove</span>
+            </button>
+          </div>
+        }
+      </div>
+
+      <button
+        color="primary"
+        mat-stroked-button
+        type="button"
+        (click)="addInvestmentGoal()"
+      >
+        <span i18n>Add Goal</span>
+      </button>
+    </div>
+  </mat-dialog-content>
+
+  @if (saveError()) {
+    <div
+      aria-live="assertive"
+      class="save-error"
+      data-testid="save-error"
+      role="alert"
+    >
+      {{ saveError() }}
+    </div>
+  }
+
+  <mat-dialog-actions align="end">
+    <button mat-button type="button" (click)="onCancel()">
+      <span i18n>Cancel</span>
+    </button>
+    <button
+      color="primary"
+      mat-flat-button
+      type="submit"
+      [disabled]="form.invalid || isSubmitting()"
+    >
+      <span i18n>Save</span>
+    </button>
+  </mat-dialog-actions>
+</form>

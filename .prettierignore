@@ -1,5 +1,7 @@
 /.nx/cache
 /.nx/workspace-data
 /apps/client/src/polyfills.ts
+/blitzy-deck
+/blitzy/documentation
 /dist
 /test/import

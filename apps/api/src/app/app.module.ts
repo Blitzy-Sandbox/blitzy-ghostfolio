@@ -31,6 +31,8 @@ import { AccessModule } from './access/access.module';
 import { AccountModule } from './account/account.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { AdminModule } from './admin/admin.module';
+import { AiChatModule } from './ai-chat/ai-chat.module';
+import { AiProviderModule } from './ai-provider/ai-provider.module';
 import { AppController } from './app.controller';
 import { AssetModule } from './asset/asset.module';
 import { AuthDeviceModule } from './auth-device/auth-device.module';
@@ -53,11 +55,15 @@ import { HealthModule } from './health/health.module';
 import { ImportModule } from './import/import.module';
 import { InfoModule } from './info/info.module';
 import { LogoModule } from './logo/logo.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { PlatformModule } from './platform/platform.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
+import { RebalancingModule } from './rebalancing/rebalancing.module';
 import { RedisCacheModule } from './redis-cache/redis-cache.module';
+import { SnowflakeSyncModule } from './snowflake-sync/snowflake-sync.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { SymbolModule } from './symbol/symbol.module';
+import { UserFinancialProfileModule } from './user-financial-profile/user-financial-profile.module';
 import { UserModule } from './user/user.module';
 
 @Module({
@@ -67,7 +73,9 @@ import { UserModule } from './user/user.module';
     AccessModule,
     AccountModule,
     ActivitiesModule,
+    AiChatModule,
     AiModule,
+    AiProviderModule,
     ApiKeysModule,
     AssetModule,
     AssetsModule,
@@ -122,6 +130,7 @@ import { UserModule } from './user/user.module';
     InfoModule,
     LogoModule,
     MarketDataModule,
+    MetricsModule,
     PlatformModule,
     PlatformsModule,
     PortfolioModule,
@@ -129,6 +138,7 @@ import { UserModule } from './user/user.module';
     PrismaModule,
     PropertyModule,
     PublicModule,
+    RebalancingModule,
     RedisCacheModule,
     ScheduleModule.forRoot(),
     ServeStaticModule.forRoot({
@@ -165,9 +175,11 @@ import { UserModule } from './user/user.module';
       serveRoot: '/.well-known'
     }),
     SitemapModule,
+    SnowflakeSyncModule,
     SubscriptionModule,
     SymbolModule,
     TagsModule,
+    UserFinancialProfileModule,
     UserModule,
     WatchlistModule
   ],

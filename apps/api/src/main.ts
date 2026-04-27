@@ -15,6 +15,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
@@ -64,6 +65,39 @@ async function bootstrap() {
       whitelist: true
     })
   );
+
+  // Refine PR Directive 7 — Swagger / OpenAPI documentation.
+  //
+  // Mounts the auto-generated OpenAPI spec at the top-level `/docs` route
+  // (Swagger UI) and `/docs-json` (raw JSON). The directive explicitly
+  // requires `/docs`, NOT `/api/docs`, so we set `useGlobalPrefix: false`
+  // to bypass the `setGlobalPrefix('api')` registered above. The
+  // `jsonDocumentUrl` is set to `'docs-json'` (without a leading slash)
+  // so that the resolved URL is `/docs-json` per the directive.
+  //
+  // `addBearerAuth()` registers the project's existing JWT-bearer
+  // authentication scheme as the default security definition for all
+  // documented endpoints — operators can paste a JWT into the Swagger UI
+  // "Authorize" dialog to exercise the four AAP-mandated endpoints
+  // (`POST /api/v1/ai/chat`, `POST /api/v1/ai/rebalancing`,
+  // `GET /api/v1/user/financial-profile`,
+  // `PATCH /api/v1/user/financial-profile`) and the Snowflake admin
+  // trigger from the same UI.
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('Ghostfolio API')
+    .setDescription(
+      'OpenAPI documentation for the Ghostfolio API, including the AI Portfolio Intelligence Layer endpoints (chat, rebalancing, financial profile).'
+    )
+    .setVersion(environment.version || '0.0.0')
+    .addBearerAuth()
+    .build();
+
+  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+
+  SwaggerModule.setup('docs', app, swaggerDocument, {
+    jsonDocumentUrl: 'docs-json',
+    useGlobalPrefix: false
+  });
 
   // Support 10mb csv/json files for importing activities
   app.useBodyParser('json', { limit: '10mb' });

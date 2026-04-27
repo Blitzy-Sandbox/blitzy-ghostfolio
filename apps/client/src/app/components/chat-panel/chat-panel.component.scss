@@ -1,0 +1,228 @@
+// Refine PR Directive 6 — :host styling rules.
+//
+// MANDATORY :host declarations per the directive:
+//   - position: relative   — required so the absolutely-positioned
+//                            `.resize-handle` (top:0; right:0) anchors to
+//                            the panel boundary rather than the viewport.
+//   - flex-shrink: 0       — keeps the panel from being compressed by
+//                            sibling flex items in the parent layout when
+//                            the panel reaches its 600px maximum.
+//   - overflow: hidden     — clips the conditionally-rendered content
+//                            during the width transition so the inner
+//                            elements do not flash outside the new bounds.
+//   - transition: width    — animates the collapse/expand width change
+//                            (driven by the host-binding getter on the
+//                            component) at 0.2s with an `ease` curve.
+//
+// `display: block` is preserved so the host renders as a block-level box.
+:host {
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  transition: width 0.2s ease;
+}
+
+.chat-panel-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 24rem;
+}
+
+// Refine PR Directive 6 — Collapse / expand header.
+//
+// The header is rendered above the chat content (and the resize handle) and
+// hosts the toggle button. `display: flex` + `margin-left: auto` on the
+// toggle pushes the button to the panel's right edge, where it remains
+// visible (and clickable) in both expanded and collapsed states.
+.chat-panel-header {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  padding: 0.25rem;
+}
+
+.chat-panel-toggle {
+  // Push the toggle button flush to the panel's right edge so it is the
+  // sole visible affordance when the panel is collapsed to 2.75rem.
+  margin-left: auto;
+}
+
+// Refine PR Directive 6 — CSS-only chevron.
+//
+// Pure CSS triangle constructed from two solid borders. NO icon-font
+// imports are permitted (no `<mat-icon>`, no `<ion-icon>`, no
+// FontAwesome / Material Icons). The chevron rotates 180° between
+// directions so the same square is reused for both states without
+// duplicated markup or sprite assets.
+//
+// The triangle is built by drawing a 0.5rem × 0.5rem square with two
+// adjacent borders set to 2px solid (the visible color) and the other
+// two transparent. The result is a 90° angle pointing in the direction
+// of the two visible borders. Rotating that square 45° gives a chevron.
+//
+// `currentColor` lets the chevron inherit the toggle button's text color,
+// keeping the icon in lockstep with theme changes (light/dark mode + the
+// material disabled / hover states the wrapper button applies).
+.chevron {
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  display: inline-block;
+  height: 0.5rem;
+  width: 0.5rem;
+}
+
+// Right-pointing chevron — used when the panel is EXPANDED, inviting the
+// user to collapse it toward the page edge.
+.chevron-right {
+  transform: rotate(-45deg);
+}
+
+// Left-pointing chevron — used when the panel is COLLAPSED, inviting the
+// user to expand it back into the page.
+.chevron-left {
+  transform: rotate(135deg);
+}
+
+// Refine PR Directive 6 — Drag-resize handle.
+//
+// Mandatory style declarations per the directive:
+//   position: absolute; right: 0; top: 0; width: 5px; cursor: col-resize
+// The handle spans the full panel height so a user can grab it from any
+// vertical position. A subtle hover affordance darkens the strip without
+// changing the panel's brand palette.
+.resize-handle {
+  bottom: 0;
+  cursor: col-resize;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 5px;
+  z-index: 1;
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 0.5rem;
+  max-height: 32rem;
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+
+.message {
+  border-radius: 0.5rem;
+  max-width: 90%;
+  padding: 0.5rem 0.75rem;
+  word-wrap: break-word;
+}
+
+// QA Checkpoint 12 Issue #4 (Design System Inheritance):
+// The Ghostfolio host theme uses `mat.all-component-themes()` rather than
+// `mat.theme()`, so `--mat-sys-*` system tokens are not generated at runtime
+// and `var(--mat-sys-*, fallback)` references render the FALLBACK value.
+// Where the fallback represents primary-brand color, we explicitly map it
+// to the host's cyan-teal palette (defined in apps/client/src/styles/theme.scss
+// as `--gf-theme-primary-500: #36cfcc`, with palette levels 60 = #00a19f,
+// 80 = #47dbd7, 90 = #6bf7f4) rather than Material's default Indigo so the
+// chat panel visually inherits the existing Ghostfolio brand identity.
+.message-user {
+  align-self: flex-end;
+  // Light theme: cyan-teal palette 60 (#00a19f = rgb(0, 161, 159)) tinted to
+  // 12% alpha — replaces Material Indigo (rgb(63, 81, 181)) fallback.
+  background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+  color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
+}
+
+.message-assistant {
+  align-self: flex-start;
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+}
+
+.message-role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.125rem;
+  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.message-content {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.message-empty {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-size: 0.875rem;
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+.error-banner {
+  align-items: center;
+  background-color: var(--mat-sys-error-container, rgba(176, 0, 32, 0.12));
+  border-radius: 0.5rem;
+  color: var(--mat-sys-on-error-container, rgb(176, 0, 32));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
+  margin: 0.5rem 0.75rem;
+  padding: 0.75rem;
+}
+
+.error-message {
+  flex-grow: 1;
+  font-size: 0.875rem;
+}
+
+.input-row {
+  align-items: flex-end;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.input-field {
+  flex-grow: 1;
+}
+
+:host-context(.theme-dark) {
+  .message-user {
+    // QA Checkpoint 12 Issue #4 (dark theme): cyan-teal palette 80
+    // (#47dbd7 = rgb(71, 219, 215)) tinted to 16% alpha — replaces the
+    // Material bluish-purple (rgb(140, 158, 255)) fallback so the dark
+    // mode user-message bubble inherits the host brand palette.
+    background-color: var(
+      --mat-sys-primary-container,
+      rgba(71, 219, 215, 0.16)
+    );
+    color: var(--mat-sys-on-primary-container, var(--light-primary-text));
+  }
+
+  .message-assistant {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .message-empty {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .resize-handle:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+}

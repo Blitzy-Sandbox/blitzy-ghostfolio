@@ -1,0 +1,111 @@
+<div class="container">
+  <h1 class="d-none d-sm-block h3 mb-3 text-center" i18n>Rebalancing</h1>
+
+  @if (isLoading()) {
+    <mat-progress-bar mode="indeterminate" />
+  }
+
+  @if (errorMessage()) {
+    <mat-card appearance="outlined" class="error-card mb-3">
+      <mat-card-content>
+        <p class="error-message">{{ errorMessage() }}</p>
+        <!--
+          QA Checkpoint 12 Issue #2 (Component Library Adherence — AAP § 0.5.3):
+          The "Try again" recovery action is a `mat-flat-button color="primary"`
+          directive — matching the chat-panel's "Reconnect" button so that both
+          error-recovery patterns share consistent Material ripple, focus
+          indicator, ARIA semantics, theme tokens, and the project's 48×48px
+          touch-target convention.
+        -->
+        <button
+          class="reload-button"
+          color="primary"
+          i18n
+          mat-flat-button
+          type="button"
+          (click)="onReload()"
+        >
+          Try again
+        </button>
+      </mat-card-content>
+    </mat-card>
+  }
+
+  @if (response(); as data) {
+    <mat-card appearance="outlined" class="summary-card mb-4">
+      <mat-card-content>
+        <p class="summary">{{ data.summary }}</p>
+      </mat-card-content>
+    </mat-card>
+
+    @if (data.warnings.length > 0) {
+      <div class="warnings mb-4">
+        @for (warning of data.warnings; track trackByWarning($index, warning)) {
+          <div class="warning" role="alert">
+            <span aria-hidden="true" class="warning-icon">⚠</span>
+            <span class="warning-text">{{ warning }}</span>
+          </div>
+        }
+      </div>
+    }
+
+    <div class="recommendations">
+      <h2 class="h5 mb-3" i18n>Recommendations</h2>
+
+      @if (data.recommendations.length === 0) {
+        <mat-card appearance="outlined">
+          <mat-card-content>
+            <p i18n>No rebalancing actions are required at this time.</p>
+          </mat-card-content>
+        </mat-card>
+      } @else {
+        @for (
+          recommendation of data.recommendations;
+          track trackByRecommendation($index, recommendation)
+        ) {
+          <mat-card
+            appearance="outlined"
+            class="recommendation mb-3"
+            [class.action-buy]="recommendation.action === 'BUY'"
+            [class.action-hold]="recommendation.action === 'HOLD'"
+            [class.action-sell]="recommendation.action === 'SELL'"
+          >
+            <mat-card-content>
+              <div class="recommendation-header">
+                <span class="action">{{ recommendation.action }}</span>
+                <span class="ticker">{{ recommendation.ticker }}</span>
+                <span class="allocation">
+                  <!--
+                    The backend tool schema (see RebalancingService.buildRebalancingTool)
+                    documents fromPct/toPct as DECIMAL FRACTIONS (0.0–1.0). For
+                    example, 0.10 means 10%. We use Angular's `percent` pipe which
+                    automatically multiplies by 100 and appends the `%` sign, so
+                    0.10 renders as "10%" (not "0.1%"). The format `'1.0-2'`
+                    keeps a minimum of 1 integer digit and up to 2 fraction
+                    digits, matching the precision of the LLM-emitted values.
+                  -->
+                  <span class="from-pct">{{
+                    recommendation.fromPct | percent: '1.0-2'
+                  }}</span>
+                  <span aria-hidden="true" class="arrow">→</span>
+                  <span class="to-pct">{{
+                    recommendation.toPct | percent: '1.0-2'
+                  }}</span>
+                </span>
+                <span
+                  class="goal-reference"
+                  i18n-title
+                  title="Goal Reference"
+                  [attr.title]="recommendation.goalReference"
+                >
+                  {{ formatGoalReference(recommendation.goalReference) }}
+                </span>
+              </div>
+              <p class="rationale">{{ recommendation.rationale }}</p>
+            </mat-card-content>
+          </mat-card>
+        }
+      }
+    </div>
+  }
+</div>

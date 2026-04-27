@@ -1,0 +1,317 @@
+// Styles for the Rebalancing page (Feature C — Explainable Rebalancing).
+//
+// Per AAP §§ 0.5.3 and 0.7.4, all semantic colors come from Material Design 3
+// tokens (`var(--mat-sys-*)`) so the page automatically inherits the correct
+// palette in light and dark themes. Concrete hex/rgb literals serve only as
+// fallback values inside `var(...)` expressions — never as the primary color.
+//
+// Action color mapping:
+//   BUY  → tertiary (M3 "tertiary" channel is conventionally used for
+//          accent/positive semantics in Ghostfolio's Material 3 theme)
+//   SELL → error (destructive action — matches negative-equity semantics)
+//   HOLD → outline (neutral, low-emphasis)
+//
+// Goal-reference badge uses the primary-container / on-primary-container pair
+// to pick up the same brand color as the chat panel's user-message bubble.
+// Warning blocks use the tertiary-container surface (warning channel is not
+// part of M3's standard token set; tertiary-container is the closest M3
+// concept for cautionary backgrounds).
+//
+// QA Checkpoint 12 Issue #4 (Design System Inheritance):
+// The Ghostfolio host theme uses `mat.all-component-themes()` rather than
+// `mat.theme()`, so the `--mat-sys-*` system tokens are not generated at
+// runtime. As a result, all `var(--mat-sys-*, fallback)` references render
+// the FALLBACK value. Where the fallback represents the project's primary
+// brand color (cyan-teal, exposed at `:root` as `--gf-theme-primary-500:
+// #36cfcc`), we explicitly map the fallback to the host's cyan-teal palette
+// rather than Material's default Indigo so the new Rebalancing page
+// visually inherits the existing Ghostfolio brand identity.
+//
+// Cyan-teal palette levels (from apps/client/src/styles/theme.scss):
+//   primary 30 = #00504e   (rgb(  0,  80,  78)) — accessible text on tints
+//   primary 40 = #006a68   (rgb(  0, 106, 104)) — focus outlines, dark text
+//   primary 60 = #00a19f   (rgb(  0, 161, 159)) — palette base
+//   primary 80 = #47dbd7   (rgb( 71, 219, 215)) — dark-theme accent
+//   primary 90 = #6bf7f4   (rgb(107, 247, 244)) — dark-theme on-tint text
+//   --gf-theme-primary-500 = #36cfcc (rgb(54, 207, 204)) — host button color
+//
+// QA Checkpoint 12 Issue #3 (Accessibility — WCAG 2.1 SC 1.4.3):
+// The BUY badge text color was Material Green 800 (rgb(46, 125, 50)) which
+// computed at 4.46:1 contrast on its alpha-blended green-tinted background
+// — 0.04 below the 4.5:1 AA threshold for 12px 600-weight normal text. It
+// is now Material Green 900 (rgb(27, 94, 32) = #1B5E20) for ~6.0:1 contrast.
+
+:host {
+  color: var(--mat-sys-on-surface, rgb(var(--dark-primary-text)));
+  display: block;
+
+  .container {
+    padding-top: 1rem;
+  }
+
+  .summary-card {
+    .summary {
+      margin-bottom: 0;
+      white-space: pre-wrap;
+    }
+  }
+
+  .warnings {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+
+    .warning {
+      align-items: flex-start;
+      background-color: var(
+        --mat-sys-tertiary-container,
+        rgba(255, 193, 7, 0.12)
+      );
+      border: 1px solid var(--mat-sys-tertiary, rgba(255, 193, 7, 0.6));
+      border-radius: 0.25rem;
+      color: var(
+        --mat-sys-on-tertiary-container,
+        rgb(var(--dark-primary-text))
+      );
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+
+      .warning-icon {
+        color: var(--mat-sys-tertiary, rgb(255, 152, 0));
+        flex-shrink: 0;
+        font-size: 1.25rem;
+        line-height: 1;
+      }
+
+      .warning-text {
+        flex: 1;
+      }
+    }
+  }
+
+  .recommendations {
+    .recommendation {
+      &.action-buy {
+        border-left: 4px solid var(--mat-sys-tertiary, rgb(76, 175, 80));
+
+        .action {
+          background-color: var(
+            --mat-sys-tertiary-container,
+            rgba(76, 175, 80, 0.15)
+          );
+          // QA Checkpoint 12 Issue #3: darkened from Material Green 800
+          // (rgb(46, 125, 50) → 4.46:1 contrast) to Material Green 900
+          // (#1B5E20 = rgb(27, 94, 32) → ~6.0:1 contrast) to satisfy
+          // WCAG 2.1 AA SC 1.4.3 (4.5:1 minimum for 12px 600-weight text).
+          color: var(--mat-sys-on-tertiary-container, #1b5e20);
+        }
+      }
+
+      &.action-sell {
+        border-left: 4px solid var(--mat-sys-error, rgb(244, 67, 54));
+
+        .action {
+          background-color: var(
+            --mat-sys-error-container,
+            rgba(244, 67, 54, 0.15)
+          );
+          color: var(--mat-sys-on-error-container, rgb(198, 40, 40));
+        }
+      }
+
+      &.action-hold {
+        border-left: 4px solid var(--mat-sys-outline, rgb(158, 158, 158));
+
+        .action {
+          background-color: var(
+            --mat-sys-surface-variant,
+            rgba(158, 158, 158, 0.15)
+          );
+          color: var(--mat-sys-on-surface-variant, rgb(97, 97, 97));
+        }
+      }
+
+      .recommendation-header {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+
+        .action {
+          border-radius: 0.25rem;
+          font-size: 0.75rem;
+          font-weight: 600;
+          letter-spacing: 0.05em;
+          padding: 0.25rem 0.5rem;
+          text-transform: uppercase;
+        }
+
+        .ticker {
+          font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            'Liberation Mono', 'Courier New', monospace;
+          font-size: 1rem;
+          font-weight: 600;
+        }
+
+        .allocation {
+          align-items: center;
+          color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.7));
+          display: inline-flex;
+          font-size: 0.875rem;
+          gap: 0.25rem;
+
+          .arrow {
+            opacity: 0.6;
+          }
+        }
+
+        .goal-reference {
+          // QA Checkpoint 12 Issue #4: cyan-teal-tinted background (host
+          // primary 60 = #00a19f = rgb(0, 161, 159)) replaces Material Indigo
+          // fallback so the badge visually inherits the host brand palette.
+          background-color: var(
+            --mat-sys-primary-container,
+            rgba(0, 161, 159, 0.1)
+          );
+          border-radius: 0.25rem;
+          // QA Checkpoint 12 Issue #4: cyan-teal text (host primary 30 =
+          // #00504e = rgb(0, 80, 78)) replaces Material Indigo fallback for
+          // ~10:1 contrast on the cyan-teal tinted background — well above
+          // WCAG AA 4.5:1 threshold.
+          color: var(--mat-sys-on-primary-container, rgb(0, 80, 78));
+          font-size: 0.75rem;
+          margin-left: auto;
+          padding: 0.25rem 0.5rem;
+        }
+      }
+
+      .rationale {
+        color: var(--mat-sys-on-surface, rgba(0, 0, 0, 0.75));
+        line-height: 1.5;
+        margin-bottom: 0;
+        white-space: pre-wrap;
+      }
+    }
+  }
+
+  .error-card {
+    .error-message {
+      color: var(--mat-sys-error, rgb(198, 40, 40));
+      margin-bottom: 0.75rem;
+    }
+
+    // QA Checkpoint 12 Issue #2: the `.reload-button` element is now a
+    // `mat-flat-button color="primary"` directive (parity with the chat
+    // panel's "Reconnect" button). Material handles container, label,
+    // ripple, focus, and hover styling internally via theme tokens; the
+    // class is retained as a hook for future spacing/positioning needs
+    // but defines no visual overrides — Material's defaults apply.
+  }
+}
+
+// Dark-theme overrides — only adjust fallbacks for browsers that don't yet
+// support the Material 3 system tokens. When the Material 3 tokens are
+// available (current Angular Material 21.x), the `:host` block above already
+// produces correct dark-theme rendering automatically; the fallback values
+// below are the only thing that meaningfully changes per theme. Token values
+// themselves are inverted by the Material theme system rather than this
+// stylesheet.
+
+:host-context(.theme-dark) {
+  color: var(--mat-sys-on-surface, rgb(var(--light-primary-text)));
+
+  .warnings {
+    .warning {
+      background-color: var(
+        --mat-sys-tertiary-container,
+        rgba(255, 193, 7, 0.16)
+      );
+      border-color: var(--mat-sys-tertiary, rgba(255, 193, 7, 0.5));
+      color: var(
+        --mat-sys-on-tertiary-container,
+        rgb(var(--light-primary-text))
+      );
+
+      .warning-icon {
+        color: var(--mat-sys-tertiary, rgb(255, 183, 77));
+      }
+    }
+  }
+
+  .recommendations {
+    .recommendation {
+      &.action-buy {
+        border-left-color: var(--mat-sys-tertiary, rgb(129, 199, 132));
+
+        .action {
+          background-color: var(
+            --mat-sys-tertiary-container,
+            rgba(129, 199, 132, 0.2)
+          );
+          color: var(--mat-sys-on-tertiary-container, rgb(165, 214, 167));
+        }
+      }
+
+      &.action-sell {
+        border-left-color: var(--mat-sys-error, rgb(229, 115, 115));
+
+        .action {
+          background-color: var(
+            --mat-sys-error-container,
+            rgba(229, 115, 115, 0.2)
+          );
+          color: var(--mat-sys-on-error-container, rgb(239, 154, 154));
+        }
+      }
+
+      &.action-hold {
+        border-left-color: var(--mat-sys-outline, rgb(189, 189, 189));
+
+        .action {
+          background-color: var(
+            --mat-sys-surface-variant,
+            rgba(189, 189, 189, 0.18)
+          );
+          color: var(--mat-sys-on-surface-variant, rgb(224, 224, 224));
+        }
+      }
+
+      .recommendation-header {
+        .allocation {
+          color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.7));
+        }
+
+        .goal-reference {
+          // QA Checkpoint 12 Issue #4 (dark theme): cyan-teal-tinted
+          // background (host primary 80 = #47dbd7 = rgb(71, 219, 215)) and
+          // light cyan-teal text (host primary 90 = #6bf7f4 =
+          // rgb(107, 247, 244)) replace Material Indigo fallbacks so the
+          // badge inherits the host brand palette in dark mode.
+          background-color: var(
+            --mat-sys-primary-container,
+            rgba(71, 219, 215, 0.18)
+          );
+          color: var(--mat-sys-on-primary-container, rgb(107, 247, 244));
+        }
+      }
+
+      .rationale {
+        color: var(--mat-sys-on-surface, rgba(255, 255, 255, 0.75));
+      }
+    }
+  }
+
+  .error-card {
+    .error-message {
+      color: var(--mat-sys-error, rgb(239, 154, 154));
+    }
+
+    // QA Checkpoint 12 Issue #2 (dark theme): see light-theme note —
+    // `.reload-button` is now a `mat-flat-button` directive; Material
+    // handles all visual styling via theme tokens. No dark-theme overrides
+    // are required.
+  }
+}

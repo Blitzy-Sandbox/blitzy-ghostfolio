@@ -1,0 +1,55 @@
+:host {
+  display: block;
+
+  .mat-mdc-dialog-content {
+    max-height: unset;
+  }
+
+  .form-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-field {
+    width: 100%;
+  }
+
+  .investment-goals-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1rem;
+
+    h3 {
+      margin: 0;
+    }
+
+    .goal-row {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+
+      .form-field {
+        flex: 1 1 12rem;
+        min-width: 8rem;
+      }
+    }
+  }
+
+  // Error alert region rendered above the dialog actions whenever the
+  // most recent save attempt failed (HTTP 4xx / 5xx / network error).
+  // The styling is intentionally conservative — a tinted background
+  // with a 3-px left accent, no surrounding margin so it sits flush
+  // against the form actions, and `role="alert"` (set on the element)
+  // so screen readers announce it on render.
+  .save-error {
+    background-color: rgba(244, 67, 54, 0.08);
+    border-left: 3px solid #f44336;
+    border-radius: 4px;
+    color: #b71c1c;
+    margin: 0.5rem 1.5rem 0;
+    padding: 0.75rem 1rem;
+  }
+}

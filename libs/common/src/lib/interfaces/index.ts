@@ -13,11 +13,18 @@ import type { AssetClassSelectorOption } from './asset-class-selector-option.int
 import type { AssetProfileIdentifier } from './asset-profile-identifier.interface';
 import type { BenchmarkProperty } from './benchmark-property.interface';
 import type { Benchmark } from './benchmark.interface';
+import type { ChatMessage, ChatMessageRole } from './chat-message.interface';
 import type { Coupon } from './coupon.interface';
 import type { DataProviderInfo } from './data-provider-info.interface';
 import type { EnhancedSymbolProfile } from './enhanced-symbol-profile.interface';
 import type { FilterGroup } from './filter-group.interface';
 import type { Filter } from './filter.interface';
+import type {
+  FinancialProfile,
+  FinancialProfilePatchPayload,
+  InvestmentGoal,
+  RiskTolerance
+} from './financial-profile.interface';
 import type { FireCalculationCompleteEvent } from './fire-calculation-complete-event.interface';
 import type { FireWealth } from './fire-wealth.interface';
 import type { HistoricalDataItem } from './historical-data-item.interface';
@@ -35,6 +42,10 @@ import type { PortfolioPosition } from './portfolio-position.interface';
 import type { PortfolioReportRule } from './portfolio-report-rule.interface';
 import type { PortfolioSummary } from './portfolio-summary.interface';
 import type { Product } from './product';
+import type {
+  RebalancingRecommendation,
+  RebalancingResponse
+} from './rebalancing-response.interface';
 import type { AccessTokenResponse } from './responses/access-token-response.interface';
 import type { AccountBalancesResponse } from './responses/account-balances-response.interface';
 import type { AccountResponse } from './responses/account-response.interface';
@@ -127,6 +138,8 @@ export {
   BenchmarkMarketDataDetailsResponse,
   BenchmarkProperty,
   BenchmarkResponse,
+  ChatMessage,
+  ChatMessageRole,
   Coupon,
   CreateStripeCheckoutSessionResponse,
   DataEnhancerHealthResponse,
@@ -141,6 +154,8 @@ export {
   ExportResponse,
   Filter,
   FilterGroup,
+  FinancialProfile,
+  FinancialProfilePatchPayload,
   FireCalculationCompleteEvent,
   FireWealth,
   HistoricalDataItem,
@@ -150,6 +165,7 @@ export {
   ImportResponse,
   InfoItem,
   InfoResponse,
+  InvestmentGoal,
   InvestmentItem,
   LineChartItem,
   LookupItem,
@@ -176,7 +192,10 @@ export {
   PublicKeyCredentialRequestOptionsJSON,
   PublicPortfolioResponse,
   QuotesResponse,
+  RebalancingRecommendation,
+  RebalancingResponse,
   ResponseError,
+  RiskTolerance,
   RuleSettings,
   ScraperConfiguration,
   Statistics,

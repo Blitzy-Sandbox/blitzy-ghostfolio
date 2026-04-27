@@ -1,0 +1,161 @@
+<div class="chat-panel-container">
+  <!--
+    Refine PR Directive 6 — Collapse / drag-resize chrome.
+
+    The header is ALWAYS rendered (regardless of collapsed state). It hosts
+    the toggle button flush to the panel's right edge via `margin-left:
+    auto` (applied by `.chat-panel-header { display: flex }`) so the button
+    remains the only visible affordance when the panel is collapsed to its
+    `2.75rem` strip width — guaranteeing the user can always re-expand the
+    panel.
+
+    The toggle button is `mat-icon-button` (Material Design ripple, focus
+    management, and ARIA semantics) but its visual content is a CSS-only
+    chevron — a `<span>` styled with two `border-*` properties forming a
+    triangle. The directive explicitly forbids importing `MatIconModule`,
+    `ion-icon`, or any icon font, so we MUST NOT use `<mat-icon>` or
+    `<ion-icon>` here.
+
+    The chevron's pointing direction is derived from the `[class]` binding:
+    when collapsed, the panel hugs the right edge of the viewport, so the
+    chevron points LEFT (toward the page) to invite expansion; when
+    expanded, the chevron points RIGHT (toward the edge) to invite collapse.
+  -->
+  <div class="chat-panel-header">
+    <button
+      class="chat-panel-toggle"
+      data-testid="toggle-button"
+      i18n-aria-label
+      mat-icon-button
+      type="button"
+      [attr.aria-expanded]="!isCollapsed()"
+      [attr.aria-label]="
+        isCollapsed() ? 'Expand chat panel' : 'Collapse chat panel'
+      "
+      (click)="toggleCollapsed()"
+    >
+      <span
+        aria-hidden="true"
+        class="chevron"
+        [class.chevron-left]="isCollapsed()"
+        [class.chevron-right]="!isCollapsed()"
+      ></span>
+    </button>
+  </div>
+
+  @if (!isCollapsed()) {
+    <!--
+      Refine PR Directive 6 — Drag-to-resize handle.
+
+      Positioned absolutely at the panel's right edge via SCSS:
+        position: absolute; right: 0; top: 0; width: 5px; cursor: col-resize
+      The 5px hit area is large enough to grab without being so wide that it
+      visually competes with content. The handle MUST live inside the
+      `@if (!isCollapsed())` block so it disappears in collapsed state,
+      preventing accidental resize attempts when the panel is reduced to its
+      2.75rem strip.
+    -->
+    <div
+      aria-hidden="true"
+      class="resize-handle"
+      data-testid="resize-handle"
+      (mousedown)="onMouseDown($event)"
+    ></div>
+
+    <!--
+      QA Checkpoint 12 Issue #1 (Accessibility — WCAG 2.1 SC 4.1.3 Status Messages):
+      The message-list container hosts dynamically-appended chat content as the
+      SSE stream delivers assistant tokens. To make these incremental updates
+      perceivable by users of assistive technology, the container is declared as
+      a live region:
+        - role="log"             — semantic role for chronological message logs;
+                                   announces new entries as they arrive
+        - aria-live="polite"     — screen readers will queue announcements
+                                   without interrupting the user's current focus
+        - aria-relevant="additions text" — announce only newly-added content,
+                                   including text changes (each appended token)
+      Note: aria-atomic is intentionally OMITTED so screen readers announce the
+      delta rather than re-reading the entire conversation on each token.
+    -->
+    <div
+      aria-live="polite"
+      aria-relevant="additions text"
+      class="message-list"
+      data-testid="message-list"
+      role="log"
+    >
+      @if (messages().length === 0) {
+        <div class="message-empty" i18n>
+          Ask a question about your portfolio to get started.
+        </div>
+      }
+
+      @for (message of messages(); track $index) {
+        <div
+          class="message"
+          [class.message-assistant]="message.role === 'assistant'"
+          [class.message-user]="message.role === 'user'"
+        >
+          <div class="message-role">
+            @if (message.role === 'user') {
+              <ng-container i18n>You</ng-container>
+            } @else {
+              <ng-container i18n>Assistant</ng-container>
+            }
+          </div>
+          <div class="message-content">{{ message.content }}</div>
+        </div>
+      }
+    </div>
+
+    @if (isStreaming()) {
+      <mat-progress-bar
+        data-testid="streaming-progress"
+        mode="indeterminate"
+      ></mat-progress-bar>
+    }
+
+    @if (errorMessage()) {
+      <div class="error-banner" role="alert">
+        <span class="error-message">{{ errorMessage() }}</span>
+        <button
+          color="primary"
+          data-testid="reconnect-button"
+          i18n
+          mat-flat-button
+          type="button"
+          (click)="reconnect()"
+        >
+          Reconnect
+        </button>
+      </div>
+    }
+
+    <form class="input-row" (ngSubmit)="onSend()">
+      <mat-form-field appearance="outline" class="input-field without-hint">
+        <mat-label i18n>Ask about your portfolio</mat-label>
+        <input
+          data-testid="chat-input"
+          i18n-placeholder
+          matInput
+          placeholder="Type your question..."
+          type="text"
+          [disabled]="isStreaming()"
+          [ngModel]="inputText()"
+          [ngModelOptions]="{ standalone: true }"
+          (ngModelChange)="inputText.set($event)"
+        />
+      </mat-form-field>
+      <button
+        color="primary"
+        data-testid="send-button"
+        i18n
+        mat-flat-button
+        type="submit"
+        [disabled]="isStreaming() || !inputText().trim()"
+      >
+        Send
+      </button>
+    </form>
+  }
+</div>
