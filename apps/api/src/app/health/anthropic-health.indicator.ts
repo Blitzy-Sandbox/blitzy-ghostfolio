@@ -35,15 +35,18 @@ import { ConfigService } from '@nestjs/config';
  *   `Promise<boolean>` and never throws — every exceptional path is
  *   funneled through the catch block to `false`.
  *
- * Module registration: This class is delivered as a stand-alone
- * injectable provider. Wiring it into `HealthModule.providers` and
- * exposing a `/api/v1/health/anthropic` route from `HealthController`
- * are deferred to a later checkpoint (the final wiring checkpoint of
- * the AI feature delivery). The probe is listed in AAP § 0.5.1.2 as
- * an additive health indicator intended for `HealthModule`
- * registration; it is NOT permanently out of scope. No further changes
- * to this file are required at registration time — only the host
- * `HealthModule` and `HealthController` will gain new entries.
+ * Module registration: This class is registered as a provider in
+ * `HealthModule.providers` and exposed via the
+ * `GET /api/v1/health/anthropic` route on `HealthController` —
+ * mirroring the `SnowflakeHealthIndicator` registration pattern.
+ * `HealthModule` additively imports `ConfigModule` so this class's
+ * `ConfigService` constructor dependency resolves at DI scope
+ * construction time (Ghostfolio's root `ConfigModule.forRoot()` is not
+ * declared global, so child modules consuming `ConfigService` must
+ * re-import `ConfigModule` per the `@nestjs/config` documentation).
+ * This wiring operationalizes AAP § 0.4.1.2 + § 0.5.1.2 ("Additive —
+ * registered alongside existing health indicators") and the
+ * Observability project-level rule (AAP § 0.7.2).
  */
 @Injectable()
 export class AnthropicHealthIndicator {

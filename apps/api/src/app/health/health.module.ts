@@ -6,7 +6,9 @@ import { DataProviderModule } from '@ghostfolio/api/services/data-provider/data-
 import { PropertyModule } from '@ghostfolio/api/services/property/property.module';
 
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 
+import { AnthropicHealthIndicator } from './anthropic-health.indicator';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
 import { SnowflakeHealthIndicator } from './snowflake-health.indicator';
@@ -24,15 +26,26 @@ import { SnowflakeHealthIndicator } from './snowflake-health.indicator';
  *   - `GET /api/v1/health/snowflake` — lightweight `SELECT 1` probe of the
  *     Snowflake analytical backend that supports Feature A (Snowflake
  *     Sync) and the Feature B chat-agent `query_history` tool.
+ *   - `GET /api/v1/health/anthropic` — configuration-only probe that
+ *     verifies the Anthropic SDK can be instantiated with the configured
+ *     `ANTHROPIC_API_KEY` and exposes the `messages.create` /
+ *     `messages.stream` primitives consumed by Feature B (AI Portfolio
+ *     Chat Agent) and Feature C (Explainable Rebalancing Engine). The
+ *     probe makes NO paid Anthropic API call.
  *
- * The `SnowflakeHealthIndicator` is registered as a provider here and the
- * matching route is exposed by `HealthController`. The indicator depends on
- * `SnowflakeClientFactory` (via constructor injection); to make that
- * provider visible to this module's DI scope we additively import
- * `SnowflakeSyncModule`, which exports both `SnowflakeClientFactory` and
- * `SnowflakeSyncService` in its `exports` array (per Rule 1 in
- * AAP § 0.7.1.1 — the factory is the only legitimate cross-module access
- * channel for Snowflake connection acquisition).
+ * Provider registration:
+ *   - `SnowflakeHealthIndicator` — depends on `SnowflakeClientFactory`
+ *     (provided via the additive `SnowflakeSyncModule` import below;
+ *     that module exports both `SnowflakeClientFactory` and
+ *     `SnowflakeSyncService` so cross-module access is permitted by
+ *     Rule 1 in AAP § 0.7.1.1).
+ *   - `AnthropicHealthIndicator` — depends on `ConfigService` (provided
+ *     via the additive `ConfigModule` import below; Ghostfolio's
+ *     `app.module.ts` calls `ConfigModule.forRoot()` WITHOUT
+ *     `isGlobal: true`, so any child module that consumes
+ *     `ConfigService` must explicitly re-import `ConfigModule` to
+ *     bring it into local DI scope, per the `@nestjs/config`
+ *     documentation).
  *
  * No existing provider, controller, or import is removed or reordered —
  * the change is strictly additive in keeping with the additive-only
@@ -41,6 +54,7 @@ import { SnowflakeHealthIndicator } from './snowflake-health.indicator';
 @Module({
   controllers: [HealthController],
   imports: [
+    ConfigModule,
     DataEnhancerModule,
     DataProviderModule,
     PropertyModule,
@@ -48,6 +62,6 @@ import { SnowflakeHealthIndicator } from './snowflake-health.indicator';
     SnowflakeSyncModule,
     TransformDataSourceInRequestModule
   ],
-  providers: [HealthService, SnowflakeHealthIndicator]
+  providers: [HealthService, AnthropicHealthIndicator, SnowflakeHealthIndicator]
 })
 export class HealthModule {}

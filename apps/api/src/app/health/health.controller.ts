@@ -17,12 +17,14 @@ import { DataSource } from '@prisma/client';
 import { Response } from 'express';
 import { StatusCodes, getReasonPhrase } from 'http-status-codes';
 
+import { AnthropicHealthIndicator } from './anthropic-health.indicator';
 import { HealthService } from './health.service';
 import { SnowflakeHealthIndicator } from './snowflake-health.indicator';
 
 @Controller('health')
 export class HealthController {
   public constructor(
+    private readonly anthropicHealthIndicator: AnthropicHealthIndicator,
     private readonly healthService: HealthService,
     private readonly snowflakeHealthIndicator: SnowflakeHealthIndicator
   ) {}
@@ -115,6 +117,46 @@ export class HealthController {
     const snowflakeHealthy = await this.snowflakeHealthIndicator.isHealthy();
 
     if (snowflakeHealthy) {
+      return response
+        .status(HttpStatus.OK)
+        .json({ status: getReasonPhrase(StatusCodes.OK) });
+    } else {
+      return response
+        .status(HttpStatus.SERVICE_UNAVAILABLE)
+        .json({ status: getReasonPhrase(StatusCodes.SERVICE_UNAVAILABLE) });
+    }
+  }
+
+  /**
+   * Configuration-only readiness probe for the Anthropic API integration
+   * that supports the AI Portfolio Chat Agent (Feature B, AAP § 0.1.1)
+   * and the Explainable Rebalancing Engine (Feature C, AAP § 0.1.1).
+   *
+   * Resolves with HTTP 200 when `AnthropicHealthIndicator.isHealthy()`
+   * returns `true` — i.e., the configured `ANTHROPIC_API_KEY` is present
+   * (read EXCLUSIVELY through the injected `ConfigService` per Rule 3),
+   * the Anthropic SDK constructor succeeds with that key, and the
+   * resulting client exposes the `messages.create` and `messages.stream`
+   * primitives consumed by `AiChatService` and `RebalancingService`.
+   * Resolves with HTTP 503 otherwise.
+   *
+   * No paid Anthropic API call is made by this probe. The indicator is
+   * fail-closed: any error from the SDK constructor is funneled to
+   * `false` after a redacted warning is logged, so this route NEVER
+   * surfaces an unhandled HTTP 500 — orchestrators (Kubernetes, ECS) and
+   * operators see a deterministic 200/503 boolean exactly mirroring the
+   * `/api/v1/health/snowflake` route shape.
+   *
+   * Operationalizes AAP § 0.4.1.2 + § 0.5.1.2 (additive
+   * `AnthropicHealthIndicator` registration alongside existing health
+   * indicators) and AAP § 0.7.2 (Observability rule — health probes for
+   * every new external dependency).
+   */
+  @Get('anthropic')
+  public async getHealthOfAnthropic(@Res() response: Response) {
+    const anthropicHealthy = await this.anthropicHealthIndicator.isHealthy();
+
+    if (anthropicHealthy) {
       return response
         .status(HttpStatus.OK)
         .json({ status: getReasonPhrase(StatusCodes.OK) });
