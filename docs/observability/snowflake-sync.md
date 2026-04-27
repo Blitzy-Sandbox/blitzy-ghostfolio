@@ -25,12 +25,12 @@ The three trigger paths and their emission sites in
   (failure); histogram observation at line 283.
 - **`trigger="manual"`** — `triggerManualSync()` called by the
   admin endpoint `POST /api/v1/snowflake-sync/trigger`. Counter
-  increments at lines 459 (success) and 476 (failure); histogram
-  observation at line 520.
+  increments at lines 474 (success) and 491 (failure); histogram
+  observation at line 535.
 - **`trigger="event"`** — `processDebouncedEventSync()` driven by
   the `@OnEvent(PortfolioChangedEvent.getName())` listener with a
-  per-user 5 s debounce window. Counter increments at lines 1050
-  (success) and 1060 (failure); histogram observation at line 1071.
+  per-user 5 s debounce window. Counter increments at lines 1065
+  (success) and 1075 (failure); histogram observation at line 1086.
 
 The dashboard is intentionally scoped to **only** the metrics actually
 emitted by `SnowflakeSyncService`. Additional signals — per-table MERGE
