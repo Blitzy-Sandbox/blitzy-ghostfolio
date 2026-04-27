@@ -677,9 +677,14 @@ export class RebalancingService {
     const [portfolioDetailsResult, profileResult, historyResult] =
       await Promise.allSettled([
         this.portfolioService.getDetails({
-          // Standardized to `null` across `RebalancingService` and
-          // `AiChatService` (G1 cross-cutting consistency).
-          impersonationId: null,
+          // `impersonationId: undefined` mirrors the existing controller
+          // pattern when no `x-impersonation-id` header is present.
+          // `validateImpersonationId` then falls back to its default
+          // `aId = ''`, which Prisma accepts. Passing `null` is rejected by
+          // Prisma 7 because `Access.id` is non-nullable (QA Checkpoint 9
+          // CRITICAL #1 follow-on after the synthetic-REQUEST provider fix).
+          // Standardized across `RebalancingService` and `AiChatService`.
+          impersonationId: undefined,
           userId
         }),
         this.userFinancialProfileService.findByUserId(userId),

@@ -1,6 +1,9 @@
 import type { RebalancingResponse } from '@ghostfolio/common/interfaces';
 import type { RequestWithUser } from '@ghostfolio/common/types';
 
+import { HttpStatus } from '@nestjs/common';
+import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
+
 import { RebalancingRequestDto } from './dtos/rebalancing-request.dto';
 import { RebalancingController } from './rebalancing.controller';
 import { RebalancingService } from './rebalancing.service';
@@ -298,5 +301,42 @@ describe('RebalancingController', () => {
       expect(rec.goalReference).toEqual(expect.any(String));
       expect(rec.goalReference.length).toBeGreaterThan(0);
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 8 — HTTP status-code wiring: @HttpCode(HttpStatus.OK) overrides
+  //          NestJS's default 201-Created for `@Post()` handlers.
+  //          Regression guard for QA Checkpoint 9 INFO #1 (POST endpoints
+  //          responded HTTP 201 instead of 200 — REST convention violation
+  //          for non-resource-creating actions; this rebalancing endpoint
+  //          is a query-style RPC that returns recommendations, NOT a
+  //          resource-creating endpoint, so 200 OK is the correct status
+  //          per the precedent established by sibling controllers
+  //          `SnowflakeSyncController.triggerSync` and
+  //          `UserFinancialProfileController.update` which both use
+  //          `@HttpCode(HttpStatus.OK)`).
+  // ---------------------------------------------------------------------------
+
+  it('declares @HttpCode(HttpStatus.OK) (HTTP 200, not 201) on getRebalancing() (QA Checkpoint 9 INFO #1)', () => {
+    // NestJS defaults `@Post()` to HTTP 201 (Created), but the
+    // rebalancing endpoint is a query-style RPC — it does NOT create
+    // a server-side resource. The response is a transient
+    // `RebalancingResponse` computed from the user's portfolio and
+    // financial profile; nothing is persisted on the server. Returning
+    // 201 would incorrectly signal resource creation to API clients.
+    //
+    // The fix applies `@HttpCode(HttpStatus.OK)` to the
+    // `getRebalancing()` handler, matching the convention already used
+    // by the sibling `SnowflakeSyncController.triggerSync()` (see
+    // `snowflake-sync.controller.spec.ts` ~lines 435-441) and
+    // `UserFinancialProfileController.update()`. Asserting the
+    // metadata here is the only automated guard against a future
+    // refactor accidentally dropping the decorator and silently
+    // regressing the response status code back to 201.
+    const httpCode = Reflect.getMetadata(
+      HTTP_CODE_METADATA,
+      RebalancingController.prototype.getRebalancing
+    );
+    expect(httpCode).toBe(HttpStatus.OK);
   });
 });

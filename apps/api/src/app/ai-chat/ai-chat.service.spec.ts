@@ -183,7 +183,7 @@ describe('AiChatService', () => {
    */
   interface PortfolioCallArg {
     dateRange?: string;
-    impersonationId: string | null;
+    impersonationId: string | null | undefined;
     userId: string;
   }
 
@@ -500,8 +500,12 @@ describe('AiChatService', () => {
     // The single argument is the destructured options object passed to
     // `portfolioService.getDetails({impersonationId, userId, ...})`. The
     // `userId` field MUST equal the authenticated value (Rule 5 / AAP
-    // § 0.5.1.5), and the `impersonationId` MUST be `null` (the
-    // controller is not impersonating any other user).
+    // § 0.5.1.5), and the `impersonationId` MUST be `undefined` (the
+    // controller is not impersonating any other user, mirroring the
+    // existing controller pattern when no `x-impersonation-id` header is
+    // sent — QA Checkpoint 9 CRITICAL #1 follow-on standardized
+    // `null` → `undefined` to avoid Prisma 7 rejection on
+    // `Access.id` non-nullable column).
     //
     // The tuple-destructure pattern (`const [callArg] = ... as [Type]`)
     // is preferred over `mock.calls[0][0] as Type` because it preserves
@@ -512,7 +516,7 @@ describe('AiChatService', () => {
     ];
     expect(callArg.userId).toBe(REAL_USER_ID);
     expect(callArg.userId).not.toBe(EVIL_USER_ID);
-    expect(callArg.impersonationId).toBeNull();
+    expect(callArg.impersonationId).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -546,7 +550,9 @@ describe('AiChatService', () => {
     ];
     expect(callArg.userId).toBe(REAL_USER_ID);
     expect(callArg.userId).not.toBe(EVIL_USER_ID);
-    expect(callArg.impersonationId).toBeNull();
+    // `impersonationId: undefined` — see Test 4 commentary for the
+    // QA Checkpoint 9 CRITICAL #1 follow-on rationale.
+    expect(callArg.impersonationId).toBeUndefined();
 
     // Sanity: the production code maps the LLM-supplied date strings to
     // a `DateRange` enum value; for a 365-day window (2024-01-01 →

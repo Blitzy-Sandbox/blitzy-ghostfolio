@@ -3,7 +3,13 @@ import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.servic
 import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.event';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  BadGatewayException,
+  HttpException,
+  Injectable,
+  Logger,
+  OnModuleInit
+} from '@nestjs/common';
 import { ContextIdFactory, ModuleRef } from '@nestjs/core';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
@@ -478,7 +484,38 @@ export class SnowflakeSyncService implements OnModuleInit {
         'SnowflakeSyncService'
       );
 
-      throw error;
+      // Translate raw upstream/driver errors (e.g., the
+      // `snowflake-sdk` `RequestFailedError`, network/DNS failures,
+      // bootstrap DDL failures) to a graceful HTTP 502 so the controller
+      // returns "Bad Gateway" rather than the default HTTP 500
+      // "Internal server error" that would otherwise be produced by the
+      // global NestJS exception filter for non-HttpException throwables.
+      //
+      // This matches:
+      //  - AAP § 0.7.4 ("Service errors are translated to NestJS HTTP
+      //    exceptions in controllers (NotFoundException,
+      //    BadRequestException, BadGatewayException for upstream
+      //    Anthropic/Snowflake failures)").
+      //  - The QA Checkpoint 9 CRITICAL #1 expected outcome
+      //    ("Or, if Snowflake is unreachable, a graceful HTTP 502 from
+      //    upstream error handling.").
+      //  - The identical pattern already established in
+      //    `RebalancingService` (4 BadGatewayException sites: lines
+      //    328 / 350 / 376 / 421) for Anthropic upstream failures.
+      //
+      // `HttpException` instances thrown deeper in the call chain (e.g.,
+      // a `BadRequestException` from a future input-validation guard)
+      // are re-thrown unchanged so their original status codes survive.
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new BadGatewayException(
+        'Snowflake sync failed: upstream Snowflake driver returned an ' +
+          'error. The portfolio data layer is operating normally; the ' +
+          'failure is isolated to the analytical mirror. See server ' +
+          `logs for correlationId=${correlationId}.`
+      );
     } finally {
       this.metricsService.observeHistogram(
         'snowflake_sync_latency_seconds',
@@ -615,12 +652,25 @@ export class SnowflakeSyncService implements OnModuleInit {
    */
   public async syncSnapshots(userId: string, date: string): Promise<number> {
     // Lazy-resolve `PortfolioService` per invocation to avoid
-    // promoting this service to REQUEST scope. See
-    // `resolvePortfolioService()` for the rationale.
-    const portfolioService = await this.resolvePortfolioService();
+    // promoting this service to REQUEST scope. The `userId` argument
+    // is forwarded so a synthetic REQUEST provider with a matching
+    // `request.user.id` is registered under the synthetic contextId
+    // — this is required because `PortfolioService` transitively
+    // injects `ImpersonationService`, which dereferences
+    // `this.request.user` unconditionally inside
+    // `validateImpersonationId(...)`. See `resolvePortfolioService()`
+    // for the full rationale.
+    const portfolioService = await this.resolvePortfolioService(userId);
+    // `impersonationId: undefined` mirrors the existing controller pattern
+    // when no `x-impersonation-id` header is present. `validateImpersonationId`
+    // falls back to its default `aId = ''`, which Prisma accepts. Passing
+    // `null` here is rejected by Prisma 7 (`Argument 'id' must not be null`)
+    // because `Access.id` is a non-nullable string column. See QA Checkpoint 9
+    // CRITICAL #1 follow-on (Prisma rejection after the synthetic-REQUEST
+    // provider unblocks `this.request.user` access).
     const details = await portfolioService.getDetails({
       dateRange: 'max',
-      impersonationId: null,
+      impersonationId: undefined,
       userId,
       withMarkets: false,
       withSummary: false
@@ -714,12 +764,20 @@ export class SnowflakeSyncService implements OnModuleInit {
    */
   public async syncMetrics(userId: string, date: string): Promise<void> {
     // Lazy-resolve `PortfolioService` per invocation to avoid
-    // promoting this service to REQUEST scope. See
-    // `resolvePortfolioService()` for the rationale.
-    const portfolioService = await this.resolvePortfolioService();
+    // promoting this service to REQUEST scope. The `userId` argument
+    // is forwarded so a synthetic REQUEST provider with a matching
+    // `request.user.id` is registered under the synthetic contextId
+    // — this is required because `PortfolioService` transitively
+    // injects `ImpersonationService`, which dereferences
+    // `this.request.user` unconditionally inside
+    // `validateImpersonationId(...)`. See `resolvePortfolioService()`
+    // for the full rationale.
+    const portfolioService = await this.resolvePortfolioService(userId);
+    // `impersonationId: undefined` (not `null`) — see `syncSnapshots` for the
+    // full Prisma-rejection rationale (QA Checkpoint 9 CRITICAL #1 follow-on).
     const performance = await portfolioService.getPerformance({
       dateRange: 'max',
-      impersonationId: null,
+      impersonationId: undefined,
       userId
     });
 
@@ -856,7 +914,8 @@ export class SnowflakeSyncService implements OnModuleInit {
   }
 
   /**
-   * Lazily resolves a per-invocation `PortfolioService` instance.
+   * Lazily resolves a per-invocation `PortfolioService` instance for
+   * the supplied `userId`.
    *
    * Why lazy resolution instead of constructor injection?
    *
@@ -881,11 +940,42 @@ export class SnowflakeSyncService implements OnModuleInit {
    * cron, the event-driven sync, and the manual-trigger paths all
    * call this helper, which uses `ModuleRef.resolve(...)` with a
    * fresh `ContextIdFactory.create()` to instantiate a `PortfolioService`
-   * for the synthetic context. That instance's `request` field is
-   * undefined at the type level, but the underlying `PortfolioService`
-   * methods this class actually invokes (`getDetails(...)`,
-   * `getPerformance(...)`) accept `userId` explicitly and do not rely
-   * on `this.request.user.id`, so the synthetic context is safe.
+   * for the synthetic context.
+   *
+   * Why the synthetic REQUEST registration?
+   *
+   *   Earlier iterations of this method deliberately omitted any
+   *   `registerRequestByContextId(...)` call on the assumption that
+   *   `PortfolioService.getDetails(...)` and `getPerformance(...)`
+   *   accept `userId` explicitly and therefore do not rely on
+   *   `this.request.user.id`. That assumption was INCORRECT at runtime.
+   *   `PortfolioService` invokes
+   *   `await this.impersonationService.validateImpersonationId(...)`
+   *   inside its private `getUserId(impersonationId, userId)` helper
+   *   (which the public `getDetails`/`getPerformance` calls reach into
+   *   even when `impersonationId === null`), and
+   *   `ImpersonationService.validateImpersonationId(...)` dereferences
+   *   `this.request.user` unconditionally on its first line. With no
+   *   REQUEST provider bound to the synthetic contextId, `this.request`
+   *   is `undefined` — and the cron, the daily sync, AND the admin
+   *   manual-trigger code paths all fail with
+   *   `TypeError: Cannot read properties of undefined (reading 'user')`.
+   *   See QA Test Report — Checkpoint 9 (CRITICAL Issue #1) for the
+   *   confirmed reproduction.
+   *
+   *   `ModuleRef.registerRequestByContextId({...}, contextId)` binds a
+   *   plain object as the `REQUEST` provider for the duration of the
+   *   resolved-context lifetime. The injected `request.user.id` matches
+   *   the JWT-authoritative `userId` passed to this helper, so any
+   *   subsequent access permission lookups inside `ImpersonationService`
+   *   (e.g., `this.prismaService.access.findFirst({...granteeUserId:
+   *   this.request.user.id})`) operate on behalf of the correct user
+   *   and never bleed across user boundaries. The `permissions` array is
+   *   intentionally empty: the only branch that consults
+   *   `request.user.permissions` is the `impersonateAllUsers` check,
+   *   and the cron/event/manual-sync paths NEVER call `getDetails(...)`
+   *   with a non-null `impersonationId`, so the impersonation branch is
+   *   structurally unreachable here.
    *
    * The `strict: false` flag instructs `ModuleRef.resolve()` to search
    * the entire module hierarchy rather than only the host module's
@@ -902,9 +992,38 @@ export class SnowflakeSyncService implements OnModuleInit {
    * the per-request lifecycle that `PortfolioService` was designed
    * for — the cron just synthesizes a context rather than receiving
    * one from an HTTP layer.
+   *
+   * @param userId JWT-authoritative user id whose portfolio data the
+   *               resolved `PortfolioService` will compute. The id is
+   *               also used to populate the synthetic `request.user.id`
+   *               so that REQUEST-scoped collaborators (e.g.,
+   *               `ImpersonationService`) can access it without a
+   *               TypeError.
    */
-  private async resolvePortfolioService(): Promise<PortfolioService> {
+  private async resolvePortfolioService(
+    userId: string
+  ): Promise<PortfolioService> {
     const contextId = ContextIdFactory.create();
+
+    // Register a synthetic REQUEST provider for this contextId BEFORE
+    // resolving any REQUEST-scoped collaborators. The shape mirrors
+    // the runtime `RequestWithUser` envelope expected by
+    // `ImpersonationService` (which only reads `request.user.id` and
+    // `request.user.permissions`). The empty `permissions` array is
+    // safe here because the cron / event / manual-sync paths never
+    // invoke `getDetails(...)` with a non-null `impersonationId`, so
+    // the `hasPermission(..., impersonateAllUsers)` branch is
+    // structurally unreachable.
+    this.moduleRef.registerRequestByContextId(
+      {
+        user: {
+          id: userId,
+          permissions: []
+        }
+      },
+      contextId
+    );
+
     return this.moduleRef.resolve(PortfolioService, contextId, {
       strict: false
     });

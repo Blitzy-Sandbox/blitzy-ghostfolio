@@ -5,6 +5,7 @@ import type { RequestWithUser } from '@ghostfolio/common/types';
 
 import { HttpException, HttpStatus, MessageEvent } from '@nestjs/common';
 import {
+  HTTP_CODE_METADATA,
   METHOD_METADATA,
   PATH_METADATA,
   SSE_METADATA
@@ -518,6 +519,41 @@ describe('AiChatController', () => {
       AiChatController.prototype.chat
     );
     expect(path).toBe('/');
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7b — HTTP status-code wiring: @HttpCode(HttpStatus.OK) overrides
+  //           NestJS's default 201-Created for `@Post()` handlers.
+  //           Regression guard for QA Checkpoint 9 INFO #1 (POST
+  //           endpoints responded HTTP 201 instead of 200 — REST
+  //           convention violation for non-resource-creating actions
+  //           per AAP § 0.1.1 Feature B "AI Portfolio Chat Agent" and
+  //           the precedent set by sibling controllers
+  //           `SnowflakeSyncController.triggerSync` and
+  //           `UserFinancialProfileController.update` which both use
+  //           `@HttpCode(HttpStatus.OK)`).
+  // -------------------------------------------------------------------------
+
+  it('declares @HttpCode(HttpStatus.OK) (HTTP 200, not 201) on chat() (QA Checkpoint 9 INFO #1)', () => {
+    // NestJS defaults `@Post()` to HTTP 201 (Created), but the chat
+    // endpoint is RPC-style — it does NOT create a server-side
+    // resource (chat is stateless server-side per AAP § 0.7.3
+    // "Stateless chat protocol — 4-turn limit"). Returning 201 would
+    // incorrectly signal resource creation to API clients.
+    //
+    // The fix applies `@HttpCode(HttpStatus.OK)` to the `chat()`
+    // handler, matching the convention already used by the sibling
+    // `SnowflakeSyncController.triggerSync()` (see
+    // `snowflake-sync.controller.spec.ts` ~lines 435-441) and
+    // `UserFinancialProfileController.update()`. Asserting the
+    // metadata here is the only automated guard against a future
+    // refactor accidentally dropping the decorator and silently
+    // regressing the response status code back to 201.
+    const httpCode = Reflect.getMetadata(
+      HTTP_CODE_METADATA,
+      AiChatController.prototype.chat
+    );
+    expect(httpCode).toBe(HttpStatus.OK);
   });
 
   // -------------------------------------------------------------------------

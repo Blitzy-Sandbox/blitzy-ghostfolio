@@ -6,6 +6,8 @@ import type { RequestWithUser } from '@ghostfolio/common/types';
 import {
   Body,
   Controller,
+  HttpCode,
+  HttpStatus,
   Inject,
   MessageEvent,
   Post,
@@ -116,6 +118,17 @@ export class AiChatController {
    * payload formats are documented on
    * {@link AiChatService.streamChat}.
    *
+   * HTTP status code: `@HttpCode(HttpStatus.OK)` overrides NestJS's default
+   * `@Post()` status of 201 Created. The chat-completion endpoint is
+   * RPC-style — it streams a model response back to the caller and creates
+   * NO resource at the API surface (chat is stateless server-side per AAP
+   * § 0.7.3 "Stateless chat protocol — 4-turn limit"), so HTTP 200 is the
+   * semantically correct success code. This matches the pattern already
+   * used by the sibling `SnowflakeSyncController` and
+   * `UserFinancialProfileController` in this project (and by the existing
+   * Ghostfolio `AiController` / queue controllers). See QA Test Report —
+   * Checkpoint 9 INFO #1 for the original finding.
+   *
    * Security: the `userId` forwarded to the service is read exclusively
    * from the JWT-authenticated `request.user.id`. The DTO carries no
    * `userId` field — the authoritative identifier comes only from the
@@ -128,6 +141,7 @@ export class AiChatController {
    *          subscribes to it via the `@Sse()` decorator and pipes each
    *          emission to the HTTP response.
    */
+  @HttpCode(HttpStatus.OK)
   @Post()
   @HasPermission(permissions.readAiChat)
   @Sse()

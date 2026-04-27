@@ -3,6 +3,7 @@ import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.servic
 import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.event';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
+import { BadGatewayException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ModuleRef } from '@nestjs/core';
 import { readFileSync } from 'node:fs';
@@ -309,21 +310,34 @@ describe('SnowflakeSyncService', () => {
 
     factory = new SnowflakeClientFactory(configService);
 
-    // `ModuleRef` is mocked as a minimal stand-in: the only method
-    // `SnowflakeSyncService.resolvePortfolioService()` exercises is
-    // `resolve(token, contextId, options)`. The mock returns the same
-    // `portfolioService` instance built above, mirroring the runtime
-    // behaviour where `ModuleRef.resolve(PortfolioService, ...)`
+    // `ModuleRef` is mocked as a minimal stand-in: the methods
+    // `SnowflakeSyncService.resolvePortfolioService()` exercises are
+    // `registerRequestByContextId(request, contextId)` and
+    // `resolve(token, contextId, options)`. The `resolve` mock returns
+    // the same `portfolioService` instance built above, mirroring the
+    // runtime behaviour where `ModuleRef.resolve(PortfolioService, ...)`
     // produces a per-context `PortfolioService` instance scoped to a
     // synthetic context id created by `ContextIdFactory.create()`.
     //
+    // `registerRequestByContextId` is required to bind a synthetic
+    // REQUEST provider to the contextId BEFORE the `resolve(...)` call
+    // because `PortfolioService` transitively injects
+    // `ImpersonationService` (REQUEST-scoped) which dereferences
+    // `this.request.user.id` unconditionally. The mock here is a
+    // bare `jest.fn()` because the production `ModuleRef`'s
+    // implementation simply records the request payload against the
+    // contextId — the in-memory ModuleRef does not need to do that to
+    // satisfy this test, but the mock must accept the call without
+    // throwing.
+    //
     // The double cast (`as unknown as ModuleRef`) keeps the runtime
-    // shape minimal (one method) while satisfying the strict typed
+    // shape minimal (two methods) while satisfying the strict typed
     // signature of the constructor parameter. This is the same pattern
     // documented in the NestJS testing guide for unit-testing
     // services that consume `ModuleRef` outside of the testing module
     // (https://docs.nestjs.com/fundamentals/module-ref).
     moduleRef = {
+      registerRequestByContextId: jest.fn(),
       resolve: jest.fn().mockResolvedValue(portfolioService)
     } as unknown as ModuleRef;
 
@@ -653,6 +667,55 @@ describe('SnowflakeSyncService', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Test 4b — Synthetic REQUEST provider registration (CRITICAL Issue #1
+  //           regression test)
+  // -------------------------------------------------------------------------
+  //
+  // Reproduces the QA Test Report — Checkpoint 9 CRITICAL Issue #1
+  // contract: when `syncSnapshots(...)` or `syncMetrics(...)` is invoked
+  // from the cron, the event listener, or the admin manual-trigger code
+  // path (i.e., outside of an HTTP request lifecycle), the implementation
+  // MUST register a synthetic REQUEST provider against the
+  // `ContextIdFactory.create()` contextId BEFORE resolving
+  // `PortfolioService`. Without this registration, `PortfolioService`'s
+  // transitively-injected `ImpersonationService.validateImpersonationId(...)`
+  // dereferences `this.request.user` on `undefined` and the entire chain
+  // fails with `TypeError: Cannot read properties of undefined (reading
+  // 'user')`. The registration also guarantees per-user data isolation
+  // since `request.user.id` matches the authoritative `userId` argument
+  // (Rule 5 — § 0.7.1.5).
+  it('registers a synthetic REQUEST provider with request.user.id matching the userId before resolving PortfolioService (CRITICAL Issue #1 regression)', async () => {
+    const today = '2025-04-15';
+
+    await service.syncSnapshots(TEST_USER_ID, today);
+    await service.syncMetrics(TEST_USER_ID, today);
+
+    const registerSpy = (
+      moduleRef as unknown as {
+        registerRequestByContextId: jest.Mock;
+      }
+    ).registerRequestByContextId;
+
+    // Both syncSnapshots and syncMetrics must call
+    // registerRequestByContextId — at least once each.
+    expect(registerSpy).toHaveBeenCalled();
+    expect(registerSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // Every registration call must include a `user.id` matching the
+    // JWT-authoritative userId argument. This is the defining contract
+    // of the fix: the synthetic request is shaped exactly like a real
+    // RequestWithUser envelope so that ImpersonationService's
+    // `this.request.user` access succeeds and Rule 5 (per-user
+    // isolation) is preserved end-to-end.
+    for (const call of registerSpy.mock.calls) {
+      const [request] = call as [{ user: { id: string } }];
+      expect(request).toBeDefined();
+      expect(request.user).toBeDefined();
+      expect(request.user.id).toBe(TEST_USER_ID);
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // Test 5 — queryHistory parameter validation (chat-agent tool safety)
   // -------------------------------------------------------------------------
 
@@ -877,11 +940,21 @@ describe('SnowflakeSyncService', () => {
     expect(result.correlationId.length).toBeGreaterThan(0);
   });
 
-  it('triggerManualSync re-throws underlying sync failures (HTTP error mapping)', async () => {
-    // Unlike the event-handler boundary (which swallows errors),
-    // the manual-trigger entry point re-throws so the global NestJS
+  it('triggerManualSync re-throws underlying sync failures wrapped in BadGatewayException (HTTP 502 — QA Checkpoint 9 CRITICAL #1 expected outcome)', async () => {
+    // Unlike the event-handler boundary (which swallows errors), the
+    // manual-trigger entry point re-throws so the global NestJS
     // exception filter can map the error to an HTTP status code on
-    // the controller side.
+    // the controller side. Per AAP § 0.7.4, raw upstream Snowflake
+    // failures (`snowflake-sdk` `RequestFailedError`, network/DNS
+    // failures, bootstrap DDL failures) MUST be translated to a
+    // `BadGatewayException` (HTTP 502) so the controller surfaces
+    // "Bad Gateway" instead of the default HTTP 500 "Internal server
+    // error" produced by NestJS for non-`HttpException` throwables.
+    // This matches the QA Checkpoint 9 CRITICAL #1 expected outcome
+    // ("Or, if Snowflake is unreachable, a graceful HTTP 502 from
+    // upstream error handling.") and the identical pattern already
+    // established in `RebalancingService` (4 BadGatewayException
+    // sites) for upstream Anthropic failures.
     jest
       .spyOn(service, 'syncOrders')
       .mockRejectedValueOnce(new Error('snowflake unavailable'));
@@ -890,6 +963,29 @@ describe('SnowflakeSyncService', () => {
       service.triggerManualSync({
         callerUserId: TEST_USER_ID
       })
-    ).rejects.toThrow(/snowflake unavailable/);
+    ).rejects.toBeInstanceOf(BadGatewayException);
+  });
+
+  it('triggerManualSync re-throws HttpException instances unchanged (preserves status codes)', async () => {
+    // A future input-validation guard (e.g., a custom
+    // `BadRequestException` thrown from inside `syncSnapshots` because
+    // the requested user does not exist) must NOT be re-wrapped in
+    // BadGatewayException — its original 4xx status code must survive
+    // so the client receives the correct HTTP response. The catch
+    // block uses an `instanceof HttpException` short-circuit to
+    // preserve such errors verbatim. This regression test prevents
+    // accidentally wrapping all errors (including 4xx
+    // client-error-class HttpExceptions) into 502 in a future refactor.
+    const originalError = new BadRequestException(
+      'requested user does not exist'
+    );
+
+    jest.spyOn(service, 'syncOrders').mockRejectedValueOnce(originalError);
+
+    await expect(
+      service.triggerManualSync({
+        callerUserId: TEST_USER_ID
+      })
+    ).rejects.toBe(originalError);
   });
 });

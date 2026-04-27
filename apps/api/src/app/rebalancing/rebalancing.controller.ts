@@ -4,7 +4,15 @@ import type { RebalancingResponse } from '@ghostfolio/common/interfaces';
 import { permissions } from '@ghostfolio/common/permissions';
 import type { RequestWithUser } from '@ghostfolio/common/types';
 
-import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Post,
+  UseGuards
+} from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { randomUUID } from 'node:crypto';
@@ -105,6 +113,17 @@ export class RebalancingController {
    * unexpected shape, the service throws `BadGatewayException` (HTTP 502)
    * which the global exception filter maps to a typed error response.
    *
+   * HTTP status code: `@HttpCode(HttpStatus.OK)` overrides NestJS's default
+   * `@Post()` status of 201 Created. The rebalancing endpoint is query-style
+   * — it returns structured recommendations derived from the user's
+   * current portfolio and creates NO resource at the API surface (the
+   * response is a transient `RebalancingResponse`; nothing is persisted
+   * server-side), so HTTP 200 is the semantically correct success code.
+   * This matches the pattern already used by the sibling
+   * `SnowflakeSyncController` and `UserFinancialProfileController` in this
+   * project. See QA Test Report — Checkpoint 9 INFO #1 for the original
+   * finding.
+   *
    * Security: the `userId` forwarded to the service is read exclusively from
    * the JWT-authenticated `request.user.id`. The DTO carries no `userId`
    * field — the authoritative identifier comes only from the
@@ -118,6 +137,7 @@ export class RebalancingController {
    * @returns A `Promise` resolving to the structured `RebalancingResponse`
    *          produced by `RebalancingService.recommend(...)`.
    */
+  @HttpCode(HttpStatus.OK)
   @Post()
   @HasPermission(permissions.readAiRebalancing)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)

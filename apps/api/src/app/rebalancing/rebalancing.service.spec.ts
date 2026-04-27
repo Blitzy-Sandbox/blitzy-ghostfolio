@@ -832,21 +832,23 @@ describe('RebalancingService', () => {
 
     // The portfolio fetch MUST be issued exactly once per
     // `recommend(...)` invocation, with `userId` set to the
-    // JWT-authoritative value. The `impersonationId: null` clause
-    // is set inside the service body — the test asserts only the
-    // `userId` field to keep the test resilient to future signature
-    // additions (e.g., filters, dateRange) that don't affect Rule
-    // 4 / Rule 5 compliance.
+    // JWT-authoritative value. The `impersonationId: undefined`
+    // clause is set inside the service body — the test asserts only
+    // the `userId` field to keep the test resilient to future
+    // signature additions (e.g., filters, dateRange) that don't
+    // affect Rule 4 / Rule 5 compliance. (QA Checkpoint 9 CRITICAL
+    // #1 follow-on standardized `null` → `undefined` to match the
+    // existing controller pattern and avoid Prisma 7 rejection.)
     expect(portfolioService.getDetails).toHaveBeenCalledTimes(1);
 
     // Tuple-destructure the call argument tuple from Jest's untyped
     // `mock.calls: any[][]` shape (see Test 6 commentary).
     const [callArg] = portfolioService.getDetails.mock.calls[0] as [
-      { impersonationId: string | null; userId: string }
+      { impersonationId: string | undefined; userId: string }
     ];
 
     expect(callArg.userId).toBe(TEST_USER_ID);
-    expect(callArg.impersonationId).toBeNull();
+    expect(callArg.impersonationId).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

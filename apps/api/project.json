@@ -9,6 +9,13 @@
     "build": {
       "executor": "@nx/webpack:webpack",
       "options": {
+        "assets": [
+          {
+            "glob": "**/*",
+            "input": "apps/api/src/app/snowflake-sync/sql",
+            "output": "sql"
+          }
+        ],
         "compiler": "tsc",
         "deleteOutputPath": false,
         "main": "apps/api/src/main.ts",

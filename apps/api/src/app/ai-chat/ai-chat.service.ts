@@ -752,8 +752,12 @@ export class AiChatService {
     userId: string
   ): Promise<{ holdings?: Record<string, unknown> } | null> {
     try {
+      // `impersonationId: undefined` mirrors the existing-controller pattern
+      // (no `x-impersonation-id` header). Passing `null` is rejected by Prisma
+      // because `Access.id` is non-nullable. QA Checkpoint 9 CRITICAL #1
+      // follow-on after the synthetic-REQUEST provider fix.
       const result = await this.portfolioService.getDetails({
-        impersonationId: null,
+        impersonationId: undefined,
         userId
       });
 
@@ -922,11 +926,13 @@ export class AiChatService {
     switch (name) {
       case 'get_current_positions': {
         // Override any tool-supplied `userId` with the JWT-authenticated
-        // value. PortfolioService.getDetails accepts `impersonationId: null`
-        // when the caller is not impersonating another user (per the
-        // verified signature at portfolio.service.ts line 467).
+        // value. `impersonationId: undefined` mirrors the existing controller
+        // pattern (no `x-impersonation-id` header sent), which lets
+        // `validateImpersonationId` apply its default `aId = ''` and avoids
+        // Prisma's "Argument 'id' must not be null" rejection. QA Checkpoint
+        // 9 CRITICAL #1 follow-on after the synthetic-REQUEST provider fix.
         const result = await this.portfolioService.getDetails({
-          impersonationId: null,
+          impersonationId: undefined,
           userId: authenticatedUserId
         });
         return { holdings: result?.holdings ?? {} };
@@ -956,9 +962,12 @@ export class AiChatService {
           );
         }
 
+        // `impersonationId: undefined` — see `get_current_positions` for the
+        // full Prisma-rejection rationale (QA Checkpoint 9 CRITICAL #1
+        // follow-on).
         const result = await this.portfolioService.getPerformance({
           dateRange,
-          impersonationId: null,
+          impersonationId: undefined,
           userId: authenticatedUserId
         });
 
