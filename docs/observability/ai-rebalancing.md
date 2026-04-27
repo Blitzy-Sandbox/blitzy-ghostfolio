@@ -1,526 +1,545 @@
-# Explainable Rebalancing Engine — Observability Dashboard Template
+# AI Rebalancing Engine — Observability Dashboard
 
 ## Overview
 
-This document is the canonical Grafana dashboard template for **Feature C — Explainable Rebalancing Engine (`RebalancingModule`)**, the non-streaming `POST /api/v1/ai/rebalancing` endpoint introduced by the Agent Action Plan. It satisfies the project-level **Observability** rule recorded in AAP § 0.7.2 (every deliverable MUST include structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, and a dashboard template — and that observability MUST be exercisable in the local development environment).
+Operator dashboard for the **Explainable Rebalancing Engine** exposed at
+`POST /api/v1/ai/rebalancing`. The dashboard tracks the two Prometheus
+metrics emitted by `RebalancingService` and exposed at
+`GET /api/v1/metrics`:
 
-### Feature being observed
+1. `rebalancing_requests_total` — terminal-outcome counter for every
+   call to `RebalancingService.recommend()`. Labelled by the four
+   outcomes assigned in the service (`success`, `no_tool_use`,
+   `shape_invalid`, `error`).
+2. `rebalancing_latency_seconds` — histogram of end-to-end wall-clock
+   latency from method entry through structured-output validation.
 
-The dashboard observes the entire request lifecycle of `POST /api/v1/ai/rebalancing`:
+The dashboard is intentionally scoped to **only** the metrics actually
+emitted by `RebalancingService`. Additional signals — per-recommendation
+counts, warnings counts, goal-reference completeness, finer-grained
+Anthropic API error classes — are **not** exposed as separate metrics
+by this version of the service. The four outcomes nevertheless cover
+all distinct failure modes that AAP Rule 4 cares about: `no_tool_use`
+(Anthropic returned a text-only response with no `tool_use` block;
+direct Rule 4 violation), `shape_invalid` (the `tool_use.input` payload
+failed structural validation against `RebalancingResponse`), and
+`error` (any other unexpected failure, including upstream Anthropic
+authentication errors). Operators who require finer dimensions must
+either extend `RebalancingService` to register additional metrics or
+inspect the structured logs (every line is prefixed with
+`[RebalancingService] [<correlationId>]`).
 
-- The endpoint is implemented in `RebalancingController` (`apps/api/src/app/rebalancing/rebalancing.controller.ts`) and `RebalancingService` (`apps/api/src/app/rebalancing/rebalancing.service.ts`).
-- The service constructs an Anthropic Claude client via the `@anthropic-ai/sdk` package and invokes `client.messages.create({...})` — **NOT** `messages.stream({...})` — so that the response is delivered as a single JSON payload after the model has finished producing the structured output. This makes the endpoint **NON-STREAMING** — distinct from the streaming chat endpoint documented in `ai-chat.md`, which uses `messages.stream({...})` and emits Server-Sent Events.
-- The service supplies a single-element `tools` array describing the `rebalancing_recommendations` tool whose `input_schema` matches the `RebalancingResponse` interface verbatim (per AAP § 0.1.2.4), and forces invocation via `tool_choice: { type: 'tool', name: 'rebalancing_recommendations' }`.
-- Per **Rule 4 — Structured Rebalancing via Tool Use** (AAP § 0.7.1.4), `RebalancingService` populates `RebalancingResponse` **exclusively** from a `tool_use` content block returned by the Anthropic SDK. Parsing Claude's `text` message content to extract structured fields is **PROHIBITED**. When the SDK returns a response without a `tool_use` block, the service throws `BadGatewayException` and emits the `ai_rebalancing_tool_use_validation_failure_total` counter — there is **no** text-parsing fallback.
-- Each recommendation in the response array MUST include a non-empty `rationale` and a non-empty `goalReference` mapping to a `FinancialProfile` field name or to a label inside the JSON `investmentGoals` array (per AAP § 0.7.5.2 Rebalancing engine gate). Empty `goalReference` values indicate prompt drift or model regression and are surfaced as a quality metric in Panel 5.
-- The service injects `PortfolioService` (for the current allocation snapshot) and `UserFinancialProfileService` (for goal data referenced in each `goalReference`); their read latency contributes to total request latency.
+## Audience
 
-### Data source
+- **Site Reliability Engineering / Platform Operations** — primary
+  dashboard owners; on-call rotation watches latency, success rate,
+  and tool-use validation failures during incidents.
+- **AI Feature Engineering** — secondary owners; review the relative
+  share of `no_tool_use` and `shape_invalid` outcomes, which together
+  measure how often Claude fails to honour the forced-tool prompt
+  contract or returns an off-schema payload.
 
-All panels query Prometheus-formatted counters and histograms exposed at the new `/api/v1/metrics` endpoint registered by `MetricsModule` (`apps/api/src/app/metrics/metrics.controller.ts` per AAP § 0.5.1.2). The dashboard assumes a Prometheus datasource scrapes that endpoint at a stable interval (typically every 15 s); the `datasource.uid` in the JSON definition below is a placeholder (`"Prometheus"`) that operators should reconcile with the UID of their actual provisioned Prometheus datasource.
+## Cross-references
 
-### Audience
+- **AAP §0.1.1 / §0.5.1.1** — feature definition (Feature C —
+  Explainable Rebalancing Engine) and emitted-metrics scope.
+- **AAP §0.7.1.4 (Rule 4)** — `RebalancingService` MUST populate
+  `RebalancingResponse` exclusively from a `tool_use` content block.
+  The `no_tool_use` and `shape_invalid` outcomes on
+  `rebalancing_requests_total` are the runtime telemetry that
+  enforces this rule.
+- **AAP §0.7.2 (Observability rule)** — mandates this dashboard
+  template alongside structured logging, correlation IDs, the metrics
+  endpoint, and the readiness probes.
+- **Source of truth — service**:
+  `apps/api/src/app/rebalancing/rebalancing.service.ts`. Specifically,
+  metric registrations are at lines 222 and 227; outcome variable
+  assignments are at lines 322 (`no_tool_use`), 344 and 370
+  (`shape_invalid`), 382 (`success`), 406 (`error`); both metrics
+  emit from a single `finally` block at lines 431 and 436.
+- **Source of truth — metrics registry**:
+  `apps/api/src/app/metrics/metrics.service.ts`. Default histogram
+  buckets (in seconds) are
+  `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`.
+- **Spec coverage**:
+  `apps/api/src/app/rebalancing/rebalancing.service.spec.ts`
+  exercises every outcome path and asserts that the corresponding
+  counter increment fires.
 
-The intended audience is on-call SREs and product reviewers verifying:
+## Emitted Metrics — Authoritative Reference
 
-1. **Total request latency** — the user-facing performance metric for non-streaming endpoints. Because the rebalancing endpoint does not stream tokens, the user perceives the entire wait between submitting the request and seeing the recommendation list. Panel 1 surfaces p50/p95/p99 quantiles of this distribution.
-2. **Correctness (Rule 4 compliance)** — Panel 4 surfaces the `ai_rebalancing_tool_use_validation_failure_total` counter, which MUST remain at zero in healthy operation. Any non-zero value is a Rule 4 violation and is alerted immediately.
-3. **Quality (`goalReference` non-empty rate)** — Panel 5 surfaces the percentage of returned recommendations whose `goalReference` field is non-empty, targeted at 100% (per AAP § 0.7.5.2). A drop below 100% signals the model has stopped honoring the explainability requirement.
-4. **Recommendation count distribution** — Panel 2 surfaces the histogram of how many recommendations Claude produces per call, useful for catching prompt regressions where the model returns empty or excessive arrays.
-5. **Warnings rate** — Panel 3 surfaces the average number of warnings emitted per response, alerted when the ratio exceeds 0.5 warnings per recommendation.
-6. **Anthropic API health** — Panel 6 surfaces post-retry Anthropic SDK errors by class (`rate_limit`, `auth`, `timeout`, `5xx`, `4xx`, `unknown`); the readiness probe at `GET /api/v1/health/anthropic` (implemented in `apps/api/src/app/health/anthropic-health.indicator.ts` per AAP § 0.5.1.2) is a configuration probe that does not consume API tokens and can be referenced alongside this panel.
+| Metric                        | Type      | Labels                                                           | HELP text                                                                                                                                       |
+| ----------------------------- | --------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rebalancing_requests_total`  | counter   | `outcome` ∈ {`success`, `no_tool_use`, `shape_invalid`, `error`} | Total rebalancing recommendation requests handled by RebalancingService, labeled by outcome (success \| no_tool_use \| shape_invalid \| error). |
+| `rebalancing_latency_seconds` | histogram | (none — single end-to-end signal)                                | End-to-end wall-clock latency of RebalancingService.recommend() in seconds, measured from method entry through structured-output validation.    |
 
-### Streaming vs. non-streaming distinction
+The histogram exposes the canonical Prometheus suffixes
+`_bucket{le="..."}`, `_sum`, and `_count`; the
+`MetricsService.getRegistryAsText()` renderer pre-populates every
+default bucket so that PromQL `histogram_quantile()` calls work from
+the first observation onwards.
 
-This dashboard's primary user-facing latency metric is **total request latency** (Panel 1), measured from request receipt to JSON response emission. The endpoint is non-streaming because a structured `tool_use` content block is only emitted by Claude after the model has completed its reasoning; there is no intermediate output to surface.
+### Outcome semantics
 
-By contrast, the chat dashboard (`docs/observability/ai-chat.md`) uses **first-token latency** as its primary metric because that endpoint streams Server-Sent Events token-by-token. When debugging, reach for the dashboard whose primary latency metric matches the endpoint's transport. Cross-references: AAP § 0.7.2 (Observability rule), AAP § 0.7.5.2 (Rebalancing engine gate), AAP § 0.7.1.4 (Rule 4 — Structured Rebalancing via Tool Use), AAP § 0.7.3 (Rate-limiting and back-off — the Anthropic SDK has built-in retries; this dashboard counts the post-retry failure surface).
-
----
+| Outcome         | Meaning                                                                                                                                                                                                                            | Source line                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `success`       | The Anthropic response contained a `tool_use` block whose `input` validated against the `RebalancingResponse` shape. The structured payload is returned to the caller.                                                             | `rebalancing.service.ts:382`      |
+| `no_tool_use`   | The Anthropic response contained **no** `tool_use` content block — Claude declined to invoke the forced tool and returned text only. Direct AAP Rule 4 violation; the controller raises `BadGatewayException`.                     | `rebalancing.service.ts:322`      |
+| `shape_invalid` | The `tool_use.input` payload was present but failed structural validation (top-level fields missing or an individual recommendation missing required fields such as `goalReference`). The controller raises `BadGatewayException`. | `rebalancing.service.ts:344, 370` |
+| `error`         | Any other failure during `recommend()` — upstream Anthropic authentication errors, network failures, or unexpected exceptions. The controller raises `BadGatewayException`.                                                        | `rebalancing.service.ts:406`      |
 
 ## Recommended Panels
 
-The dashboard SHOULD include exactly the following six panels, in the order documented here. The JSON definition in the [JSON Dashboard Definition](#json-dashboard-definition) section below provides a 1:1 importable mapping.
+The dashboard ships with six panels grouped into three rows. The top
+row covers wall-clock latency, the middle row covers terminal request
+outcomes, and the bottom row provides AAP Rule 4 compliance signals.
 
-### Panel 1 — Rebalancing Latency
+| #   | Panel                                     | Type                  | Primary Metric                                                      | Example PromQL                                                                                                                                  |
+| --- | ----------------------------------------- | --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Rebalancing Latency (p50 / p95 / p99)     | Time series           | `rebalancing_latency_seconds`                                       | `histogram_quantile(0.95, sum by (le) (rate(rebalancing_latency_seconds_bucket[5m])))`                                                          |
+| 2   | Rebalancing Latency Distribution          | Heatmap               | `rebalancing_latency_seconds_bucket`                                | `sum by (le) (rate(rebalancing_latency_seconds_bucket[5m]))`                                                                                    |
+| 3   | Request Outcome Distribution              | Time series (stacked) | `rebalancing_requests_total`                                        | `sum by (outcome) (rate(rebalancing_requests_total[5m]))`                                                                                       |
+| 4   | Success Rate                              | Stat (single-value)   | `rebalancing_requests_total{outcome="success"}`                     | `sum(rate(rebalancing_requests_total{outcome="success"}[5m])) / clamp_min(sum(rate(rebalancing_requests_total[5m])), 1e-9)`                     |
+| 5   | Tool-Use Validation Failure Rate (Rule 4) | Stat (single-value)   | `rebalancing_requests_total{outcome=~"no_tool_use\|shape_invalid"}` | `sum(rate(rebalancing_requests_total{outcome=~"no_tool_use\|shape_invalid"}[5m])) / clamp_min(sum(rate(rebalancing_requests_total[5m])), 1e-9)` |
+| 6   | Request Volume                            | Time series           | `rebalancing_requests_total`                                        | `sum(rate(rebalancing_requests_total[5m]))`                                                                                                     |
 
-| Field                        | Value                                                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Panel type**               | `timeseries` with p50 / p95 / p99 lines                                                                    |
-| **Metric name**              | `ai_rebalancing_request_duration_seconds` (histogram)                                                      |
-| **Example expression (p95)** | `histogram_quantile(0.95, sum by (le) (rate(ai_rebalancing_request_duration_seconds_bucket[5m])))`         |
-| **Thresholds**               | p50 ≤ 6 s; p95 ≤ 15 s; p99 ≤ 30 s. Alert if p95 exceeds 20 s for 10 minutes (`RebalancingLatencyP95High`). |
+### Panel 1 — Rebalancing Latency (p50 / p95 / p99)
 
-**Description.** Histogram of total `POST /api/v1/ai/rebalancing` response time, measured from request receipt to JSON response emission. Includes the Anthropic API roundtrip latency (the dominant component, since `messages.create` blocks until the full structured output is produced), plus the `PortfolioService` allocation read and the `UserFinancialProfileService` goal read that build the system prompt. Because this endpoint is non-streaming, this metric is the primary user-facing latency signal — there is no intermediate first-token signal to surface.
+The headline operator SLI for the rebalancing endpoint.
+`rebalancing_latency_seconds` is observed exactly once per request, in
+the `finally` block of `recommend()` (`rebalancing.service.ts:436`),
+which guarantees the histogram is recorded for every outcome
+including failures. The panel renders three series — p50, p95,
+p99 — over a five-minute rolling window, computed via
+`histogram_quantile()` against the bucket counter. Recommended visual
+threshold: green ≤ 5 s, amber 5 s–15 s, red > 15 s on the p95 series.
+A breach of red on p95 typically indicates Anthropic-side slowness
+or a token-count regression in the system prompt.
 
-### Panel 2 — Recommendation Count Distribution
+### Panel 2 — Rebalancing Latency Distribution (Heatmap)
 
-| Field                           | Value                                                                                                                                                                                                                     |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**                  | `histogram` (or `barchart` over the histogram buckets)                                                                                                                                                                    |
-| **Metric name**                 | `ai_rebalancing_recommendations_count` (histogram, with buckets at 0, 1, 2, 5, 10, 20)                                                                                                                                    |
-| **Example expression (median)** | `histogram_quantile(0.5, sum by (le) (rate(ai_rebalancing_recommendations_count_bucket[1h])))`                                                                                                                            |
-| **Thresholds**                  | Informational. Alert if the median is consistently 0 over a 1-hour window (`RebalancingEmptyRecommendations`) — the model returning empty arrays suggests a prompt regression or that `tool_choice` is not being honored. |
+A heatmap of `rebalancing_latency_seconds_bucket` over time provides
+operators with a richer view than the quantile lines alone — shifts
+in the bucket distribution flag emerging upstream slowness before
+SLO breaches. The heatmap reuses the default buckets
+`[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` seconds.
+Note that rebalancing observations almost always cluster near the
+upper end of the ladder; the `+Inf` bucket count equals the total
+observation count and must not be misread as an anomaly.
 
-**Description.** Histogram of how many recommendations Claude returns per call (the length of the `recommendations` array in `RebalancingResponse`). Useful for spotting prompt regressions where Claude returns empty arrays (a sign that `tool_choice` is being silently ignored or the model has decided every position is already balanced) or excessive arrays (a sign that the system prompt is no longer constraining the recommendation count). The bucket boundaries (0, 1, 2, 5, 10, 20) are calibrated for portfolios of up to a few dozen positions; revise upward if your typical user holds significantly more.
+### Panel 3 — Request Outcome Distribution
 
-### Panel 3 — Warnings Rate
+Stacked time series of `rebalancing_requests_total` partitioned by
+the `outcome` label. Operators can see at a glance the composition
+of terminal outcomes — `success` should dominate during steady state.
+Sustained increases in any of the three failure outcomes are the
+principal incident signals for the rebalancing feature, and each has
+a different remediation path:
 
-| Field                  | Value                                                                                                                                                                                                            |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `timeseries` (single-line ratio)                                                                                                                                                                                 |
-| **Metric names**       | `ai_rebalancing_warnings_total` (counter), `ai_rebalancing_recommendations_total` (counter)                                                                                                                      |
-| **Example expression** | `sum(rate(ai_rebalancing_warnings_total[5m])) / sum(rate(ai_rebalancing_recommendations_total[5m]))`                                                                                                             |
-| **Thresholds**         | Alert if average **warnings per recommendation > 0.5** over a 30-minute window (`RebalancingWarningsRateHigh`). The 0.5-per-recommendation threshold is the project-mandated alert threshold for this dashboard. |
+- `no_tool_use` → check the system prompt and the `tool_choice`
+  parameter; consider whether a recent Claude model rotation
+  changed the forced-tool semantics.
+- `shape_invalid` → check the `tool` schema and the runtime
+  validator; an `input_schema` regression or an Anthropic-side
+  schema interpretation change is the most likely cause.
+- `error` → inspect `[RebalancingService]` log lines correlated by
+  `correlationId`; common causes are missing/invalid
+  `ANTHROPIC_API_KEY` or transient Anthropic outages.
 
-**Description.** Average number of `warnings[]` array entries emitted per recommendation. The `warnings` field of `RebalancingResponse` carries plain-language caveats Claude attaches to its output (e.g., "current allocation deviates significantly from the user's stated risk tolerance" or "tax implications not modeled"). A high ratio indicates either constrained portfolios where the model has many caveats to surface, or prompt drift where the model has begun emitting warnings inappropriately. The **0.5 warnings/recommendation alert threshold** is enforced by the `RebalancingWarningsRateHigh` rule below.
+### Panel 4 — Success Rate
 
-### Panel 4 — Tool-Use Validation Failures
+`success` outcome rate divided by total request rate — a
+single-value percentage that maps directly to the rebalancing
+feature's reliability SLO. The expression uses `clamp_min(..., 1e-9)`
+in the denominator to avoid division-by-zero when no requests are
+in flight. Recommended thresholds: green ≥ 95 %, amber 90 %–95 %,
+red < 90 %.
 
-| Field                  | Value                                                                                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Panel type**         | `stat` (single big number with red threshold) plus a `timeseries` overlay for trend                                                                                      |
-| **Metric name**        | `ai_rebalancing_tool_use_validation_failure_total` (counter)                                                                                                             |
-| **Example expression** | `sum(increase(ai_rebalancing_tool_use_validation_failure_total[15m]))`                                                                                                   |
-| **Thresholds**         | Target value: **0**. Alert immediately on any non-zero value over a 5-minute window (`RebalancingToolUseValidationFailure`) — Rule 4 baseline metric, MUST stay at zero. |
+### Panel 5 — Tool-Use Validation Failure Rate (Rule 4 baseline)
 
-**Description.** Counter for `BadGatewayException` events thrown when the Anthropic SDK returns a response without a `tool_use` content block, in violation of **Rule 4 — Structured Rebalancing via Tool Use** (AAP § 0.7.1.4). The service does **not** fall back to text parsing — Rule 4 explicitly prohibits parsing Claude's text message content to extract structured fields. Non-zero values on this counter indicate one of three failure modes: (1) an upstream Anthropic regression where the model has begun returning text-only responses to tool-call requests; (2) a model that has stopped honoring the `tool_choice: { type: 'tool', name: 'rebalancing_recommendations' }` constraint; or (3) a service-side bug where the tool schema has drifted from the validation logic. Every non-zero increment is a Rule 4 violation that warrants immediate investigation.
+The combined rate of `no_tool_use` and `shape_invalid` outcomes
+divided by total request rate. This panel exists to surface AAP
+**Rule 4** violations: every increment of either outcome means
+Claude either refused the forced tool or returned a payload that
+did not match the `RebalancingResponse` schema. A non-zero baseline
+is expected (Claude occasionally emits malformed JSON), but a
+sustained breach should trigger the
+`RebalancingToolUseValidationFailureHigh` alert below.
 
-### Panel 5 — `goalReference` Non-Empty Rate
+### Panel 6 — Request Volume
 
-| Field                  | Value                                                                                                                                        |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `gauge` (with red < 99%, yellow < 100%, green = 100%) plus a `timeseries` overlay for trend                                                  |
-| **Metric name**        | `ai_rebalancing_recommendations_total` (counter, with label `goal_reference_status="present"\|"empty"`)                                      |
-| **Example expression** | `sum(rate(ai_rebalancing_recommendations_total{goal_reference_status="present"}[5m])) / sum(rate(ai_rebalancing_recommendations_total[5m]))` |
-| **Thresholds**         | **Target: 100%** (per AAP § 0.7.5.2). Alert if the ratio drops below **99%** over a 1-hour window (`RebalancingGoalReferenceMissing`).       |
-
-**Description.** Validation counter ensuring every recommendation includes a non-empty `goalReference` field — the explainability hook that maps each `BUY`/`SELL`/`HOLD` recommendation back to a `FinancialProfile` field name (e.g., `retirementTargetAge`, `monthlyIncome`) or to a label inside the JSON `investmentGoals` array. Per the AAP § 0.7.5.2 Rebalancing engine gate, **every item in `recommendations` MUST have a non-empty `rationale` and `goalReference`**; the **100% target** on this panel is the runtime expression of that gate. A drop below 100% indicates the model is omitting the field — a Rule violation that warrants prompt remediation. The `goal_reference_status` label is set by `RebalancingService` at metric-emission time, immediately after the structured response is read from the `tool_use` content block and before the response is returned to the controller.
-
-### Panel 6 — Anthropic API Error Rate
-
-| Field                  | Value                                                                                                                                                                                                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `timeseries` (stacked by `error_class`)                                                                                                                                                                                                                           |
-| **Metric name**        | `ai_rebalancing_anthropic_api_error_total` (counter, with label `error_class=rate_limit\|auth\|timeout\|5xx\|4xx\|unknown`)                                                                                                                                       |
-| **Example expression** | `sum by (error_class) (rate(ai_rebalancing_anthropic_api_error_total[5m]))`                                                                                                                                                                                       |
-| **Thresholds**         | Alert if any single class exceeds **1 error/min** averaged over 5 minutes; alert **immediately** on `auth` errors (`RebalancingAnthropicAuthError`) — `auth` errors imply the `ANTHROPIC_API_KEY` has been rotated, revoked, or never propagated to this replica. |
-
-**Description.** Counter for upstream Anthropic API errors classified by error type. The Anthropic SDK has built-in retries with exponential backoff (per AAP § 0.7.3 — "Rate-limiting and back-off"); the new code **does not** add additional retry wrappers to avoid double-retry storms. This metric counts the **post-retry** failure surface visible to the application — i.e., the errors that the SDK was unable to recover from internally. The classes are: `rate_limit` (HTTP 429 after retries), `auth` (HTTP 401/403 — the `ANTHROPIC_API_KEY` is invalid), `timeout` (the SDK gave up waiting), `5xx` (Anthropic server-side errors after retries), `4xx` (other client-side errors), and `unknown` (catch-all for unexpected exceptions thrown by the SDK).
-
----
+`sum(rate(rebalancing_requests_total[5m]))` time series.
+Establishes the traffic baseline for the endpoint and complements
+the rate-based panels — without volume context, percentage-based
+panels can hide low-traffic anomalies (e.g., a 50 % error rate over
+two requests is far less informative than 50 % over two thousand).
 
 ## Alert Rules
 
-The following Prometheus alert rules are recommended. They map 1:1 to the panel thresholds documented above. Operators can drop the YAML block below into a Prometheus rules file (e.g., `prometheus/rules/ai-rebalancing.yml`) and reload Prometheus.
+Recommended Prometheus alerting rules. Adjust thresholds and `for`
+windows for the operating environment.
 
 ```yaml
 groups:
-  - name: ghostfolio-ai-rebalancing
-    interval: 30s
+  - name: ai-rebalancing
     rules:
       - alert: RebalancingLatencyP95High
         expr: |
           histogram_quantile(
             0.95,
-            sum by (le) (rate(ai_rebalancing_request_duration_seconds_bucket[5m]))
-          ) > 20
+            sum by (le) (rate(rebalancing_latency_seconds_bucket[5m]))
+          ) > 15
         for: 10m
         labels:
-          severity: warning
-          team: platform
+          severity: page
           feature: ai-rebalancing
         annotations:
-          summary: 'AI Rebalancing total latency p95 above 20 s for 10 minutes'
+          summary: 'Rebalancing latency p95 above 15 s'
           description: |
-            The 95th percentile of ai_rebalancing_request_duration_seconds is
-            currently {{ $value | humanizeDuration }}, exceeding the 20 s alerting
-            threshold for 10 minutes. Because this endpoint is non-streaming
-            (messages.create, single JSON response), this is the primary
-            user-facing latency signal. Inspect the Anthropic API health probe at
-            /api/v1/health/anthropic and Panel 6 (Anthropic API error rate) for
-            upstream issues; correlate with PortfolioService and
-            UserFinancialProfileService read latency for downstream issues.
-          runbook_url: 'docs/observability/ai-rebalancing.md#panel-1--rebalancing-latency'
+            rebalancing_latency_seconds p95 has exceeded 15 s for
+            10 minutes. Check Anthropic API status, the
+            /api/v1/health/anthropic probe, and the application logs
+            (filter by [RebalancingService] and the affected
+            correlationId).
 
-      - alert: RebalancingToolUseValidationFailure
+      - alert: RebalancingSuccessRateLow
         expr: |
-          sum(increase(ai_rebalancing_tool_use_validation_failure_total[5m])) > 0
-        for: 0m
-        labels:
-          severity: critical
-          team: platform
-          feature: ai-rebalancing
-        annotations:
-          summary: 'AI Rebalancing returned a response without a tool_use content block (Rule 4 violation)'
-          description: |
-            One or more requests to POST /api/v1/ai/rebalancing returned a
-            response from the Anthropic SDK without the required tool_use
-            content block. RebalancingService threw BadGatewayException as
-            mandated by Rule 4 (AAP § 0.7.1.4) — the service does NOT fall
-            back to text parsing. Investigate whether the model has stopped
-            honoring tool_choice: { type: 'tool', name: 'rebalancing_recommendations' },
-            whether the tool input_schema has drifted, or whether an upstream
-            Anthropic regression is at play. This counter MUST stay at zero
-            in healthy operation; this alert fires immediately (no for: window)
-            because every increment is a Rule violation.
-          runbook_url: 'docs/observability/ai-rebalancing.md#panel-4--tool-use-validation-failures'
-
-      - alert: RebalancingGoalReferenceMissing
-        expr: |
-          (
-            sum(rate(ai_rebalancing_recommendations_total{goal_reference_status="present"}[1h]))
+          sum(rate(rebalancing_requests_total{outcome="success"}[10m]))
             /
-            sum(rate(ai_rebalancing_recommendations_total[1h]))
-          ) < 0.99
+          clamp_min(sum(rate(rebalancing_requests_total[10m])), 1e-9)
+            < 0.9
+        for: 15m
+        labels:
+          severity: page
+          feature: ai-rebalancing
+        annotations:
+          summary: 'Rebalancing success rate below 90%'
+          description: |
+            Fewer than 90 % of rebalancing requests have succeeded
+            over the last 15 minutes. Inspect the per-outcome series
+            on the Request Outcome Distribution panel to determine
+            whether the failures are concentrated in no_tool_use,
+            shape_invalid, or error.
+
+      - alert: RebalancingToolUseValidationFailureHigh
+        expr: |
+          sum(rate(rebalancing_requests_total{outcome=~"no_tool_use|shape_invalid"}[15m]))
+            /
+          clamp_min(sum(rate(rebalancing_requests_total[15m])), 1e-9)
+            > 0.05
+        for: 15m
+        labels:
+          severity: page
+          feature: ai-rebalancing
+          rule: aap-rule-4
+        annotations:
+          summary: 'Rebalancing tool-use validation failure rate above 5%'
+          description: |
+            More than 5 % of rebalancing requests have terminated with
+            outcome no_tool_use or shape_invalid over the last
+            15 minutes — a direct signal of AAP Rule 4 breaches.
+            Likely root causes: Anthropic model rotation altered the
+            forced-tool semantics, the rebalancing tool input_schema
+            drifted from the RebalancingResponse contract, or the
+            structural validator logic changed.
+
+      - alert: RebalancingErrorOutcomeBurst
+        expr: |
+          sum(rate(rebalancing_requests_total{outcome="error"}[5m]))
+            /
+          clamp_min(sum(rate(rebalancing_requests_total[5m])), 1e-9)
+            > 0.1
+        for: 5m
+        labels:
+          severity: page
+          feature: ai-rebalancing
+        annotations:
+          summary: 'Rebalancing error outcome rate above 10%'
+          description: |
+            More than 10 % of rebalancing requests have terminated in
+            outcome=error over the last 5 minutes. The error outcome
+            captures all failure modes other than Rule-4 validation —
+            typical causes are an invalid ANTHROPIC_API_KEY, a network
+            partition, or an Anthropic API incident. Cross-reference
+            the Anthropic status page and the structured logs.
+
+      - alert: RebalancingNoActivity
+        expr: |
+          sum(rate(rebalancing_requests_total[15m])) == 0
         for: 1h
         labels:
           severity: warning
-          team: platform
           feature: ai-rebalancing
         annotations:
-          summary: 'AI Rebalancing goalReference non-empty rate below 99% for 1 hour'
+          summary: 'Rebalancing endpoint has no traffic for 1 hour'
           description: |
-            Less than 99% of returned recommendations have a non-empty
-            goalReference field over the last hour. Per AAP § 0.7.5.2
-            Rebalancing engine gate, every recommendation MUST include a
-            non-empty goalReference mapping to a FinancialProfile field
-            name or to a label inside the JSON investmentGoals array.
-            The target is 100%; values below 99% indicate the model is
-            omitting the field, which is a Rule violation requiring prompt
-            remediation. Inspect a sample failing response and verify the
-            tool input_schema declares goalReference as required.
-          runbook_url: 'docs/observability/ai-rebalancing.md#panel-5--goalreference-non-empty-rate'
-
-      - alert: RebalancingWarningsRateHigh
-        expr: |
-          (
-            sum(rate(ai_rebalancing_warnings_total[30m]))
-            /
-            sum(rate(ai_rebalancing_recommendations_total[30m]))
-          ) > 0.5
-        for: 30m
-        labels:
-          severity: warning
-          team: platform
-          feature: ai-rebalancing
-        annotations:
-          summary: 'AI Rebalancing warnings/recommendation ratio above 0.5 for 30 minutes'
-          description: |
-            The average number of warnings emitted per recommendation has
-            exceeded 0.5 over the last 30 minutes. The 0.5 warnings/recommendation
-            threshold is the project-mandated alert threshold for this
-            dashboard. A high ratio indicates either constrained portfolios
-            where the model has many caveats to surface, or prompt drift
-            where the model has begun emitting warnings inappropriately.
-            Inspect a sample of warnings to determine which class dominates,
-            and consider revising the system prompt if the warnings are
-            spurious or duplicative.
-          runbook_url: 'docs/observability/ai-rebalancing.md#panel-3--warnings-rate'
-
-      - alert: RebalancingAnthropicAuthError
-        expr: |
-          sum(increase(ai_rebalancing_anthropic_api_error_total{error_class="auth"}[1m])) > 0
-        for: 0m
-        labels:
-          severity: critical
-          team: platform
-          feature: ai-rebalancing
-        annotations:
-          summary: 'AI Rebalancing received an Anthropic authentication error'
-          description: |
-            One or more requests to api.anthropic.com returned an
-            authentication error (HTTP 401/403). The ANTHROPIC_API_KEY
-            referenced through ConfigService may have been rotated,
-            revoked, or never propagated to this replica. New rebalancing
-            requests will fail until a valid key is restored. This alert
-            fires immediately (no for: window) because the failure mode
-            is binary and operator attention is required. Verify the
-            ConfigService.get('ANTHROPIC_API_KEY') value and re-roll the
-            secret if necessary.
-          runbook_url: 'docs/observability/ai-rebalancing.md#panel-6--anthropic-api-error-rate'
-
-      - alert: RebalancingEmptyRecommendations
-        expr: |
-          histogram_quantile(
-            0.5,
-            sum by (le) (rate(ai_rebalancing_recommendations_count_bucket[1h]))
-          ) == 0
-        for: 1h
-        labels:
-          severity: warning
-          team: platform
-          feature: ai-rebalancing
-        annotations:
-          summary: 'AI Rebalancing median recommendation count is 0 for 1 hour'
-          description: |
-            The median recommendation count returned by the rebalancing
-            endpoint has been 0 for the last hour. This pattern strongly
-            suggests one of three regressions: (1) Claude has stopped
-            honoring the tool_choice constraint and is returning empty
-            arrays; (2) the system prompt has drifted such that the model
-            decides every position is already balanced; or (3) a portfolio
-            data path is returning empty allocations and the model has
-            nothing to recommend on. Inspect a sample request/response
-            pair and verify PortfolioService.getDetails returns a non-empty
-            holdings array.
-          runbook_url: 'docs/observability/ai-rebalancing.md#panel-2--recommendation-count-distribution'
+            rebalancing_requests_total has not incremented for the last
+            hour. During expected traffic windows this is consistent
+            with the endpoint being unreachable (reverse-proxy or auth
+            regression). Verify POST /api/v1/ai/rebalancing with a
+            known-good JWT and inspect the application access log.
 ```
-
-Severity guidance:
-
-- **`critical`** — paging severity. The endpoint is effectively non-functional from a user perspective (Rule 4 violation, or auth is broken).
-- **`warning`** — non-paging severity. The endpoint is degraded but still serving requests; investigate during business hours unless the trend continues.
-
----
 
 ## Local Development Verification
 
-The AAP § 0.7.2 Observability rule mandates that observability MUST be exercised in the local development environment. The following seven-step checklist walks an operator through that verification end-to-end.
+The following procedure exercises every metric in the local
+development environment, satisfying the AAP §0.7.2 Observability
+mandate that "all observability MUST be exercised in the local
+development environment."
 
-1. **Start the local Ghostfolio API.** A working Postgres + Redis stack is required (e.g., `docker compose -f docker/docker-compose.dev.yml up -d`). Then start the API process:
+1. **Bring up the API.** From the repository root, start Postgres and
+   Redis (`docker compose -f docker/docker-compose.dev.yml up -d`),
+   then start the API in development mode
+   (`npx nx serve api`). Wait for the bootstrap log line
+   `Nest application successfully started`.
+2. **Mint a development JWT.** Create a user via
+   `POST /api/v1/user`, capture the returned `authToken`, and export
+   it as `JWT=...` in the shell.
+3. **Confirm the registry is populated with the expected HELP lines.**
 
-   ```sh
-   npm run start:api
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^# (HELP|TYPE) rebalancing_'
    ```
 
-   The Nx process should report `🚀 Application is running on: http://localhost:3333/api`. The `/api/v1` URI version is configured globally in `apps/api/src/main.ts`.
+   Expected output (order may vary):
 
-2. **Confirm the metrics endpoint returns 200.** The metrics registry from `MetricsModule` (per AAP § 0.5.1.2) emits Prometheus-formatted counters and histograms:
-
-   ```sh
-   curl -i http://localhost:3333/api/v1/metrics
+   ```text
+   # HELP rebalancing_latency_seconds End-to-end wall-clock latency of RebalancingService.recommend() in seconds, measured from method entry through structured-output validation.
+   # TYPE rebalancing_latency_seconds histogram
+   # HELP rebalancing_requests_total Total rebalancing recommendation requests handled by RebalancingService, labeled by outcome (success | no_tool_use | shape_invalid | error).
+   # TYPE rebalancing_requests_total counter
    ```
 
-   Expect `HTTP/1.1 200 OK` and a body containing one `# HELP` / `# TYPE` line per metric followed by the metric samples. At first start (before any rebalancing request), the AI Rebalancing counters will all read zero — that is expected.
+4. **Issue a rebalancing request (success path).** With a valid
+   `ANTHROPIC_API_KEY` exported and a populated portfolio:
 
-3. **Confirm the Anthropic health probe returns 200.** The probe is implemented in `apps/api/src/app/health/anthropic-health.indicator.ts` per AAP § 0.5.1.2 and is a configuration probe only — it does NOT call `api.anthropic.com` and therefore consumes no API tokens:
-
-   ```sh
-   curl -i http://localhost:3333/api/v1/health/anthropic
+   ```bash
+   curl -s -H "Authorization: Bearer $JWT" \
+        -H "Content-Type: application/json" \
+        -X POST http://localhost:3333/api/v1/ai/rebalancing \
+        -d '{}' \
+     | python3 -m json.tool
    ```
 
-   Expect `HTTP/1.1 200 OK` with a body of the form `{"status":"up","details":{"anthropic":{"status":"up"}}}`. If the probe returns 503, verify that `ANTHROPIC_API_KEY` is set in `.env` (development) and resolved through `ConfigService` at boot. **Note:** never paste the actual key value into shell history or logs — only the env var name `ANTHROPIC_API_KEY` should appear in operator notes.
+   Expected: HTTP 200 with a `RebalancingResponse` JSON object
+   containing a non-empty `recommendations` array.
 
-4. **Issue a sample rebalancing request.** Unlike the chat endpoint, the rebalancing endpoint is **non-streaming** — `messages.create` blocks until Claude has produced the full structured output, and the server returns a single JSON response. There is no `Accept: text/event-stream` header and no `curl -N` flag is necessary:
+5. **Observe `rebalancing_requests_total` increment.**
 
-   ```sh
-   curl -i -X POST http://localhost:3333/api/v1/ai/rebalancing \
-     -H "Authorization: Bearer <jwt>" \
-     -H "Content-Type: application/json" \
-     -d '{}'
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^rebalancing_requests_total\{'
    ```
 
-   Substitute `<jwt>` with a JWT obtained from the Ghostfolio login flow (e.g., `POST /api/v1/auth/anonymous`). The request body may be `{}` (empty object) for a default rebalancing call; optional override fields are accepted per the `RebalancingRequestDto`.
+   Expected (sample):
 
-5. **Verify the response body matches the `RebalancingResponse` interface.** The response MUST be valid JSON conforming to the interface from AAP § 0.1.2.4 — `recommendations: Array<{ action, ticker, fromPct, toPct, rationale, goalReference }>`, `summary: string`, `warnings: string[]`. Per the AAP § 0.7.5.2 Rebalancing engine gate, **every item in `recommendations` MUST have a non-empty `rationale` and a non-empty `goalReference`**. The dashboard's Panel 5 surfaces the `goalReference` non-empty rate as a quality metric — a failure here is a Rule violation. Pipe the response through `jq` to inspect:
-
-   ```sh
-   curl -s -X POST http://localhost:3333/api/v1/ai/rebalancing \
-     -H "Authorization: Bearer <jwt>" \
-     -H "Content-Type: application/json" \
-     -d '{}' | jq '.recommendations[] | { action, ticker, rationale, goalReference }'
+   ```text
+   rebalancing_requests_total{outcome="success"} 1
    ```
 
-   Confirm none of the printed `rationale` or `goalReference` values are empty strings.
+6. **Observe `rebalancing_latency_seconds` populate.**
 
-6. **Re-fetch `/api/v1/metrics` and confirm the AI Rebalancing counters incremented.** Run the metrics curl again and confirm the following changes from step 2:
-
-   ```sh
-   curl -s http://localhost:3333/api/v1/metrics | grep -E '^ai_rebalancing_'
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^rebalancing_latency_seconds(_bucket|_sum|_count)'
    ```
 
-   Expected:
-   - `ai_rebalancing_request_duration_seconds_count{...}` has incremented by **1** (the histogram count of total responses).
-   - `ai_rebalancing_recommendations_total{goal_reference_status="present"}` has incremented by the number of recommendations Claude produced with non-empty `goalReference` values.
-   - `ai_rebalancing_recommendations_total{goal_reference_status="empty"}` has **NOT** incremented — every recommendation must carry a non-empty `goalReference` (Rule violation otherwise).
-   - `ai_rebalancing_tool_use_validation_failure_total` has **NOT** incremented (Rule 4 — `BadGatewayException` was not thrown; a `tool_use` content block was found in the Anthropic SDK response). This counter MUST stay at **zero** in healthy operation.
-   - `ai_rebalancing_anthropic_api_error_total{...}` has **NOT** incremented for any `error_class`.
-   - `ai_rebalancing_recommendations_count_bucket{...}` and `ai_rebalancing_recommendations_count_count` have advanced (the histogram of recommendation counts has a new sample).
-   - `ai_rebalancing_warnings_total` may or may not have incremented depending on whether Claude emitted any `warnings[]` in the response.
+   Expected to show every default bucket
+   (`le="0.005"` through `le="10"` and `le="+Inf"`) plus
+   non-zero `_sum` and `_count` after one observation.
 
-7. **Import the JSON dashboard definition into a local Grafana.** Open Grafana at `http://localhost:3000`, navigate to **Dashboards → New → Import**, paste the JSON block from the [JSON Dashboard Definition](#json-dashboard-definition) section below, select the Prometheus datasource that scrapes `/api/v1/metrics`, and click **Import**. Confirm that all six panels render data after a few minutes of scrape activity (the panels will appear empty until at least one scrape interval after step 6).
+7. **Trigger the `error` outcome path.** Restart the API with
+   `ANTHROPIC_API_KEY=invalid` (or any value that causes Anthropic
+   to return 401), repeat step 4, and confirm the controller
+   responds with HTTP 502 and that
+   `rebalancing_requests_total{outcome="error"}` increments.
 
-After completing all seven steps, the dashboard is verified end-to-end against the local development environment, satisfying the AAP § 0.7.2 mandate.
+8. **(Optional) Trigger the `no_tool_use` and `shape_invalid` paths
+   in a unit-test harness.** These outcomes require Anthropic to
+   return a payload that violates the forced-tool contract. The
+   spec suite at
+   `apps/api/src/app/rebalancing/rebalancing.service.spec.ts`
+   uses a mocked SDK to deterministically exercise both paths;
+   reproducing them at runtime requires either a synthetic
+   `Anthropic` client stub injected via the DI container or a test
+   mode that returns canned responses.
 
----
+If any of the steps above does not produce the expected line, the
+dashboard cannot render correctly. Inspect the structured logs (each
+line is prefixed with `[RebalancingService] [<correlationId>]`) and
+the service source (`rebalancing.service.ts`) before declaring the
+dashboard broken.
 
 ## JSON Dashboard Definition
 
-The following JSON is a complete, self-contained Grafana dashboard definition mapping 1:1 to the six Recommended Panels above. It can be imported into a stock Grafana 9+ instance via **Dashboards → New → Import → Paste JSON**. The `datasource.uid` placeholder of `"Prometheus"` should be reconciled with the UID of the Prometheus datasource provisioned in your Grafana instance (visible at **Connections → Data sources → Prometheus → uid**).
+A self-contained Grafana 9+ dashboard ready for import. Datasource
+UID is parameterised via `${DS_PROMETHEUS}` — replace with the
+local datasource UID before import.
 
 ```json
 {
-  "title": "Ghostfolio — Explainable Rebalancing Engine",
-  "uid": "gf-ai-rebalancing",
+  "title": "AI Rebalancing Engine",
+  "tags": ["ghostfolio", "ai-rebalancing", "ai", "blitzy"],
   "schemaVersion": 38,
   "version": 1,
-  "editable": true,
-  "graphTooltip": 1,
-  "tags": ["ghostfolio", "ai-rebalancing", "observability", "claude"],
-  "time": { "from": "now-6h", "to": "now" },
   "refresh": "30s",
-  "annotations": { "list": [] },
-  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
+        "name": "outcome",
+        "label": "Outcome",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(rebalancing_requests_total, outcome)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,
-      "title": "Rebalancing Latency (p50 / p95 / p99)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "description": "Total POST /api/v1/ai/rebalancing response time. Non-streaming endpoint — primary user-facing latency signal. Targets: p50 ≤ 6 s, p95 ≤ 15 s, p99 ≤ 30 s. Alert: p95 > 20 s for 10 min.",
+      "title": "Rebalancing Latency (p50 / p95 / p99)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 15 },
-              { "color": "red", "value": 20 }
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 15 }
             ]
           }
         },
         "overrides": []
       },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(ai_rebalancing_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(rebalancing_latency_seconds_bucket[5m])))",
           "legendFormat": "p50"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(ai_rebalancing_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(rebalancing_latency_seconds_bucket[5m])))",
           "legendFormat": "p95"
         },
         {
           "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(ai_rebalancing_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(rebalancing_latency_seconds_bucket[5m])))",
           "legendFormat": "p99"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
     },
     {
       "id": 2,
-      "title": "Recommendation Count Distribution (median per response)",
-      "type": "barchart",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "description": "Histogram of how many recommendations Claude returns per call (buckets: 0, 1, 2, 5, 10, 20). Alert if median is consistently 0 (RebalancingEmptyRecommendations).",
+      "type": "heatmap",
+      "title": "Rebalancing Latency Distribution",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": { "axisPlacement": "auto", "fillOpacity": 80 }
-        },
+        "defaults": { "unit": "s" },
         "overrides": []
-      },
-      "options": {
-        "orientation": "vertical",
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single" }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(ai_rebalancing_recommendations_count_bucket[1h])))",
-          "legendFormat": "median recommendations/response"
+          "expr": "sum by (le) (rate(rebalancing_latency_seconds_bucket[5m]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}"
         }
-      ]
+      ],
+      "options": {
+        "calculate": false,
+        "yAxis": { "unit": "s" }
+      }
     },
     {
       "id": 3,
-      "title": "Warnings Rate (warnings per recommendation)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "description": "Average warnings emitted per response. Alert: >0.5 warnings/recommendation over 30 min (RebalancingWarningsRateHigh) — project-mandated alert threshold.",
+      "title": "Request Outcome Distribution (rate / 5m)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.3 },
-              { "color": "red", "value": 0.5 }
+          "unit": "ops",
+          "custom": { "stacking": { "mode": "normal" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "green" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "no_tool_use" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "orange" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "shape_invalid" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "yellow" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "error" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "red" }
+              }
             ]
           }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
+        ]
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(ai_rebalancing_warnings_total[5m])) / sum(rate(ai_rebalancing_recommendations_total[5m]))",
-          "legendFormat": "warnings/recommendation"
+          "expr": "sum by (outcome) (rate(rebalancing_requests_total{outcome=~\"$outcome\"}[5m]))",
+          "legendFormat": "{{outcome}}"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
     },
     {
       "id": 4,
-      "title": "Tool-Use Validation Failures (Rule 4 baseline — MUST be 0)",
       "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "description": "Counter for BadGatewayException events thrown when Anthropic returns a response without a tool_use content block (Rule 4 — AAP § 0.7.1.4). Service does NOT fall back to text parsing. Target: 0; alert immediately on any non-zero increment.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          },
-          "color": { "mode": "thresholds" }
-        },
-        "overrides": []
-      },
-      "options": {
-        "graphMode": "area",
-        "colorMode": "background",
-        "justifyMode": "auto",
-        "textMode": "value_and_name",
-        "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(increase(ai_rebalancing_tool_use_validation_failure_total[15m]))",
-          "legendFormat": "tool_use validation failures (15m)"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "goalReference Non-Empty Rate (target: 100%)",
-      "type": "gauge",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "description": "Percentage of recommendations whose goalReference field is non-empty. Per AAP § 0.7.5.2 every recommendation MUST include a non-empty goalReference. Target: 100%; alert if < 99% over 1 h (RebalancingGoalReferenceMissing).",
+      "title": "Success Rate",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -530,88 +549,120 @@ The following JSON is a complete, self-contained Grafana dashboard definition ma
             "mode": "absolute",
             "steps": [
               { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.99 },
-              { "color": "green", "value": 1 }
+              { "color": "yellow", "value": 0.9 },
+              { "color": "green", "value": 0.95 }
             ]
           }
         },
         "overrides": []
       },
-      "options": {
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
-        }
-      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(ai_rebalancing_recommendations_total{goal_reference_status=\"present\"}[5m])) / sum(rate(ai_rebalancing_recommendations_total[5m]))",
-          "legendFormat": "non-empty goalReference rate"
+          "expr": "sum(rate(rebalancing_requests_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(rebalancing_requests_total[5m])), 1e-9)",
+          "legendFormat": "success rate"
         }
-      ]
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area"
+      }
     },
     {
-      "id": 6,
-      "title": "Anthropic API Error Rate (post-retry, by error_class)",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "description": "Counter for upstream Anthropic API errors after SDK retries (per AAP § 0.7.3 — Rate-limiting and back-off). Classes: rate_limit, auth, timeout, 5xx, 4xx, unknown. Alert immediately on auth (RebalancingAnthropicAuthError).",
+      "id": 5,
+      "type": "stat",
+      "title": "Tool-Use Validation Failure Rate (Rule 4)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
       "fieldConfig": {
         "defaults": {
-          "unit": "cps",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "stacking": { "mode": "normal", "group": "A" }
-          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.0167 },
+              { "color": "yellow", "value": 0.01 },
               { "color": "red", "value": 0.05 }
             ]
           }
         },
         "overrides": []
       },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(rebalancing_requests_total{outcome=~\"no_tool_use|shape_invalid\"}[5m])) / clamp_min(sum(rate(rebalancing_requests_total[5m])), 1e-9)",
+          "legendFormat": "rule-4 failure rate"
+        }
+      ],
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Request Volume (per 5m)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 6 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops" },
+        "overrides": []
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (error_class) (rate(ai_rebalancing_anthropic_api_error_total[5m]))",
-          "legendFormat": "{{error_class}}"
+          "expr": "sum(rate(rebalancing_requests_total[5m]))",
+          "legendFormat": "requests / s"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
     }
   ]
 }
 ```
 
----
-
 ## References
 
-- **AAP § 0.7.2 — Observability rule.** The application is not complete until it is observable. Every deliverable MUST include structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, a dashboard template, and local-environment exercise of all of the above.
-- **AAP § 0.7.1.4 — Rule 4 — Structured Rebalancing via Tool Use.** `RebalancingService` MUST populate `RebalancingResponse` exclusively from a `tool_use` content block returned by the Anthropic SDK. Parsing Claude's text message content to extract structured fields is PROHIBITED. Panel 4 of this dashboard surfaces violations of this rule via the `ai_rebalancing_tool_use_validation_failure_total` counter, which MUST stay at zero.
-- **AAP § 0.7.5.2 — Rebalancing engine gate.** `POST /api/v1/ai/rebalancing` returns JSON matching the `RebalancingResponse` interface; every item in `recommendations` has a non-empty `rationale` and `goalReference`; the response is sourced from a `tool_use` content block (Rule 4). Panel 5 surfaces the `goalReference` non-empty rate as a runtime expression of this gate, targeted at 100%.
-- **AAP § 0.1.2.4 — `RebalancingResponse` interface (verbatim).** The response shape is `recommendations: Array<{ action: 'BUY' | 'SELL' | 'HOLD'; ticker: string; fromPct: number; toPct: number; rationale: string; goalReference: string; }>; summary: string; warnings: string[];`. The non-empty `goalReference` requirement and the per-recommendation `rationale` are both enforced at the dashboard level via Panels 5 and 2 respectively.
-- **`apps/api/src/app/rebalancing/rebalancing.service.ts` — metric emission sites.** The `RebalancingService` is responsible for emitting `ai_rebalancing_request_duration_seconds`, `ai_rebalancing_recommendations_count`, `ai_rebalancing_recommendations_total` (with the `goal_reference_status` label), `ai_rebalancing_warnings_total`, `ai_rebalancing_tool_use_validation_failure_total`, and `ai_rebalancing_anthropic_api_error_total` (with the `error_class` label) via the injected `MetricsService`. Per Rule 3 (AAP § 0.7.1.3), the `ANTHROPIC_API_KEY` is read exclusively through `ConfigService` — never via direct `process.env.ANTHROPIC` access.
-- **`apps/api/src/app/metrics/metrics.controller.ts` — metrics endpoint.** Exposes the in-process metrics registry as Prometheus-format text at `GET /api/v1/metrics`. Created per AAP § 0.5.1.2 alongside `MetricsModule` and `MetricsService`.
-- **`apps/api/src/app/health/anthropic-health.indicator.ts` — health probe.** Exposes a configuration-only readiness probe at `GET /api/v1/health/anthropic` registered additively in `HealthModule`. The probe verifies that `ConfigService.get('ANTHROPIC_API_KEY')` resolves to a non-empty value and that an `Anthropic` SDK client can be constructed; it does NOT call `api.anthropic.com` and consumes no API tokens. Created per AAP § 0.5.1.2.
+- **Service** — `apps/api/src/app/rebalancing/rebalancing.service.ts`.
+- **Controller** —
+  `apps/api/src/app/rebalancing/rebalancing.controller.ts`.
+- **Module** — `apps/api/src/app/rebalancing/rebalancing.module.ts`.
+- **Metrics registry** — `apps/api/src/app/metrics/metrics.service.ts`,
+  `apps/api/src/app/metrics/metrics.controller.ts`.
+- **Health probe** — `/api/v1/health/anthropic` (config-only probe;
+  does not exercise outbound Anthropic calls).
+- **Endpoint** — `POST /api/v1/ai/rebalancing` (returns
+  `RebalancingResponse` JSON; non-streaming per AAP §0.7.3).
+- **Shared interface** —
+  `libs/common/src/lib/interfaces/rebalancing-response.interface.ts`.
+- **AAP** — §0.1.1 (feature definition), §0.5.1.1 (emitted-metrics
+  scope), §0.7.1.4 (Rule 4: structured tool-use only),
+  §0.7.2 (Observability rule).
 
-### Sibling dashboard templates
+### Metric Names (Authoritative List)
 
-- **`docs/observability/ai-chat.md`** — Feature B (`AiChatModule`) streaming `POST /api/v1/ai/chat` (Server-Sent Events) metrics: first-token latency (primary), end-to-end stream duration, token throughput, tool-call distribution, SSE error rate, model-version histogram, personalization fetch latency.
-- **`docs/observability/snowflake-sync.md`** — Feature A (`SnowflakeSyncModule`) cron + event-listener sync metrics: success rate, sync latency, MERGE row counts, idempotency verification (Rule 7).
+The dashboard, alerting rules, and verification commands above
+reference **only** the two metric names below. Any metric name not
+appearing in this list is not emitted by `RebalancingService` and
+will yield empty Grafana panels if referenced.
+
+- `rebalancing_requests_total` (counter; labels: `outcome` ∈
+  {`success`, `no_tool_use`, `shape_invalid`, `error`})
+- `rebalancing_latency_seconds` (histogram; no labels)

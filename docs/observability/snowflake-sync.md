@@ -1,421 +1,495 @@
-# Snowflake Sync Layer — Observability Dashboard Template
+# Snowflake Sync Layer — Observability Dashboard
 
 ## Overview
 
-This document is the canonical Grafana dashboard template for **Feature A — Snowflake Sync Layer (`SnowflakeSyncModule`)**, the daily cron plus event-driven mirror that copies Ghostfolio operational data into Snowflake as an append-only analytical backend. It satisfies the project-level **Observability** rule recorded in AAP § 0.7.2 (every deliverable MUST include structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, and a dashboard template — and that observability MUST be exercisable in the local development environment).
+Operator dashboard for the **Snowflake Sync Layer** that mirrors
+Ghostfolio's operational data — portfolio snapshots, trade history,
+and performance metrics — into Snowflake as an append-only
+analytical backend. The dashboard tracks the two Prometheus metrics
+emitted by `SnowflakeSyncService` and exposed at
+`GET /api/v1/metrics`:
 
-### Feature being observed
+1. `snowflake_sync_runs_total` — terminal-outcome counter for every
+   Snowflake sync invocation. Labelled by `outcome`
+   (`success`, `failure`) and `trigger`
+   (`cron`, `manual`, `event`).
+2. `snowflake_sync_latency_seconds` — histogram of end-to-end
+   wall-clock latency for a sync invocation. Labelled by `trigger`.
 
-The dashboard observes the entire lifecycle of the Snowflake sync — both its scheduled and event-driven invocation paths, plus the bind-variable safety net mandated by Rule 2:
+The three trigger paths and their emission sites in
+`apps/api/src/app/snowflake-sync/snowflake-sync.service.ts`:
 
-- The sync logic is implemented in `SnowflakeSyncService` (`apps/api/src/app/snowflake-sync/snowflake-sync.service.ts`) and the supporting connection layer in `SnowflakeClientFactory` (`apps/api/src/app/snowflake-sync/snowflake-client.factory.ts`). The HTTP entry point for an admin-triggered manual run is `SnowflakeSyncController` at `POST /api/v1/snowflake-sync/trigger` (`apps/api/src/app/snowflake-sync/snowflake-sync.controller.ts`).
-- Two scheduling paths feed the same MERGE pipeline. (1) A daily cron at `0 2 * * *` with `timeZone: 'UTC'` (per AAP § 0.7.3 — "Cron schedule literal") re-mirrors the previous day's data for all users; this is the bulk load. (2) A `@OnEvent(PortfolioChangedEvent.getName())` listener subscribes to the existing `PortfolioChangedEvent` already emitted by `apps/api/src/app/activities/activities.service.ts` on every Order CRUD operation and mirrors the affected user's data within the same request lifecycle. The dashboard surfaces both paths with a `trigger=cron|event` label so operators can compare their independent failure modes.
-- The sync writes into exactly three Snowflake tables, each with the unique-key constraints documented in AAP § 0.5.1: `portfolio_snapshots` (unique on `(snapshot_date, user_id, asset_class)`), `orders_history` (unique on `(order_id)`), and `performance_metrics` (unique on `(metric_date, user_id)`). All writes are MERGE (upsert) statements per **Rule 7 — Snowflake Sync Idempotency** (AAP § 0.7.1.7), so re-running the sync for an already-mirrored date range MUST leave row counts unchanged.
-- All SQL execution uses `snowflake-sdk` bind-variable syntax (`?` placeholders + `binds: [...]`) per **Rule 2 — Parameterized Snowflake Queries** (AAP § 0.7.1.2). String template literals and concatenation operators adjacent to SQL strings are PROHIBITED. The dashboard surfaces a defense-in-depth counter (Panel 7) for any SQL parsing failure detected by `SnowflakeSyncService.queryHistory(...)` — the value MUST remain zero in healthy operation.
-- The chat agent's `query_history` tool (per AAP § 0.5.1.5) reuses `SnowflakeSyncService.queryHistory(userId, sql, binds)` to read historical data on behalf of Claude. Failures inside that read path also flow into the bind-validation counter (Panel 7) and the connection-failure counter (Panel 6), so the same dashboard surfaces both background-sync health and chat-agent-driven query health.
+- **`trigger="cron"`** — `runDailySync()` decorated with
+  `@Cron('0 2 * * *', { name: 'snowflake-daily-sync', timeZone: 'UTC' })`
+  (line 223). Counter increments at lines 251 (success) and 257
+  (failure); histogram observation at line 283.
+- **`trigger="manual"`** — `triggerManualSync()` called by the
+  admin endpoint `POST /api/v1/snowflake-sync/trigger`. Counter
+  increments at lines 459 (success) and 476 (failure); histogram
+  observation at line 520.
+- **`trigger="event"`** — `processDebouncedEventSync()` driven by
+  the `@OnEvent(PortfolioChangedEvent.getName())` listener with a
+  per-user 5 s debounce window. Counter increments at lines 1050
+  (success) and 1060 (failure); histogram observation at line 1071.
 
-### Data source
+The dashboard is intentionally scoped to **only** the metrics actually
+emitted by `SnowflakeSyncService`. Additional signals — per-table MERGE
+row counts, distinct connection-failure classes, bind-validation
+failure counts, cron last-run timestamps as a separate gauge — are
+**not** exposed by this version of the service. Operators who require
+those signals must either extend `SnowflakeSyncService` to register
+the corresponding metrics or surface them through Snowflake's own
+query history (`INFORMATION_SCHEMA.QUERY_HISTORY`) and the
+application's structured logs (every line is prefixed with
+`[SnowflakeSyncService] [<correlationId>]`).
 
-All panels query Prometheus-formatted counters, gauges, and histograms exposed at the new `/api/v1/metrics` endpoint registered by `MetricsModule` (`apps/api/src/app/metrics/metrics.controller.ts` per AAP § 0.5.1.2). The dashboard assumes a Prometheus datasource scrapes that endpoint at a stable interval (typically every 15 s); the `datasource.uid` in the JSON definition below is a placeholder (`"Prometheus"`) that operators should reconcile with the UID of their actual provisioned Prometheus datasource (visible in Grafana at **Connections → Data sources → Prometheus → uid**).
+## Audience
 
-A complementary readiness signal is exposed by the new `/api/v1/health/snowflake` probe (implemented in `apps/api/src/app/health/snowflake-health.indicator.ts` per AAP § 0.5.1.2). The probe issues a lightweight `SELECT 1` round-trip against the configured Snowflake account and is suitable for inclusion as a Grafana **Stat** panel referencing a Blackbox-Exporter or HTTP-probe scrape of that route.
+- **Site Reliability Engineering / Platform Operations** — primary
+  dashboard owners; on-call rotation watches sync success rate, sync
+  latency, and the 24-hour cron heartbeat during incidents.
+- **Data Engineering** — secondary owners; review trigger-specific
+  failure rates to determine whether incidents originate in the
+  cron path (typically Snowflake credential or warehouse issues),
+  the manual path (typically operator error in the request body),
+  or the event path (typically Postgres-to-Snowflake data shape
+  mismatches).
 
-### Audience
+## Cross-references
 
-The intended audience is on-call SREs and platform engineers verifying:
+- **AAP §0.1.1 / §0.5.1.1** — feature definition (Feature A —
+  Snowflake Sync Layer) and emitted-metrics scope.
+- **AAP §0.7.1.7 (Rule 7)** — all Snowflake write operations MUST
+  use MERGE (upsert) statements keyed on the unique constraints
+  documented in AAP §0.5.1.1. Idempotency on re-run is covered by
+  `snowflake-sync.service.spec.ts`.
+- **AAP §0.7.2 (Observability rule)** — mandates this dashboard
+  template alongside structured logging, correlation IDs, the
+  metrics endpoint, and the readiness probes.
+- **AAP §0.7.3** — cron literal is `@Cron('0 2 * * *', { timeZone: 'UTC' })`.
+  The dashboard's cron-heartbeat panel and alert rule rely on this
+  schedule.
+- **Source of truth — service**:
+  `apps/api/src/app/snowflake-sync/snowflake-sync.service.ts`.
+  Specifically, metric registrations are at lines 188 and 192;
+  emission sites are listed in the Overview above.
+- **Source of truth — bootstrap DDL**:
+  `apps/api/src/app/snowflake-sync/sql/bootstrap.sql`. The three
+  Snowflake tables and their unique constraints are created here
+  (executed by `SnowflakeSyncService.bootstrap()` on startup).
+- **Source of truth — metrics registry**:
+  `apps/api/src/app/metrics/metrics.service.ts`. Default histogram
+  buckets (in seconds) are
+  `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`. Note
+  that Snowflake sync invocations frequently exceed 10 s, so most
+  observations land in the `+Inf` bucket — the dashboard heatmap and
+  quantile panels visualise the distribution from `_sum` and
+  `_count` regardless.
+- **Health probe** — `/api/v1/health/snowflake` exercises a live
+  `SELECT 1` against Snowflake with a 5 s timeout. The dashboard's
+  manual-trigger failure panel correlates with this probe.
+- **Spec coverage**:
+  `apps/api/src/app/snowflake-sync/snowflake-sync.service.spec.ts`
+  exercises both outcomes for every trigger, asserting the counter
+  and histogram increments (including idempotency on re-run per
+  Rule 7).
 
-1. **Sync success rate** — the user-facing reliability metric for both cron and event-driven paths. The localhost gate is **≥ 99.5%** (target) with an alert below **99.0%** over a 1-hour window. The dashboard surfaces this ratio as Panel 1, split by the `trigger=cron|event` label so the two paths can fail independently and be diagnosed independently.
-2. **Sync latency** — Panel 2 surfaces p50/p95/p99 of total sync duration per run, separately for cron and event-driven invocations. Cron runs (bulk daily mirror) have a higher latency budget (p95 ≤ 30 s) than event-driven runs (single-user, p95 ≤ 5 s) because they touch every user.
-3. **Idempotency verification (Rule 7 compliance)** — Panel 3 surfaces MERGE row counts per Snowflake table; operators verify Rule 7 by re-running the sync against the same date range and confirming the counter does NOT increase by an amount that would violate the unique-key cardinality. Because every write is a MERGE keyed on a documented unique constraint, the database itself enforces the row-count invariant; the metric is a passive reporter, not a guarantor.
-4. **Cron freshness** — Panel 4 surfaces the most recent cron run timestamp as a gauge. The companion alert `SnowflakeSyncCronStale` fires if the most recent run is older than 25 hours, allowing a 1-hour grace beyond the 24-hour cron interval.
-5. **Event-listener volume** — Panel 5 surfaces the per-second rate of `PortfolioChangedEvent`-triggered sync invocations. The existing event listener pattern includes a 5-second debounce (per AAP § 0.4.3 sequence diagram); brief gaps in this counter during high-frequency Order CRUD bursts are expected behavior, not a missed-event alert.
-6. **Connection health** — Panel 6 surfaces the count of Snowflake connection errors over a 15-minute window. The companion alert `SnowflakeConnectionFailureBurst` fires at **> 5 errors per 15 minutes** to catch credential rotation, network outages, or warehouse suspension events without false-positiving on the occasional transient error retried by the SDK.
-7. **Defense-in-depth (Rule 2 compliance)** — Panel 7 surfaces the bind-variable validation failure counter, which MUST remain at zero in healthy operation. Any non-zero value is a Rule 2 signal — either an attempted SQL injection through the chat agent's `query_history` tool or a code regression that bypassed the bind-variable contract — and is alerted immediately.
+## Emitted Metrics — Authoritative Reference
 
-### Sibling dashboard distinction
+| Metric                           | Type      | Labels                                                                      | HELP text                                                           |
+| -------------------------------- | --------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `snowflake_sync_runs_total`      | counter   | `outcome` ∈ {`success`, `failure`}; `trigger` ∈ {`cron`, `manual`, `event`} | Total Snowflake sync invocations partitioned by trigger and outcome |
+| `snowflake_sync_latency_seconds` | histogram | `trigger` ∈ {`cron`, `manual`, `event`}                                     | Latency of a Snowflake sync invocation in seconds                   |
 
-This dashboard observes a **background pipeline** and a **shared read-path utility** (`queryHistory`); the two sibling dashboards observe **synchronous user-facing endpoints**. The latency budgets and alert thresholds therefore differ:
-
-- **`docs/observability/snowflake-sync.md`** (this document) — Background cron and event-driven pipeline. Latency budgets are measured in **seconds** (p95 ≤ 30 s for cron; ≤ 5 s for events). The sync owns the data freshness contract, not the user-facing first-token contract.
-- **`docs/observability/ai-chat.md`** — Streaming SSE endpoint. Primary metric is **first-token latency** (p95 ≤ 3 s on localhost per AAP § 0.7.5.2 Chat agent gate).
-- **`docs/observability/ai-rebalancing.md`** — Non-streaming JSON endpoint. Primary metric is **total request latency** (p95 ≤ 15 s per the rebalancing engine gate).
-
-When debugging, reach for the dashboard whose primary mode-of-operation matches the issue under investigation. A user complaint about "stale data in the chat agent's `query_history` results" is most often diagnosed from this dashboard (sync freshness, Panel 4) before drilling into the chat dashboard. A user complaint about "the chat is slow" is most often diagnosed from `ai-chat.md` (first-token latency) before checking sync health here.
-
-### Cross-references
-
-- **AAP § 0.7.2 — Observability rule.** Mandates the dashboard template, structured logging with correlation IDs, the `/api/v1/metrics` endpoint, and end-to-end exercise in the local development environment.
-- **AAP § 0.7.1.2 — Rule 2 — Parameterized Snowflake Queries.** All Snowflake SQL execution MUST use `snowflake-sdk` bind variables; surfaced in Panel 7.
-- **AAP § 0.7.1.7 — Rule 7 — Snowflake Sync Idempotency.** All Snowflake writes are MERGE statements keyed on documented unique constraints; surfaced in Panel 3.
-- **AAP § 0.7.5.2 — Snowflake sync gate.** Cron registration must appear in NestJS scheduler logs at startup; running the sync twice for the same date range must leave row counts unchanged across all three tables.
-
----
+The histogram exposes the canonical Prometheus suffixes
+`_bucket{le="..."}`, `_sum`, and `_count`; the
+`MetricsService.getRegistryAsText()` renderer pre-populates every
+default bucket so that PromQL `histogram_quantile()` calls work from
+the first observation onwards.
 
 ## Recommended Panels
 
-The dashboard SHOULD include exactly the following seven panels, in the order documented here. The JSON definition in the [JSON Dashboard Definition](#json-dashboard-definition) section below provides a 1:1 importable mapping.
+The dashboard ships with seven panels grouped into three rows. The
+top row covers latency, the middle row covers per-trigger run
+volume and success rate, and the bottom row covers cron heartbeat
+and event-listener volume.
 
-### Panel 1 — Sync Success Rate
+| #   | Panel                                     | Type                  | Primary Metric                                 | Example PromQL                                                                                                                                          |
+| --- | ----------------------------------------- | --------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Sync Latency (p50 / p95 / p99) by Trigger | Time series           | `snowflake_sync_latency_seconds`               | `histogram_quantile(0.95, sum by (le, trigger) (rate(snowflake_sync_latency_seconds_bucket[15m])))`                                                     |
+| 2   | Sync Latency Distribution                 | Heatmap               | `snowflake_sync_latency_seconds_bucket`        | `sum by (le) (rate(snowflake_sync_latency_seconds_bucket[15m]))`                                                                                        |
+| 3   | Sync Outcome Distribution by Trigger      | Time series (stacked) | `snowflake_sync_runs_total`                    | `sum by (outcome, trigger) (rate(snowflake_sync_runs_total[15m]))`                                                                                      |
+| 4   | Sync Success Rate by Trigger              | Time series           | `snowflake_sync_runs_total{outcome="success"}` | `sum by (trigger) (rate(snowflake_sync_runs_total{outcome="success"}[15m])) / clamp_min(sum by (trigger) (rate(snowflake_sync_runs_total[15m])), 1e-9)` |
+| 5   | Sync Failure Count (last 24 h)            | Bar chart             | `snowflake_sync_runs_total{outcome="failure"}` | `sum by (trigger) (increase(snowflake_sync_runs_total{outcome="failure"}[24h]))`                                                                        |
+| 6   | Cron Heartbeat (last 24 h)                | Stat                  | `snowflake_sync_runs_total{trigger="cron"}`    | `sum(increase(snowflake_sync_runs_total{trigger="cron"}[26h]))`                                                                                         |
+| 7   | Event-Listener Volume                     | Time series           | `snowflake_sync_runs_total{trigger="event"}`   | `sum by (outcome) (rate(snowflake_sync_runs_total{trigger="event"}[5m]))`                                                                               |
 
-| Field                  | Value                                                                                                                                                |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `timeseries` (single-line ratio, optionally split by `trigger`)                                                                                      |
-| **Metric names**       | `snowflake_sync_success_total` (counter) and `snowflake_sync_total` (counter)                                                                        |
-| **Example expression** | `sum(rate(snowflake_sync_success_total[5m])) / sum(rate(snowflake_sync_total[5m]))`                                                                  |
-| **Thresholds**         | **≥ 99.5% target.** Alert if the 1-hour ratio drops below **99.0%** (`SnowflakeSyncSuccessRateLow`). Yellow band `[0.99, 0.995)`; red band `< 0.99`. |
+### Panel 1 — Sync Latency (p50 / p95 / p99) by Trigger
 
-**Description.** Ratio of successful syncs to total sync attempts, aggregated across both the cron path and the `PortfolioChangedEvent`-driven path. The label `trigger=cron|event` allows operators to split the ratio by invocation source — a cron-path failure with a healthy event-path success rate typically indicates a warehouse suspension or a credential issue affecting the long-running daily run, while an event-path failure with a healthy cron-path indicates a per-request fault (e.g., a bad bind value originating from a specific Order). The 99.5% target tracks the project-level reliability target for the data-freshness contract.
+Three series per trigger (cron, manual, event), each rendered as
+p50, p95, and p99 over a fifteen-minute rolling window via
+`histogram_quantile()` against the bucket counter. The fifteen-minute
+window is chosen deliberately: cron runs only once per day, and a
+shorter window typically yields no data points for the cron trigger
+between firings. Recommended visual thresholds: green ≤ 5 s, amber
+5 s–30 s, red > 30 s on the p95 series for the **manual** and
+**event** triggers; the **cron** trigger frequently exceeds 30 s (it
+processes every user) and should be evaluated against its own
+historical baseline rather than a fixed threshold.
 
-### Panel 2 — Sync Latency (p50 / p95 / p99)
+### Panel 2 — Sync Latency Distribution (Heatmap)
 
-| Field                        | Value                                                                                                                                                     |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**               | `timeseries` with p50 / p95 / p99 lines, faceted by `trigger`                                                                                             |
-| **Metric name**              | `snowflake_sync_duration_seconds` (histogram)                                                                                                             |
-| **Example expression (p95)** | `histogram_quantile(0.95, sum by (le, trigger) (rate(snowflake_sync_duration_seconds_bucket[5m])))`                                                       |
-| **Thresholds**               | Cron runs: **p95 ≤ 30 s.** Event-driven runs: **p95 ≤ 5 s.** Alert `SnowflakeSyncLatencyP95High` fires when cron p95 exceeds 30 s for a 15-minute window. |
+A heatmap of `snowflake_sync_latency_seconds_bucket` over time
+provides operators with a richer view than the quantile lines alone.
+The heatmap reuses the default buckets
+`[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` seconds.
+Most snowflake sync observations cluster near or beyond the upper
+end of the ladder; the `+Inf` bucket count equals the total
+observation count by definition.
 
-**Description.** Histogram of total sync duration per run, separately for cron and event-driven invocations (label `trigger=cron|event`). Cron runs touch every user and therefore have a higher latency budget; event-driven runs touch a single user and should complete well within the 5-second user-perception window. Sustained regressions in the cron p95 typically point to warehouse-size mismatches (warehouse too small for the row volume) or to a `SELECT * FROM Order` query plan regression in PostgreSQL upstream of the MERGE; event-path regressions typically point to network latency between the Ghostfolio API process and `<account>.snowflakecomputing.com`.
+### Panel 3 — Sync Outcome Distribution by Trigger
 
-### Panel 3 — MERGE Row Counts (per table)
+Stacked time series of `snowflake_sync_runs_total` partitioned by
+both the `outcome` and `trigger` labels (six possible series).
+Operators can see at a glance the composition of terminal outcomes
+across triggers — `outcome="success"` should dominate during steady
+state, and a sustained increase in `outcome="failure"` for any
+trigger is the principal incident signal for the sync layer.
 
-| Field                  | Value                                                                                                                                                                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `barchart` (or `timeseries`) labeled by `table`                                                                                                                                                   |
-| **Metric name**        | `snowflake_sync_rows_merged_total` (counter, labeled by `table=portfolio_snapshots\|orders_history\|performance_metrics`)                                                                         |
-| **Example expression** | `sum by (table) (rate(snowflake_sync_rows_merged_total[5m]))`                                                                                                                                     |
-| **Thresholds**         | Informational. Alert if **zero rows merged for any table over 24 h** while the cron is firing — typically captured by combining this panel with Panel 4 (`SnowflakeMergeRowCountZero`, optional). |
+### Panel 4 — Sync Success Rate by Trigger
 
-**Description.** Per-table counter of rows merged per sync run, split across the three Snowflake tables (`portfolio_snapshots`, `orders_history`, `performance_metrics`). The metric is a passive reporter of MERGE activity — it does NOT distinguish between rows that were INSERTED (new) and rows that were UPDATED (existing). The unique-key constraints `(snapshot_date, user_id, asset_class)`, `(order_id)`, and `(metric_date, user_id)` prevent duplicate rows at the database level, which is what enforces **Rule 7 — Snowflake Sync Idempotency** (AAP § 0.7.1.7). Operators verify Rule 7 by running the sync twice for the same date range and confirming that the cumulative row count visible in Snowflake itself does NOT grow on the second run; this counter is a forensic trail, not the gate.
+Per-trigger success-rate series — `outcome="success"` rate divided
+by total rate, computed `by (trigger)`. The expression uses
+`clamp_min(..., 1e-9)` in the denominator to avoid division-by-zero
+when a particular trigger has no recent invocations. Recommended
+thresholds:
 
-### Panel 4 — Cron Run Timestamps
+- **`trigger="cron"`** — should be 1.0 at the daily sample. Anything
+  less than 1.0 means at least one user's sync failed inside the
+  daily run.
+- **`trigger="manual"`** and **`trigger="event"`** — green ≥ 99 %,
+  amber 95 %–99 %, red < 95 %.
 
-| Field                  | Value                                                                                                                                            |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Panel type**         | `stat` (most-recent value) with a sparkline, OR `timeseries` of the seconds-since-last-run derived metric                                        |
-| **Metric name**        | `snowflake_sync_cron_last_run_timestamp` (gauge, Unix timestamp seconds)                                                                         |
-| **Example expression** | `time() - snowflake_sync_cron_last_run_timestamp` (seconds since last cron run)                                                                  |
-| **Thresholds**         | Alert at **> 25 hours** since last run (`SnowflakeSyncCronStale`). The 25-hour threshold leaves a 1-hour grace beyond the 24-hour cron interval. |
+### Panel 5 — Sync Failure Count (last 24 h)
 
-**Description.** Timeline of cron execution times confirming the `0 2 * * *` UTC schedule. The gauge is set at the start of every cron invocation by `SnowflakeSyncService` — i.e., the timestamp records when the run started, not when it succeeded. Pair this panel with Panel 1 to distinguish a stale-run problem (cron didn't fire) from a stale-data problem (cron fired but failed); both result in stale data in Snowflake but require different remediation. The cron expression `0 2 * * *` is the standard 5-field syntax used by `@nestjs/schedule` v6 (per AAP § 0.2.3) and is interpreted with `timeZone: 'UTC'`.
+Aggregate failure count per trigger over the last 24 hours.
+Complements the rate-based panels by surfacing the absolute number
+of failed sync invocations — a useful "incident impact" lens during
+post-incident reviews. The bars are independent per trigger so
+operators can spot whether a manual-path failure spike masks an
+underlying event-path regression.
 
-### Panel 5 — Event-Listener Invocation Count
+### Panel 6 — Cron Heartbeat (last 24 h)
 
-| Field                  | Value                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Panel type**         | `timeseries` (single-line counter rate)                                                                                        |
-| **Metric name**        | `snowflake_sync_event_invocations_total` (counter)                                                                             |
-| **Example expression** | `sum(rate(snowflake_sync_event_invocations_total[5m]))`                                                                        |
-| **Thresholds**         | Informational. No specific alert. Operators correlate sustained zeros against Order CRUD volume to detect broken event wiring. |
+Counts the total number of cron-triggered sync runs over the last
+26 hours (a slightly larger window than 24 h to tolerate scheduler
+jitter at the hour boundary). The cron is configured to fire once
+per day at 02:00 UTC, so the expected value is **1** outside of
+unusual circumstances. A value of **0** for more than 26 hours is a
+cron-heartbeat failure and is paged by the
+`SnowflakeCronHeartbeatStale` alert below.
 
-**Description.** Counter of `PortfolioChangedEvent`-triggered sync invocations emitted by the `@OnEvent` listener on `SnowflakeSyncService`. The existing event-listener pattern (per AAP § 0.4.3 sequence diagram) includes a **5-second debounce** consistent with the precedent in `apps/api/src/events/portfolio-changed.listener.ts` — brief gaps in this counter during high-frequency Order CRUD bursts are expected behavior and do NOT indicate missed events. Sustained zeros while Order CRUD volume (visible in the `activities_*` metrics or in the Postgres `Order` table itself) is non-zero indicate a broken event-emitter wiring, which is a regression in either the upstream `ActivitiesService` emission sites or the listener registration in `SnowflakeSyncModule`.
+This panel replaces a traditional "last-cron-run timestamp" gauge —
+the in-process metrics registry implemented at
+`apps/api/src/app/metrics/metrics.service.ts` supports counters and
+histograms only and does not expose gauges. The "did the cron fire
+within the expected window?" question is therefore answered via
+`increase(snowflake_sync_runs_total{trigger="cron"}[26h])` rather
+than a timestamp gauge.
 
-### Panel 6 — Snowflake Connection Failures
+### Panel 7 — Event-Listener Volume
 
-| Field                  | Value                                                                                                                                                                 |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `timeseries` (single-line counter increase) or `stat` showing the 15-minute increase                                                                                  |
-| **Metric name**        | `snowflake_connection_failure_total` (counter, optionally labeled by `error_class`)                                                                                   |
-| **Example expression** | `sum(increase(snowflake_connection_failure_total[15m]))`                                                                                                              |
-| **Thresholds**         | **Alert at > 5 errors per 15 minutes** (`SnowflakeConnectionFailureBurst`). The 5-per-15-minute threshold is the project-mandated alert threshold for this dashboard. |
-
-**Description.** Counter for connection errors raised by the `snowflake-sdk` driver against the configured Snowflake account (the `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_WAREHOUSE`, and `SNOWFLAKE_SCHEMA` environment variables read exclusively through `ConfigService` per Rule 3 — AAP § 0.7.1.3). The `error_class` label, when populated, distinguishes auth failures (rotated credentials), network failures (DNS / TCP), warehouse-suspension failures (warehouse paused or quota exceeded), and unknown failures. Operators MUST NOT include credential values in any panel description, alert annotation, or runbook link; only the environment-variable names appear here, satisfying the redaction requirement in AAP § 0.7.3 ("Logging redaction").
-
-### Panel 7 — Bind-Variable Validation Failures
-
-| Field                  | Value                                                                                                                                                                                               |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `stat` (current value, RED on non-zero) or `timeseries` of the 1-hour increase                                                                                                                      |
-| **Metric name**        | `snowflake_bind_validation_failure_total` (counter)                                                                                                                                                 |
-| **Example expression** | `sum(increase(snowflake_bind_validation_failure_total[1h]))`                                                                                                                                        |
-| **Thresholds**         | **Alert immediately on any non-zero value over 5 minutes** (`SnowflakeBindValidationFailureNonzero`). Defense-in-depth — the value should be 0 in healthy operation per **Rule 2** (AAP § 0.7.1.2). |
-
-**Description.** Counter for SQL parsing failures detected by the defense-in-depth check in `SnowflakeSyncService.queryHistory(...)` that rejects any `sql` containing `;` outside string literals (per AAP § 0.5.1.5 — chat-agent `query_history` tool). The check is a belt-and-braces complement to the primary Rule 2 enforcement: all SQL execution sites in `SnowflakeSyncService` use bind-variable syntax (`?` placeholders + `binds: [...]`), so the only way for raw SQL to reach the database is through the chat-agent tool path, where Claude supplies a `sql` string at request time. The counter should be **0** in healthy operation; any non-zero value indicates either an attempted SQL injection through the chat agent or a code regression that bypassed the bind-variable contract. The corresponding alert (`SnowflakeBindValidationFailureNonzero`) fires immediately because the failure mode is binary and operator attention is required.
-
----
+`sum by (outcome) (rate(snowflake_sync_runs_total{trigger="event"}[5m]))`
+time series. The event listener is debounced per user for 5 s and
+fires whenever an authenticated user creates, updates, or deletes
+an order (via `PortfolioChangedEvent`). A sustained zero on this
+panel during expected user activity is consistent with an
+event-bus regression (e.g., the listener never registered with
+`EventEmitter2`). A sudden spike in `outcome="failure"` on this
+panel is consistent with a Snowflake-side issue affecting the
+real-time path.
 
 ## Alert Rules
 
-The following Prometheus alert rules are recommended. They map 1:1 to the panel thresholds documented above. Operators can drop the YAML block below into a Prometheus rules file (e.g., `prometheus/rules/snowflake-sync.yml`) and reload Prometheus.
+Recommended Prometheus alerting rules. Adjust thresholds and `for`
+windows for the operating environment.
 
 ```yaml
 groups:
-  - name: ghostfolio-snowflake-sync
-    interval: 30s
+  - name: snowflake-sync
     rules:
-      - alert: SnowflakeSyncSuccessRateLow
+      - alert: SnowflakeSyncSuccessRateLowManual
         expr: |
-          (
-            sum(rate(snowflake_sync_success_total[1h]))
+          sum(rate(snowflake_sync_runs_total{outcome="success",trigger="manual"}[15m]))
             /
-            sum(rate(snowflake_sync_total[1h]))
-          ) < 0.99
-        for: 1h
+          clamp_min(
+            sum(rate(snowflake_sync_runs_total{trigger="manual"}[15m])),
+            1e-9
+          )
+            < 0.95
+        for: 15m
         labels:
-          severity: warning
-          team: platform
+          severity: page
           feature: snowflake-sync
         annotations:
-          summary: 'Snowflake sync success rate below 99% over the last hour'
+          summary: 'Manual Snowflake sync success rate below 95%'
           description: |
-            The 1-hour success ratio of snowflake_sync_success_total to
-            snowflake_sync_total is currently {{ $value | humanizePercentage }},
-            below the 99% alerting threshold. The project target is ≥ 99.5%
-            (Panel 1). Inspect the trigger label to identify whether the cron
-            path or the event-driven path is failing, then correlate with
-            Panel 6 (connection failures) and the most recent cron run gauge
-            (Panel 4). Cross-reference: AAP § 0.7.5.2 Snowflake sync gate.
-          runbook_url: 'docs/observability/snowflake-sync.md#panel-1--sync-success-rate'
+            Fewer than 95 % of manual-trigger Snowflake syncs have
+            succeeded over the last 15 minutes. Inspect
+            [SnowflakeSyncService] log lines for the affected
+            correlationIds, and verify the /api/v1/health/snowflake
+            probe.
+
+      - alert: SnowflakeSyncSuccessRateLowEvent
+        expr: |
+          sum(rate(snowflake_sync_runs_total{outcome="success",trigger="event"}[15m]))
+            /
+          clamp_min(
+            sum(rate(snowflake_sync_runs_total{trigger="event"}[15m])),
+            1e-9
+          )
+            < 0.95
+        for: 30m
+        labels:
+          severity: page
+          feature: snowflake-sync
+        annotations:
+          summary: 'Event-driven Snowflake sync success rate below 95%'
+          description: |
+            Fewer than 95 % of event-driven Snowflake syncs (Order
+            CRUD path) have succeeded over the last 30 minutes.
+            Recent user portfolio changes are not being mirrored
+            into Snowflake reliably. The /api/v1/health/snowflake
+            probe and the structured logs are the first
+            investigation surfaces.
 
       - alert: SnowflakeSyncLatencyP95High
         expr: |
           histogram_quantile(
             0.95,
-            sum by (le) (rate(snowflake_sync_duration_seconds_bucket{trigger="cron"}[15m]))
+            sum by (le, trigger) (
+              rate(snowflake_sync_latency_seconds_bucket{trigger=~"manual|event"}[15m])
+            )
           ) > 30
         for: 15m
         labels:
           severity: warning
-          team: platform
           feature: snowflake-sync
         annotations:
-          summary: 'Snowflake cron sync p95 latency above 30 s for 15 minutes'
+          summary: 'Snowflake sync latency p95 above 30 s for {{ $labels.trigger }}'
           description: |
-            The 95th percentile of snowflake_sync_duration_seconds for
-            trigger=cron is currently {{ $value | humanizeDuration }},
-            exceeding the 30 s alerting threshold for 15 minutes. The
-            event-driven path is alerted separately on its own 5 s budget.
-            Investigate warehouse sizing in Snowflake, the row volume of the
-            most recent run (Panel 3), and the upstream Postgres query plan
-            for Order / portfolio reads.
-          runbook_url: 'docs/observability/snowflake-sync.md#panel-2--sync-latency-p50--p95--p99'
+            snowflake_sync_latency_seconds p95 has exceeded 30 s for
+            15 minutes for trigger={{ $labels.trigger }}. The cron
+            trigger is excluded from this rule because daily
+            full-corpus syncs are expected to exceed 30 s. Inspect
+            Snowflake warehouse load and recent table-size growth.
 
-      - alert: SnowflakeConnectionFailureBurst
+      - alert: SnowflakeCronHeartbeatStale
         expr: |
-          sum(increase(snowflake_connection_failure_total[15m])) > 5
+          sum(increase(snowflake_sync_runs_total{trigger="cron"}[26h])) == 0
+        for: 30m
+        labels:
+          severity: page
+          feature: snowflake-sync
+        annotations:
+          summary: 'Snowflake cron sync did not fire in the last 26 hours'
+          description: |
+            The daily Snowflake sync cron is configured at
+            @Cron('0 2 * * *', { timeZone: 'UTC' }) but no
+            cron-triggered runs have been recorded for 26 hours.
+            Likely root causes: the API process restarted after
+            02:00 UTC and is now waiting for the next firing,
+            ScheduleModule failed to register the job, or the
+            cron job is throwing before the first metric increment.
+
+      - alert: SnowflakeCronFailureBurst
+        expr: |
+          sum(increase(snowflake_sync_runs_total{trigger="cron",outcome="failure"}[2h]))
+            > 0
         for: 5m
         labels:
-          severity: warning
-          team: platform
+          severity: page
           feature: snowflake-sync
         annotations:
-          summary: 'More than 5 Snowflake connection failures in 15 minutes'
+          summary: 'Snowflake cron sync recorded at least one failure'
           description: |
-            snowflake_connection_failure_total has incremented by more than 5
-            over the last 15 minutes. This typically indicates rotated or
-            revoked credentials (verify SNOWFLAKE_USER / SNOWFLAKE_PASSWORD
-            via ConfigService propagation), a paused or quota-exceeded
-            warehouse (verify SNOWFLAKE_WAREHOUSE), or transient network
-            issues against <account>.snowflakecomputing.com. Group by
-            error_class to identify the dominant failure mode. Credentials
-            are redacted from logs per AAP § 0.7.3.
-          runbook_url: 'docs/observability/snowflake-sync.md#panel-6--snowflake-connection-failures'
+            The daily Snowflake sync cron processes every user; this
+            alert fires when at least one user-level failure was
+            recorded inside the cron run. Inspect
+            [SnowflakeSyncService] log lines for the affected
+            correlationId and user_id, and verify the
+            /api/v1/health/snowflake probe.
 
-      - alert: SnowflakeBindValidationFailureNonzero
+      - alert: SnowflakeEventListenerSilent
         expr: |
-          sum(increase(snowflake_bind_validation_failure_total[5m])) > 0
-        for: 0m
-        labels:
-          severity: critical
-          team: platform
-          feature: snowflake-sync
-        annotations:
-          summary: 'Snowflake bind-variable validation failed (Rule 2 violation)'
-          description: |
-            snowflake_bind_validation_failure_total is non-zero. This is the
-            defense-in-depth signal for Rule 2 — Parameterized Snowflake
-            Queries (AAP § 0.7.1.2). Either an attempted SQL injection has
-            been blocked at the chat agent's query_history tool boundary, or
-            a code regression has bypassed the bind-variable contract.
-            Inspect the most recent application logs for the rejected sql
-            payload (the bind values are redacted; only the structural
-            failure is logged) and review recent changes to
-            SnowflakeSyncService.queryHistory or to AiChatService tool
-            dispatch. This alert fires immediately (no for: window) because
-            the failure mode is binary.
-          runbook_url: 'docs/observability/snowflake-sync.md#panel-7--bind-variable-validation-failures'
-
-      - alert: SnowflakeSyncCronStale
-        expr: |
-          (time() - snowflake_sync_cron_last_run_timestamp) > 90000
-        for: 10m
+          sum(rate(snowflake_sync_runs_total{trigger="event"}[1h])) == 0
+        for: 4h
         labels:
           severity: warning
-          team: platform
           feature: snowflake-sync
         annotations:
-          summary: 'Most recent Snowflake cron run is older than 25 hours'
+          summary: 'Snowflake event-listener has been silent for 4 hours'
           description: |
-            The gauge snowflake_sync_cron_last_run_timestamp has not been
-            updated in more than 25 hours (90000 seconds). The cron is
-            scheduled at 0 2 * * * UTC (per AAP § 0.7.3) so the expected
-            interval is 24 hours; the 25-hour threshold leaves a 1-hour
-            grace. Inspect NestJS scheduler logs for cron registration at
-            startup (per AAP § 0.7.5.2 Snowflake sync gate) and verify that
-            ScheduleModule.forRoot() is still imported in AppModule.
-          runbook_url: 'docs/observability/snowflake-sync.md#panel-4--cron-run-timestamps'
+            No event-driven Snowflake syncs have fired for the past
+            4 hours. During expected traffic windows this is
+            consistent with an EventEmitter2 listener regression —
+            verify @OnEvent(PortfolioChangedEvent.getName()) is
+            registered on SnowflakeSyncService at startup, and that
+            ActivitiesService still emits PortfolioChangedEvent on
+            order CRUD operations.
 ```
-
-Severity guidance:
-
-- **`critical`** — paging severity. Rule 2 has been violated (`SnowflakeBindValidationFailureNonzero`). The application has either blocked an injection attempt or shipped a regression; either way, immediate operator attention is required.
-- **`warning`** — non-paging severity. The pipeline is degraded but still serving requests; investigate during business hours unless the trend continues or compounds with other alerts.
-
----
 
 ## Local Development Verification
 
-The AAP § 0.7.2 Observability rule mandates that observability MUST be exercised in the local development environment. The following seven-step checklist walks an operator through that verification end-to-end.
+The following procedure exercises every metric in the local
+development environment, satisfying the AAP §0.7.2 Observability
+mandate that "all observability MUST be exercised in the local
+development environment."
 
-1. **Start the local Ghostfolio API.** A working Postgres + Redis stack is required (e.g., `docker compose -f docker/docker-compose.dev.yml up -d`). Then start the API process:
+1. **Bring up the API.** From the repository root, start Postgres and
+   Redis (`docker compose -f docker/docker-compose.dev.yml up -d`)
+   and ensure the six `SNOWFLAKE_*` environment variables resolve to
+   a development Snowflake account (see `.env.example`). Start the
+   API (`npx nx serve api`) and wait for the bootstrap log line
+   `Nest application successfully started`.
+2. **Confirm Snowflake bootstrap completes.** Inspect the API stdout
+   for the line
+   `[SnowflakeSyncService] Snowflake bootstrap DDL completed`
+   (logged after `bootstrap.sql` is executed against the configured
+   `SNOWFLAKE_DATABASE.SNOWFLAKE_SCHEMA`).
+3. **Confirm the registry is populated with the expected HELP lines.**
 
-   ```sh
-   npm run start:api
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^# (HELP|TYPE) snowflake_sync_'
    ```
 
-   The Nx process should report `🚀 Application is running on: http://localhost:3333/api`. The `/api/v1` URI version is configured globally in `apps/api/src/main.ts`, so all routes documented below resolve under that prefix. NestJS scheduler logs should additionally report registration of the `snowflake-daily-sync` cron at the `0 2 * * *` UTC schedule (per AAP § 0.7.5.2 Snowflake sync gate).
+   Expected output (order may vary):
 
-2. **Confirm the metrics endpoint returns 200.** The metrics registry from `MetricsModule` (per AAP § 0.5.1.2) emits Prometheus-formatted counters and histograms:
-
-   ```sh
-   curl -i http://localhost:3333/api/v1/metrics
+   ```text
+   # HELP snowflake_sync_latency_seconds Latency of a Snowflake sync invocation in seconds
+   # TYPE snowflake_sync_latency_seconds histogram
+   # HELP snowflake_sync_runs_total Total Snowflake sync invocations partitioned by trigger and outcome
+   # TYPE snowflake_sync_runs_total counter
    ```
 
-   Expect `HTTP/1.1 200 OK` and a body containing one `# HELP` / `# TYPE` line per metric followed by the metric samples. At first start (before any sync run), the Snowflake sync counters will all read zero — that is expected.
+4. **Trigger the manual path.** Mint a JWT for a user with the
+   `triggerSnowflakeSync` permission, then:
 
-3. **Confirm the Snowflake health probe returns 200.** The probe is implemented in `apps/api/src/app/health/snowflake-health.indicator.ts` per AAP § 0.5.1.2 and issues a lightweight `SELECT 1` round-trip against the configured Snowflake account using bind-variable syntax (Rule 2):
-
-   ```sh
-   curl -i http://localhost:3333/api/v1/health/snowflake
-   ```
-
-   Expect `HTTP/1.1 200 OK` with a body of the form `{"status":"up","details":{"snowflake":{"status":"up"}}}`. If the probe returns 503, verify that all six `SNOWFLAKE_*` environment variables (`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_SCHEMA`) are set in `.env` (development) and resolved through `ConfigService` at boot (per Rule 3 — AAP § 0.7.1.3). Credentials MUST NOT be echoed to the terminal at any point during this step.
-
-4. **Trigger a manual sync via the admin endpoint.** The admin-only `POST /api/v1/snowflake-sync/trigger` route invokes the same MERGE pipeline as the cron path. Substitute `<jwt>` with a JWT obtained from the Ghostfolio login flow as a user with the `triggerSnowflakeSync` permission (AAP § 0.4.1.1):
-
-   ```sh
-   curl -i -X POST http://localhost:3333/api/v1/snowflake-sync/trigger \
-     -H "Authorization: Bearer <jwt>" \
+   ```bash
+   curl -s -X POST http://localhost:3333/api/v1/snowflake-sync/trigger \
+     -H "Authorization: Bearer $JWT" \
      -H "Content-Type: application/json" \
      -d '{}'
    ```
 
-   Expect `HTTP/1.1 200 OK`. Re-fetch `/api/v1/metrics` and confirm:
-   - `snowflake_sync_total{trigger="cron"}` has incremented by 1 (the manual trigger uses the cron pipeline by convention).
-   - `snowflake_sync_success_total{trigger="cron"}` has incremented by 1.
-   - `snowflake_sync_rows_merged_total{table="..."}` has incremented for at least one of the three tables (depending on whether sample data exists locally).
-   - `snowflake_sync_duration_seconds_count` has incremented by 1.
+5. **Observe `snowflake_sync_runs_total{trigger="manual"}` increment.**
 
-5. **Trigger an Order create event to exercise the `PortfolioChangedEvent` listener path.** Issue a `POST /api/v1/order` with a valid Order body (or use the existing Ghostfolio UI to add an activity) and confirm the listener path activates. The `PortfolioChangedEvent` is already emitted by `apps/api/src/app/activities/activities.service.ts` on every Order CRUD operation (lines 92, 235, 244, 270, 318, 900). After the 5-second debounce window (per AAP § 0.4.3), re-fetch `/api/v1/metrics` and confirm:
-
-   ```sh
-   curl -s http://localhost:3333/api/v1/metrics | grep -E '^snowflake_sync_(event_invocations|total|success_total)'
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^snowflake_sync_runs_total\{'
    ```
 
-   - `snowflake_sync_event_invocations_total` has incremented by 1.
-   - `snowflake_sync_total{trigger="event"}` has incremented by 1.
-   - `snowflake_sync_success_total{trigger="event"}` has incremented by 1.
+   Expected (sample after a successful manual run):
 
-6. **Re-run the manual sync to verify Rule 7 idempotency.** Execute the curl from step 4 a second time without changing anything else. The `snowflake_sync_rows_merged_total` counter will increment again (because each MERGE statement reports its row activity), but the **cumulative row count visible in Snowflake itself MUST NOT increase**. The unique-key constraints `(snapshot_date, user_id, asset_class)` on `portfolio_snapshots`, `(order_id)` on `orders_history`, and `(metric_date, user_id)` on `performance_metrics` (per AAP § 0.5.1.1) prevent duplicate rows at the database level — this is the database-enforced backbone of **Rule 7 — Snowflake Sync Idempotency** (AAP § 0.7.1.7). Verify by issuing a `SELECT COUNT(*)` against each of the three tables in the Snowflake console before and after step 6 and confirming the counts are identical.
+   ```text
+   snowflake_sync_runs_total{outcome="success",trigger="manual"} 1
+   ```
 
-7. **Import the JSON dashboard definition into a local Grafana.** Open Grafana at `http://localhost:3000`, navigate to **Dashboards → New → Import**, paste the JSON block from the [JSON Dashboard Definition](#json-dashboard-definition) section below, select the Prometheus datasource that scrapes `/api/v1/metrics`, and click **Import**. Confirm that all seven panels render data after a few minutes of scrape activity (the panels will appear empty until at least one scrape interval after steps 4–6).
+6. **Observe `snowflake_sync_latency_seconds{trigger="manual"}`
+   populate.**
 
-After completing all seven steps, the dashboard is verified end-to-end against the local development environment, satisfying the AAP § 0.7.2 mandate.
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^snowflake_sync_latency_seconds(_bucket|_sum|_count)\{'
+   ```
 
----
+   Expected to show every default bucket
+   (`le="0.005"` through `le="10"` and `le="+Inf"`) plus
+   non-zero `_sum` and `_count`, all carrying
+   `trigger="manual"`.
+
+7. **Trigger the event path.** Create or update an order via
+   `POST /api/v1/order` for the same user. The
+   `@OnEvent(PortfolioChangedEvent.getName())` listener will
+   schedule a sync after the 5 s debounce. Wait at least 6 s, then
+   re-scrape `/api/v1/metrics` and confirm
+   `snowflake_sync_runs_total{trigger="event"}` has incremented.
+
+8. **(Optional) Verify idempotency per Rule 7.** Re-run the manual
+   trigger from step 4 with the same `userId`/date. Confirm the
+   row counts in the three Snowflake tables (`portfolio_snapshots`,
+   `orders_history`, `performance_metrics`) are unchanged from
+   the first run — the MERGE statements in
+   `snowflake-sync.service.ts` use `?` bind variables on the
+   unique constraints from AAP §0.5.1.1, so duplicate input rows
+   are upserted in place.
+
+9. **(Optional) Verify the cron heartbeat.** The cron fires daily
+   at 02:00 UTC. To exercise it without waiting, an operator may
+   temporarily decorate `runDailySync()` with
+   `@Cron(CronExpression.EVERY_30_SECONDS)` in a local-only
+   scratch branch. **Do not** commit this change — the
+   production-correct schedule is `'0 2 * * *'` per AAP §0.7.3.
+
+10. **Trigger the failure path.** Stop Snowflake connectivity (e.g.,
+    set `SNOWFLAKE_ACCOUNT=invalid.example.com` and restart the API),
+    then repeat step 4. The controller responds with HTTP 502
+    (`BadGatewayException`) and the metric scrape now shows
+    `snowflake_sync_runs_total{outcome="failure",trigger="manual"}`
+    incremented.
+
+If any of the steps above does not produce the expected line, the
+dashboard cannot render correctly. Inspect the structured logs (each
+line is prefixed with `[SnowflakeSyncService] [<correlationId>]`)
+and the service source (`snowflake-sync.service.ts`) before
+declaring the dashboard broken.
 
 ## JSON Dashboard Definition
 
-The following JSON is a complete, self-contained Grafana dashboard definition mapping 1:1 to the seven Recommended Panels above. It can be imported into a stock Grafana 9+ instance via **Dashboards → New → Import → Paste JSON**. The `datasource.uid` placeholder of `"Prometheus"` should be reconciled with the UID of the Prometheus datasource provisioned in your Grafana instance (visible at **Connections → Data sources → Prometheus → uid**).
+A self-contained Grafana 9+ dashboard ready for import. Datasource
+UID is parameterised via `${DS_PROMETHEUS}` — replace with the
+local datasource UID before import.
 
 ```json
 {
-  "title": "Ghostfolio — Snowflake Sync Layer",
-  "uid": "gf-snowflake-sync",
+  "title": "Snowflake Sync Layer",
+  "tags": ["ghostfolio", "snowflake-sync", "snowflake", "blitzy"],
   "schemaVersion": 38,
   "version": 1,
-  "editable": true,
-  "graphTooltip": 1,
-  "tags": [
-    "ghostfolio",
-    "snowflake-sync",
-    "observability",
-    "snowflake",
-    "cron"
-  ],
-  "time": { "from": "now-6h", "to": "now" },
   "refresh": "30s",
-  "annotations": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
   "templating": {
     "list": [
       {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
         "name": "trigger",
-        "label": "Trigger Type",
+        "label": "Trigger",
         "type": "query",
-        "query": "label_values(snowflake_sync_total, trigger)",
-        "datasource": { "type": "prometheus", "uid": "Prometheus" },
-        "refresh": 1,
-        "multi": true,
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(snowflake_sync_runs_total, trigger)",
         "includeAll": true,
-        "current": { "selected": true, "text": "All", "value": "$__all" }
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
       }
     ]
   },
   "panels": [
     {
       "id": 1,
-      "title": "Sync Success Rate",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "description": "Ratio of successful syncs to total sync attempts (cron + event-driven). Target ≥ 99.5%; alert below 99.0% over a 1-hour window. AAP § 0.7.5.2.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.99 },
-              { "color": "green", "value": 0.995 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(snowflake_sync_success_total[5m])) / sum(rate(snowflake_sync_total[5m]))",
-          "legendFormat": "overall success rate"
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (trigger) (rate(snowflake_sync_success_total[5m])) / sum by (trigger) (rate(snowflake_sync_total[5m]))",
-          "legendFormat": "{{trigger}} success rate"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "title": "Sync Latency (p50 / p95 / p99) by Trigger",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "description": "Histogram of total sync duration per run, faceted by trigger. Cron runs: p95 ≤ 30 s. Event-driven runs: p95 ≤ 5 s.",
+      "title": "Sync Latency by Trigger (p50 / p95 / p99)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -427,228 +501,250 @@ The following JSON is a complete, self-contained Grafana dashboard definition ma
         },
         "overrides": []
       },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.50, sum by (le, trigger) (rate(snowflake_sync_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le, trigger) (rate(snowflake_sync_latency_seconds_bucket{trigger=~\"$trigger\"}[15m])))",
           "legendFormat": "p50 {{trigger}}"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.95, sum by (le, trigger) (rate(snowflake_sync_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, trigger) (rate(snowflake_sync_latency_seconds_bucket{trigger=~\"$trigger\"}[15m])))",
           "legendFormat": "p95 {{trigger}}"
         },
         {
           "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.99, sum by (le, trigger) (rate(snowflake_sync_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, trigger) (rate(snowflake_sync_latency_seconds_bucket{trigger=~\"$trigger\"}[15m])))",
           "legendFormat": "p99 {{trigger}}"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 2,
+      "type": "heatmap",
+      "title": "Sync Latency Distribution",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (le) (rate(snowflake_sync_latency_seconds_bucket{trigger=~\"$trigger\"}[15m]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "yAxis": { "unit": "s" }
+      }
     },
     {
       "id": 3,
-      "title": "MERGE Row Counts (per table)",
-      "type": "barchart",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "description": "Per-table counter of rows merged per sync run across portfolio_snapshots, orders_history, performance_metrics. Idempotency (Rule 7) is enforced by the unique-key constraints in Snowflake, not by this counter.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": { "lineWidth": 1, "fillOpacity": 80 }
-        },
-        "overrides": []
-      },
-      "options": {
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "single" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (table) (rate(snowflake_sync_rows_merged_total[5m]))",
-          "legendFormat": "{{table}}"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "title": "Cron Run Freshness (seconds since last run)",
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "description": "Time elapsed since the last cron run started. Cron schedule: 0 2 * * * UTC (AAP § 0.7.3). Alert at > 25 hours.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 86400 },
-              { "color": "red", "value": 90000 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "time() - snowflake_sync_cron_last_run_timestamp",
-          "legendFormat": "seconds since last cron run"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "Event-Listener Invocations",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "description": "Counter of PortfolioChangedEvent-triggered sync invocations. Note: 5-second debounce per AAP § 0.4.3 — brief gaps during high-frequency Order CRUD bursts are expected.",
+      "title": "Sync Outcome Distribution by Trigger (rate / 15m)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }
+          "custom": { "stacking": { "mode": "normal" } }
         },
         "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(snowflake_sync_event_invocations_total[5m]))",
-          "legendFormat": "event invocations/s"
+          "expr": "sum by (outcome, trigger) (rate(snowflake_sync_runs_total{trigger=~\"$trigger\"}[15m]))",
+          "legendFormat": "{{outcome}} {{trigger}}"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Sync Success Rate by Trigger",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.95 },
+              { "color": "green", "value": 0.99 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (trigger) (rate(snowflake_sync_runs_total{outcome=\"success\",trigger=~\"$trigger\"}[15m])) / clamp_min(sum by (trigger) (rate(snowflake_sync_runs_total{trigger=~\"$trigger\"}[15m])), 1e-9)",
+          "legendFormat": "{{trigger}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Sync Failure Count (last 24h)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (trigger) (increase(snowflake_sync_runs_total{outcome=\"failure\",trigger=~\"$trigger\"}[24h]))",
+          "legendFormat": "{{trigger}}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
     },
     {
       "id": 6,
-      "title": "Snowflake Connection Failures (15 m increase)",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "description": "Counter for connection errors against the configured Snowflake account. Alert at > 5 errors per 15 minutes. Credentials are read exclusively through ConfigService (Rule 3).",
+      "type": "stat",
+      "title": "Cron Heartbeat (last 26h)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 8, "y": 16, "w": 8, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
             ]
           }
         },
         "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(increase(snowflake_connection_failure_total[15m]))",
-          "legendFormat": "total errors / 15 m"
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (error_class) (increase(snowflake_connection_failure_total[15m]))",
-          "legendFormat": "{{error_class}} / 15 m"
+          "expr": "sum(increase(snowflake_sync_runs_total{trigger=\"cron\"}[26h]))",
+          "legendFormat": "cron runs"
         }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "Bind-Variable Validation Failures (Rule 2)",
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
-      "description": "Defense-in-depth counter for SQL parsing failures detected by SnowflakeSyncService.queryHistory. MUST remain 0 in healthy operation per Rule 2 (AAP § 0.7.1.2). Alert immediately on any non-zero value.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          }
-        },
-        "overrides": []
-      },
+      ],
       "options": {
         "reduceOptions": {
           "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
-        "orientation": "auto",
-        "textMode": "auto",
         "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto"
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Event-Listener Volume",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 16, "y": 16, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "green" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "failure" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "red" }
+              }
+            ]
+          }
+        ]
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(increase(snowflake_bind_validation_failure_total[1h]))",
-          "legendFormat": "validation failures / 1 h"
+          "expr": "sum by (outcome) (rate(snowflake_sync_runs_total{trigger=\"event\"}[5m]))",
+          "legendFormat": "{{outcome}}"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
     }
   ]
 }
 ```
 
----
-
 ## References
 
-- **AAP § 0.7.2 — Observability rule.** The application is not complete until it is observable. Every deliverable MUST include structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, a dashboard template, and local-environment exercise of all of the above.
-- **AAP § 0.7.1.7 — Rule 7 — Snowflake Sync Idempotency.** All Snowflake write operations in `SnowflakeSyncService` MUST use MERGE (upsert) statements keyed on the unique constraints documented in AAP § 0.5.1.1. Running the sync twice for the same date range MUST leave row counts unchanged. Panel 3 of this dashboard is the operational reporter for Rule 7.
-- **AAP § 0.7.1.2 — Rule 2 — Parameterized Snowflake Queries.** All Snowflake SQL execution MUST use `snowflake-sdk` bind variable syntax (`?` placeholders + `binds: [...]`). String template literals and concatenation operators adjacent to SQL strings are PROHIBITED. Panel 7 of this dashboard is the defense-in-depth telemetry for Rule 2.
-- **AAP § 0.7.5.2 — Snowflake sync gate.** Cron registration must appear in NestJS scheduler logs at startup; an Order create event must trigger the sync within the same request lifecycle (allowing for the listener debounce window); running the sync twice for the same date range must leave row counts unchanged across all three Snowflake tables. Panel 1 (success rate), Panel 4 (cron freshness), and Panel 5 (event invocations) collectively cover the gate.
-- **`apps/api/src/app/snowflake-sync/snowflake-sync.service.ts` — metric emission sites.** The `SnowflakeSyncService` is responsible for emitting `snowflake_sync_total`, `snowflake_sync_success_total`, `snowflake_sync_duration_seconds`, `snowflake_sync_rows_merged_total`, `snowflake_sync_cron_last_run_timestamp`, `snowflake_sync_event_invocations_total`, `snowflake_connection_failure_total`, and `snowflake_bind_validation_failure_total` via the injected `MetricsService`.
-- **`apps/api/src/app/metrics/metrics.controller.ts` — metrics endpoint.** Exposes the in-process metrics registry as Prometheus-format text at `GET /api/v1/metrics`. Created per AAP § 0.5.1.2 alongside `MetricsModule` and `MetricsService`.
-- **`apps/api/src/app/health/snowflake-health.indicator.ts` — health probe.** Exposes a readiness probe at `GET /api/v1/health/snowflake` registered additively in `HealthModule`. Issues a lightweight `SELECT 1` round-trip using bind-variable syntax (Rule 2). Created per AAP § 0.5.1.2.
+- **Service** —
+  `apps/api/src/app/snowflake-sync/snowflake-sync.service.ts`.
+- **Controller** —
+  `apps/api/src/app/snowflake-sync/snowflake-sync.controller.ts`.
+- **Module** —
+  `apps/api/src/app/snowflake-sync/snowflake-sync.module.ts`.
+- **Client factory** —
+  `apps/api/src/app/snowflake-sync/snowflake-client.factory.ts`.
+- **Bootstrap DDL** —
+  `apps/api/src/app/snowflake-sync/sql/bootstrap.sql`.
+- **Metrics registry** — `apps/api/src/app/metrics/metrics.service.ts`,
+  `apps/api/src/app/metrics/metrics.controller.ts`.
+- **Health probe** — `/api/v1/health/snowflake` (live `SELECT 1`
+  against Snowflake with a 5 s `Promise.race` timeout).
+- **Endpoints** —
+  `POST /api/v1/snowflake-sync/trigger` (admin manual trigger;
+  guarded by `triggerSnowflakeSync` permission).
+- **Event source** — `PortfolioChangedEvent` emitted by
+  `apps/api/src/app/activities/activities.service.ts` on every
+  order CRUD operation; consumed by
+  `@OnEvent(PortfolioChangedEvent.getName())` on
+  `SnowflakeSyncService` with a per-user 5 s debounce window.
+- **AAP** — §0.1.1 (feature definition), §0.5.1.1 (emitted-metrics
+  scope), §0.7.1.7 (Rule 7: MERGE idempotency),
+  §0.7.2 (Observability rule), §0.7.3 (cron literal).
 
-### Sibling dashboard templates
+### Metric Names (Authoritative List)
 
-- **`docs/observability/ai-chat.md`** — Feature B (`AiChatModule`) streaming `POST /api/v1/ai/chat` SSE metrics: first-token latency (primary), input/output token throughput, tool-call distribution, SSE error rate, and the personalization fetch latency that feeds the per-request system prompt.
-- **`docs/observability/ai-rebalancing.md`** — Feature C (`RebalancingModule`) non-streaming `POST /api/v1/ai/rebalancing` metrics: total request latency (primary), recommendation count per response, warnings rate, and structured-output validation failures (Rule 4).
+The dashboard, alerting rules, and verification commands above
+reference **only** the two metric names below. Any metric name not
+appearing in this list is not emitted by `SnowflakeSyncService`
+and will yield empty Grafana panels if referenced.
+
+- `snowflake_sync_runs_total` (counter; labels: `outcome`, `trigger`)
+- `snowflake_sync_latency_seconds` (histogram; labels: `trigger`)

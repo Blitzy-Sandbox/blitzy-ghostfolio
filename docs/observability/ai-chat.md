@@ -1,674 +1,627 @@
-# AI Portfolio Chat Agent — Observability Dashboard Template
+# AI Portfolio Chat — Observability Dashboard
 
 ## Overview
 
-This document is the canonical Grafana dashboard template for **Feature B — AI Portfolio Chat Agent (`AiChatModule`)**, the streaming `POST /api/v1/ai/chat` Server-Sent Events (SSE) endpoint introduced by the Agent Action Plan. It satisfies the project-level **Observability** rule recorded in AAP § 0.7.2 (every deliverable MUST include structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, and a dashboard template — and that observability MUST be exercisable in the local development environment).
+Operator dashboard for the **AI Portfolio Chat** feature exposed at
+`POST /api/v1/ai/chat`. The dashboard tracks the three Prometheus metrics
+emitted by `AiChatService` and exposed at `GET /api/v1/metrics`:
 
-### Feature being observed
+1. `ai_chat_streams_total` — terminal-outcome counter for every chat stream
+   (success, error, cancelled).
+2. `ai_chat_first_token_latency_seconds` — histogram of the wall-clock time
+   between request entry into the controller and the first text token
+   emitted by Claude. This is the primary user-perceived performance signal.
+3. `ai_chat_tool_invocations_total` — counter of chat-tool dispatches,
+   labelled by the four registered tool names
+   (`get_current_positions`, `get_performance_metrics`, `query_history`,
+   `get_market_data`).
 
-The dashboard observes the entire request lifecycle of `POST /api/v1/ai/chat`:
+The dashboard is intentionally scoped to **only** the metrics actually
+emitted by `AiChatService`. Additional signals — Claude prompt and
+completion token throughput, model-version distribution, server-side
+personalisation latency, end-to-end stream duration — are **not** exposed
+by this version of the service. Operators who require those signals must
+either extend `AiChatService` to register and emit the corresponding
+metrics or surface them through an upstream telemetry layer
+(e.g., the Anthropic SDK's own observability hooks).
 
-- The endpoint is implemented in `AiChatController` (`apps/api/src/app/ai-chat/ai-chat.controller.ts`) and `AiChatService` (`apps/api/src/app/ai-chat/ai-chat.service.ts`).
-- The service constructs an Anthropic Claude client via the `@anthropic-ai/sdk` package and invokes `client.messages.stream({...})` so that response tokens are delivered to the browser as they are produced. This makes the endpoint **STREAMING** (SSE) — distinct from the non-streaming rebalancing endpoint documented in `ai-rebalancing.md`, which uses `messages.create({...})` and emits a single JSON payload.
-- The chat agent dispatches **four** Claude tool calls (per AAP § 0.5.1.5): `get_current_positions` (delegates to `PortfolioService`), `get_performance_metrics` (delegates to `PortfolioService`), `query_history` (delegates to `SnowflakeSyncService.queryHistory(...)` with bind variables only — Rule 2), and `get_market_data` (delegates to `SymbolService`).
-- The protocol is **stateless server-side**: the client transmits at most four prior turns plus the new user turn (5 entries total) on every request — there are no server-side conversation rows to count, and the dashboard intentionally omits a "session count" panel.
-- Each request reads `UserFinancialProfileService.findByUserId(userId)` and `PortfolioService.getDetails(...)` to build the personalized system prompt; the latency of those two reads directly inflates the user-visible first-token latency budget.
+## Audience
 
-### Data source
+- **Site Reliability Engineering / Platform Operations** — primary
+  dashboard owners; on-call rotation watches first-token latency, error
+  rate, and tool-invocation rate during incidents.
+- **AI Feature Engineering** — secondary owners; review tool-call
+  distribution shifts (an unexpected drop in `query_history` invocations
+  may indicate a regression in the Snowflake history tool).
 
-All panels query Prometheus-formatted counters and histograms exposed at the new `/api/v1/metrics` endpoint registered by `MetricsModule` (`apps/api/src/app/metrics/metrics.controller.ts` per AAP § 0.5.1.2). The dashboard assumes a Prometheus datasource scrapes that endpoint at a stable interval (typically every 15 s); the `datasource.uid` in the JSON definition below is a placeholder (`"Prometheus"`) that operators should reconcile with the UID of their actual provisioned Prometheus datasource.
+## Cross-references
 
-### Audience
+- **AAP §0.1.1.1 / §0.5.1.1** — feature definition and emitted-metrics
+  scope.
+- **AAP §0.7.2 (Observability rule)** — mandates this dashboard template
+  alongside structured logging, correlation IDs, the metrics endpoint,
+  and the readiness probes.
+- **Source of truth — service**:
+  `apps/api/src/app/ai-chat/ai-chat.service.ts`. Specifically, metric
+  registrations are at lines 207, 211, 215; emission sites are at lines
+  330 (first-token latency), 389 (tool invocations), 460 (success
+  outcome), 474 (cancelled outcome), 496 (error outcome).
+- **Source of truth — metrics registry**:
+  `apps/api/src/app/metrics/metrics.service.ts`. Default histogram
+  buckets (in seconds) are
+  `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`.
+- **Spec coverage**: `apps/api/src/app/ai-chat/ai-chat.service.spec.ts`
+  asserts that all three metrics are registered with the expected
+  `registerHelp` strings and that label values are restricted to the
+  enumerations above.
 
-The intended audience is on-call SREs and platform engineers verifying:
+## Emitted Metrics — Authoritative Reference
 
-1. **First-token latency** — the user-facing performance metric for streaming endpoints. The localhost gate is **≤ 3 s** (per AAP § 0.7.5.2 Chat agent gate); the dashboard surfaces p50/p95/p99 quantiles of this distribution.
-2. **End-to-end stream duration** — total time from request receipt to stream close, which captures the full Claude generation including all tool round-trips. Unlike first-token latency, stream duration scales with the size of the model's response and is reported separately.
-3. **Token throughput** — separate counters for input and output tokens consumed per request, sourced from the Anthropic SDK `usage.input_tokens` and `usage.output_tokens` fields emitted at stream end. Useful for cost and capacity tracking.
-4. **Tool-call distribution** — counter of invocations of each of the four tools, useful for catching prompt drift, tool-schema regressions, or system-prompt edits that quietly stop triggering one of the tools.
-5. **SSE error rate** — the server-side baseline counterpart of **Rule 6 — SSE Disconnection Handling** (AAP § 0.7.1.6). The browser-side requirement is that `ChatPanelComponent` MUST render a non-empty `errorMessage` and a visible reconnect button when the SSE stream terminates with an error; the corresponding server-side metric is `ai_chat_sse_error_total`. Watching this counter lets operators correlate user-visible reconnect events with backend faults.
-6. **Anthropic API health** — readiness probe at `GET /api/v1/health/anthropic` (configuration probe only; does not consume API tokens), implemented in `apps/api/src/app/health/anthropic-health.indicator.ts` per AAP § 0.5.1.2. A complementary panel can pin this probe's status alongside the streaming metrics.
-7. **Model-version distribution** — the `ANTHROPIC_MODEL` environment variable (per AAP § 0.7.3) overrides the default Claude model identifier; tracking the `model` label value lets operators verify canary rollouts and detect cache-poisoning or hot-deploy races where two model values appear simultaneously.
+| Metric                                | Type      | Labels                                                                                            | HELP text                                                                            |
+| ------------------------------------- | --------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `ai_chat_streams_total`               | counter   | `outcome` ∈ {`success`, `error`, `cancelled`}                                                     | Total chat streams completed by terminal outcome (success, error, cancelled).        |
+| `ai_chat_first_token_latency_seconds` | histogram | (none — single user-experience signal)                                                            | Latency in seconds between request start and the first text token emitted by Claude. |
+| `ai_chat_tool_invocations_total`      | counter   | `tool` ∈ {`get_current_positions`, `get_performance_metrics`, `query_history`, `get_market_data`} | Total chat-tool invocations dispatched, labelled by tool name.                       |
 
-### Streaming vs. non-streaming distinction
-
-This dashboard's primary user-facing latency metric is **first-token latency** (Panel 2), measured from request receipt to first SSE chunk emission. End-to-end stream duration is also tracked but it is **not** the leading indicator of perceived chat responsiveness — once tokens are streaming, the user sees forward progress.
-
-By contrast, the rebalancing dashboard (`docs/observability/ai-rebalancing.md`) uses **total request latency** as its primary metric because that endpoint is non-streaming and returns a single JSON body sourced exclusively from a `tool_use` content block (Rule 4 — AAP § 0.7.1.4). When debugging, reach for the dashboard whose primary latency metric matches the endpoint's transport.
-
----
+The histogram exposes the canonical Prometheus suffixes
+`_bucket{le="..."}`, `_sum`, and `_count`; the
+`MetricsService.getRegistryAsText()` renderer pre-populates every default
+bucket so that PromQL `histogram_quantile()` calls work from the first
+observation onwards.
 
 ## Recommended Panels
 
-The dashboard SHOULD include exactly the following seven panels, in the order documented here. The JSON definition in the [JSON Dashboard Definition](#json-dashboard-definition) section below provides a 1:1 importable mapping.
+The dashboard ships with six panels grouped into three rows. The top
+row covers user-perceived latency (the headline SLI), the middle row
+covers terminal stream outcomes (success / error / cancellation), and
+the bottom row covers tool dispatch volume.
 
-### Panel 1 — Chat-Token Throughput
+| #   | Panel                                 | Type                  | Primary Metric                               | Example PromQL                                                                                                  |
+| --- | ------------------------------------- | --------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 1   | First-Token Latency (p50 / p95 / p99) | Time series           | `ai_chat_first_token_latency_seconds`        | `histogram_quantile(0.95, sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m])))`                  |
+| 2   | First-Token Latency Distribution      | Heatmap               | `ai_chat_first_token_latency_seconds_bucket` | `sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m]))`                                            |
+| 3   | Stream Outcome Distribution           | Time series (stacked) | `ai_chat_streams_total`                      | `sum by (outcome) (rate(ai_chat_streams_total[5m]))`                                                            |
+| 4   | Stream Error Rate                     | Stat (single-value)   | `ai_chat_streams_total{outcome="error"}`     | `sum(rate(ai_chat_streams_total{outcome="error"}[5m])) / clamp_min(sum(rate(ai_chat_streams_total[5m])), 1e-9)` |
+| 5   | Tool-Call Distribution                | Bar chart             | `ai_chat_tool_invocations_total`             | `sum by (tool) (increase(ai_chat_tool_invocations_total[1h]))`                                                  |
+| 6   | Tool Invocation Rate                  | Time series           | `ai_chat_tool_invocations_total`             | `sum by (tool) (rate(ai_chat_tool_invocations_total[5m]))`                                                      |
 
-| Field                   | Value                                                                                                                                                                                                                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**          | `timeseries` (multi-series — one line per direction)                                                                                                                                                                                                                                                 |
-| **Metric names**        | `ai_chat_input_tokens_total` (counter), `ai_chat_output_tokens_total` (counter)                                                                                                                                                                                                                      |
-| **Example expressions** | `sum(rate(ai_chat_input_tokens_total[1m]))` and `sum(rate(ai_chat_output_tokens_total[1m]))`                                                                                                                                                                                                         |
-| **Thresholds**          | Informational. Alert if `output_tokens_total` rate drops to `0` while `input_tokens_total` rate is non-zero — see `AiChatOutputTokenRateZero` below — because that pattern strongly suggests Anthropic-side throttling, an authentication fault, or an SDK error before any output token is emitted. |
+### Panel 1 — First-Token Latency (p50 / p95 / p99)
 
-**Description.** Separate counters for input tokens and output tokens consumed per request, aggregated per minute. Sourced from the Anthropic SDK `usage.input_tokens` / `usage.output_tokens` fields that are populated on the final streamed message event. The two counters together provide a cost and throughput signal: input tokens scale with system-prompt size (which grows with portfolio complexity per the personalization read path), while output tokens scale with the answer length the model decides to produce.
+The headline SLI for the chat experience. `ai_chat_first_token_latency_seconds`
+is observed exactly once per stream, when the first text token from Claude
+is forwarded to the Server-Sent Events response (`ai-chat.service.ts:330`).
+The panel renders three series — p50, p95, p99 — over a five-minute
+rolling window, computed via `histogram_quantile()` against the
+bucket counter. Recommended visual threshold: green ≤ 1 s, amber
+1 s–3 s, red > 3 s on the p95 series. The 3 s threshold matches the
+acceptance gate in AAP §0.7.5.2 ("the first SSE token arrives within
+3 seconds on localhost with valid credentials").
 
-### Panel 2 — First-Token Latency
+### Panel 2 — First-Token Latency Distribution (Heatmap)
 
-| Field                        | Value                                                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**               | `timeseries` with p50 / p95 / p99 lines                                                                                                                          |
-| **Metric name**              | `ai_chat_first_token_latency_seconds` (histogram)                                                                                                                |
-| **Example expression (p95)** | `histogram_quantile(0.95, sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m])))`                                                                   |
-| **Thresholds**               | p50 ≤ 1.5 s; **p95 ≤ 3 s on localhost** (per AAP § 0.7.5.2 Chat agent gate); p99 ≤ 8 s. Alert if p95 exceeds 5 s for 10 minutes (`AiChatFirstTokenLatencyHigh`). |
+A heatmap of `ai_chat_first_token_latency_seconds_bucket` over time
+provides operators with a richer view than the quantile lines alone —
+shifts in the bucket distribution (e.g., a cluster of observations
+moving from the `le="0.5"` bucket to the `le="2.5"` bucket without
+breaching p95) flag emerging upstream slowness before SLO breaches.
+The heatmap reuses the same default buckets:
+`[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` seconds.
 
-**Description.** Histogram of time elapsed from `POST /api/v1/ai/chat` request receipt to first SSE token emission. The 3 s p95 figure reflects the localhost gate documented in the AAP; production targets may differ based on the network distance to `api.anthropic.com` and the size of the personalization context. Slow personalization fetches (Panel 7) directly elongate this metric — whenever this panel regresses, inspect Panel 7 first.
+### Panel 3 — Stream Outcome Distribution
 
-### Panel 3 — Tool-Call Distribution by Tool Name
+Stacked time series of `ai_chat_streams_total` partitioned by the
+`outcome` label. Operators can see at a glance the composition of
+terminal stream outcomes — `success` should dominate during steady
+state, `cancelled` may rise during routine UI navigation (subscriber
+unsubscribes), and a sustained increase in `error` is the principal
+incident signal for the chat feature.
 
-| Field                  | Value                                                                                                                                                                                                                                                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `barchart` (or `piechart`); use the `$tool` template variable to filter                                                                                                                                                                                                                                     |
-| **Metric name**        | `ai_chat_tool_invocation_total` (counter, labeled by `tool=get_current_positions\|get_performance_metrics\|query_history\|get_market_data`)                                                                                                                                                                 |
-| **Example expression** | `sum by (tool) (rate(ai_chat_tool_invocation_total[5m]))`                                                                                                                                                                                                                                                   |
-| **Thresholds**         | Informational. Alert if any of the four tools has zero invocations over 24 h while overall chat traffic is non-zero (`AiChatToolDistributionAnomaly`) — that pattern indicates either a system-prompt regression that stopped triggering the tool, or a tool-schema change the model can no longer satisfy. |
+### Panel 4 — Stream Error Rate
 
-**Description.** Counter of invocations of each of the four chat tools — `get_current_positions`, `get_performance_metrics`, `query_history`, and `get_market_data` — emitted from `AiChatService.dispatchTool(...)`. Useful for spotting prompt drift after a system-prompt edit, for verifying that newly-added tool schemas are reachable by the model, and for analyzing which tools dominate cost and latency over time.
+`error` outcome rate divided by total stream rate — a single-value
+percentage that maps directly to the chat feature's reliability SLO.
+The expression uses `clamp_min(..., 1e-9)` in the denominator to avoid
+division-by-zero when no streams are in flight. Recommended thresholds:
+green ≤ 1 %, amber 1 %–5 %, red > 5 %. A sustained breach of the red
+threshold should trigger paging via the `AiChatStreamErrorRateHigh`
+rule below.
 
-### Panel 4 — SSE Error Rate
+### Panel 5 — Tool-Call Distribution
 
-| Field                  | Value                                                                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `timeseries` (stacked by `error_class`)                                                                                            |
-| **Metric name**        | `ai_chat_sse_error_total` (counter, labeled by `error_class=client_disconnect\|anthropic_error\|tool_dispatch_error\|unknown`)     |
-| **Example expression** | `sum by (error_class) (rate(ai_chat_sse_error_total[5m])) / ignoring(error_class) group_left sum(rate(ai_chat_request_total[5m]))` |
-| **Thresholds**         | Alert if total SSE error rate exceeds 5% over a 15-minute window (`AiChatSseErrorRateHigh`).                                       |
+`sum by (tool) (increase(ai_chat_tool_invocations_total[1h]))` bar
+chart showing the relative volume of each of the four registered
+chat tools over the previous hour. Useful to spot regressions in the
+agent's tool selection — for example, an extended period in which
+`query_history` is never invoked despite user questions about
+historical performance suggests the Snowflake history tool is being
+silently bypassed.
 
-**Description.** Counter for streams that terminate with an error. This is the server-side baseline metric for **Rule 6 — SSE Disconnection Handling** (AAP § 0.7.1.6): the client (`ChatPanelComponent`) MUST render a non-empty `errorMessage` and a visible reconnect button when the SSE stream terminates with an error, and this panel surfaces how often that user-visible flow is being triggered. The `client_disconnect` label captures cases where the browser closed the stream (often a tab close or navigation), `anthropic_error` captures upstream Anthropic API failures, `tool_dispatch_error` captures failures inside `AiChatService.dispatchTool(...)` while satisfying a Claude tool call, and `unknown` is the catch-all.
+### Panel 6 — Tool Invocation Rate
 
-### Panel 5 — Model-Version Histogram
-
-| Field                  | Value                                                                                                                                                                                                                                              |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Panel type**         | `barchart` (or `piechart`)                                                                                                                                                                                                                         |
-| **Metric name**        | `ai_chat_request_total` (counter, labeled by `model=<anthropic_model_id>`)                                                                                                                                                                         |
-| **Example expression** | `sum by (model) (rate(ai_chat_request_total[5m]))`                                                                                                                                                                                                 |
-| **Thresholds**         | Informational. Alert if multiple distinct `model` label values appear simultaneously when only one is configured — that pattern indicates a hot-deploy race or a stale-cache poisoning where two replicas disagree on the Claude model identifier. |
-
-**Description.** Distribution of Anthropic model identifiers used by the streaming endpoint. The model is configurable via the `ANTHROPIC_MODEL` environment variable (per AAP § 0.7.3) and the service reads it exclusively through `ConfigService` — no `process.env.ANTHROPIC` access is permitted in new module files (Rule 3 — AAP § 0.7.1.3). Tracking the `model` label enables canary analysis (split traffic across two model versions during a rollout) and rollout verification (confirm a configuration change has propagated to all replicas).
-
-### Panel 6 — End-to-End Stream Duration
-
-| Field                        | Value                                                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Panel type**               | `timeseries` with p50 / p95 / p99 lines (a `heatmap` is also acceptable for fine-grained inspection)         |
-| **Metric name**              | `ai_chat_stream_duration_seconds` (histogram)                                                                |
-| **Example expression (p95)** | `histogram_quantile(0.95, sum by (le) (rate(ai_chat_stream_duration_seconds_bucket[5m])))`                   |
-| **Thresholds**               | p50 ≤ 8 s; p95 ≤ 25 s; p99 ≤ 60 s. Alert if p95 exceeds 45 s for 10 minutes (`AiChatStreamDurationP95High`). |
-
-**Description.** Histogram of total time from request receipt to stream close. Captures the full Claude generation including all tool round-trips (one round-trip per `tool_use`/`tool_result` pair). Unlike Panel 2 (first-token latency, the user-perceived responsiveness signal), this metric scales with answer length and tool-call depth. Watch this panel when the chat "feels fine" but is taking unusually long to finish — the model may be looping through tool calls or producing a much longer response than expected.
-
-### Panel 7 — Personalization Data Fetch Latency
-
-| Field                        | Value                                                                                                              |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **Panel type**               | `timeseries` (one line per `source`)                                                                               |
-| **Metric name**              | `ai_chat_personalization_fetch_seconds` (histogram, labeled by `source=user_financial_profile\|portfolio_details`) |
-| **Example expression (p95)** | `histogram_quantile(0.95, sum by (le, source) (rate(ai_chat_personalization_fetch_seconds_bucket[5m])))`           |
-| **Thresholds**               | p95 ≤ 500 ms per source. Alert if p95 exceeds 1 s for 10 minutes (`AiChatPersonalizationLatencyHigh`).             |
-
-**Description.** Histogram of `UserFinancialProfileService.findByUserId(userId)` and `PortfolioService.getDetails({...})` call duration in the system-prompt build path. Both reads execute on every chat request to personalize the system prompt with the caller's `FinancialProfile` (goals, risk tolerance, income, debt) and current portfolio state. Slow personalization fetches directly inflate first-token latency (Panel 2) one-for-one, so this is the first place to look when first-token p95 regresses without a corresponding upstream Anthropic latency change.
-
----
+`sum by (tool) (rate(ai_chat_tool_invocations_total[5m]))` time
+series. Complements the bar chart by showing trend rather than
+aggregate volume. Sudden spikes in any single tool (especially
+`query_history`) may correlate with Snowflake load events.
 
 ## Alert Rules
 
-The following Prometheus alert rules are recommended. They map 1:1 to the panel thresholds documented above. Operators can drop the YAML block below into a Prometheus rules file (e.g., `prometheus/rules/ai-chat.yml`) and reload Prometheus.
+Recommended Prometheus alerting rules. Adjust thresholds and `for`
+windows for the operating environment.
 
 ```yaml
 groups:
-  - name: ghostfolio-ai-chat
-    interval: 30s
+  - name: ai-chat
     rules:
       - alert: AiChatFirstTokenLatencyHigh
         expr: |
           histogram_quantile(
             0.95,
             sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m]))
-          ) > 5
+          ) > 3
         for: 10m
         labels:
-          severity: warning
-          team: platform
+          severity: page
           feature: ai-chat
         annotations:
-          summary: 'AI Chat first-token latency p95 above 5 s for 10 minutes'
+          summary: 'AI Chat first-token latency p95 above 3 s'
           description: |
-            The 95th percentile of ai_chat_first_token_latency_seconds is currently
-            {{ $value | humanizeDuration }}, exceeding the 5 s alerting threshold
-            for 10 minutes. Inspect Panel 7 (personalization fetch latency) and the
-            Anthropic API health probe at /api/v1/health/anthropic. The localhost
-            gate target documented in AAP § 0.7.5.2 is p95 ≤ 3 s.
-          runbook_url: 'docs/observability/ai-chat.md#panel-2--first-token-latency'
+            ai_chat_first_token_latency_seconds p95 has exceeded 3 s for
+            10 minutes. The 3 s threshold is the acceptance gate from
+            AAP §0.7.5.2. Check Anthropic API status, the
+            /api/v1/health/anthropic probe, and the application logs
+            (filter by [AiChatService] and the affected correlationId).
 
-      - alert: AiChatSseErrorRateHigh
+      - alert: AiChatStreamErrorRateHigh
         expr: |
-          (
-            sum(rate(ai_chat_sse_error_total[15m]))
+          sum(rate(ai_chat_streams_total{outcome="error"}[5m]))
             /
-            sum(rate(ai_chat_request_total[15m]))
-          ) > 0.05
-        for: 15m
-        labels:
-          severity: warning
-          team: platform
-          feature: ai-chat
-        annotations:
-          summary: 'AI Chat SSE error rate above 5% for 15 minutes'
-          description: |
-            More than 5% of AI Chat streams are terminating with an error.
-            Browser-side users are seeing the reconnect button (Rule 6 —
-            AAP § 0.7.1.6). Group by error_class to identify the dominant
-            cause: client_disconnect (browser closures), anthropic_error
-            (upstream API failures), tool_dispatch_error (tool execution
-            failures in AiChatService.dispatchTool), or unknown.
-          runbook_url: 'docs/observability/ai-chat.md#panel-4--sse-error-rate'
-
-      - alert: AiChatStreamDurationP95High
-        expr: |
-          histogram_quantile(
-            0.95,
-            sum by (le) (rate(ai_chat_stream_duration_seconds_bucket[5m]))
-          ) > 45
+          clamp_min(sum(rate(ai_chat_streams_total[5m])), 1e-9)
+            > 0.05
         for: 10m
         labels:
-          severity: warning
-          team: platform
+          severity: page
           feature: ai-chat
         annotations:
-          summary: 'AI Chat stream duration p95 above 45 s for 10 minutes'
+          summary: 'AI Chat stream error rate above 5%'
           description: |
-            The 95th percentile of ai_chat_stream_duration_seconds is currently
-            {{ $value | humanizeDuration }}, exceeding the 45 s alerting threshold
-            for 10 minutes. Investigate whether the model is looping through tool
-            calls (Panel 3) or producing unusually long responses (correlate with
-            ai_chat_output_tokens_total trend in Panel 1).
-          runbook_url: 'docs/observability/ai-chat.md#panel-6--end-to-end-stream-duration'
+            More than 5 % of chat streams have terminated in the
+            error outcome over the last 10 minutes. Inspect the
+            structured logs ([AiChatService] chat stream error) and
+            cross-reference correlationId values with Anthropic-side
+            telemetry. Likely root causes: invalid ANTHROPIC_API_KEY,
+            Anthropic outage, or a regression in tool dispatch.
 
-      - alert: AiChatPersonalizationLatencyHigh
+      - alert: AiChatStreamCancellationSpike
         expr: |
-          histogram_quantile(
-            0.95,
-            sum by (le, source) (rate(ai_chat_personalization_fetch_seconds_bucket[5m]))
-          ) > 1
-        for: 10m
+          sum(rate(ai_chat_streams_total{outcome="cancelled"}[5m]))
+            /
+          clamp_min(sum(rate(ai_chat_streams_total[5m])), 1e-9)
+            > 0.5
+        for: 5m
         labels:
           severity: warning
-          team: platform
           feature: ai-chat
         annotations:
-          summary: 'AI Chat personalization fetch p95 above 1 s for 10 minutes'
+          summary: 'AI Chat cancellation rate above 50%'
           description: |
-            UserFinancialProfileService.findByUserId or PortfolioService.getDetails
-            is taking longer than 1 s at p95 to satisfy the per-request system-prompt
-            build path. This directly inflates first-token latency (Panel 2). Check
-            Postgres connection pool saturation and the portfolio cache hit rate.
-          runbook_url: 'docs/observability/ai-chat.md#panel-7--personalization-data-fetch-latency'
+            Over half of recent chat streams ended in the cancelled
+            outcome. Cancellation is normal when users navigate away
+            mid-stream, but a sustained majority is consistent with
+            a client-side defect (e.g., the chat panel re-mounting
+            and tearing down EventSource on every render). Inspect
+            ChatPanelComponent and recent client deploys.
 
-      - alert: AiChatToolDistributionAnomaly
+      - alert: AiChatNoActivity
         expr: |
-          (
-            sum by (tool) (increase(ai_chat_tool_invocation_total[24h])) == 0
-          )
-          and on()
-          (
-            sum(increase(ai_chat_request_total[24h])) > 0
-          )
+          sum(rate(ai_chat_streams_total[5m])) == 0
         for: 30m
         labels:
           severity: warning
-          team: platform
           feature: ai-chat
         annotations:
-          summary: 'AI Chat tool {{ $labels.tool }} has zero invocations in 24 h'
+          summary: 'AI Chat has no traffic for 30 minutes'
           description: |
-            Tool {{ $labels.tool }} has not been invoked in the last 24 hours
-            despite chat traffic being non-zero. This typically indicates either
-            a system-prompt regression that no longer triggers the tool or a
-            tool-schema change the model can no longer satisfy. The four expected
-            tools are get_current_positions, get_performance_metrics, query_history,
-            and get_market_data (AAP § 0.5.1.5).
-          runbook_url: 'docs/observability/ai-chat.md#panel-3--tool-call-distribution-by-tool-name'
+            ai_chat_streams_total has not incremented for the last
+            30 minutes. During expected traffic windows this is
+            consistent with the SSE endpoint being unreachable
+            (e.g., reverse-proxy or auth regression). Verify
+            POST /api/v1/ai/chat with a known-good JWT and inspect
+            the application access log.
 
-      - alert: AiChatOutputTokenRateZero
+      - alert: AiChatToolDistributionAnomaly
         expr: |
-          sum(rate(ai_chat_output_tokens_total[5m])) == 0
-          and
-          sum(rate(ai_chat_input_tokens_total[5m])) > 0
-        for: 5m
+          sum by (tool) (rate(ai_chat_tool_invocations_total[1h]))
+            == 0
+            and on(tool)
+          sum by (tool) (rate(ai_chat_tool_invocations_total[24h] offset 1h))
+            > 0
+        for: 30m
         labels:
-          severity: critical
-          team: platform
+          severity: warning
           feature: ai-chat
         annotations:
-          summary: 'AI Chat output token rate is zero while input is non-zero'
+          summary: 'Chat tool {{ $labels.tool }} not invoked for an hour'
           description: |
-            Input tokens are still being submitted to Anthropic but no output
-            tokens are being returned. This pattern strongly suggests Anthropic-side
-            throttling, an authentication fault (rotated or revoked API key), or
-            an SDK error before any tokens are emitted. Verify
-            /api/v1/health/anthropic and inspect ai_chat_sse_error_total
-            for the anthropic_error class.
-          runbook_url: 'docs/observability/ai-chat.md#panel-1--chat-token-throughput'
-
-      - alert: AiChatAnthropicAuthError
-        expr: |
-          sum(increase(ai_chat_sse_error_total{error_class="anthropic_auth_error"}[1m])) > 0
-        for: 0m
-        labels:
-          severity: critical
-          team: platform
-          feature: ai-chat
-        annotations:
-          summary: 'AI Chat received an Anthropic authentication error'
-          description: |
-            One or more requests to api.anthropic.com returned an authentication
-            error. The ANTHROPIC_API_KEY referenced through ConfigService may have
-            been rotated, revoked, or never propagated to this replica. New chats
-            will fail until a valid key is restored. This alert fires immediately
-            (no for: window) because the failure mode is binary and operator
-            attention is required.
-          runbook_url: 'docs/observability/ai-chat.md#panel-4--sse-error-rate'
+            Tool {{ $labels.tool }} has been invoked at least once
+            over the past 24 hours but has had zero invocations for
+            the most recent hour. Consistent with a regression in the
+            agent prompt, the tool schema, or the underlying service
+            (e.g., SnowflakeSyncService for query_history).
 ```
-
-Severity guidance:
-
-- **`critical`** — paging severity. The endpoint is effectively non-functional from a user perspective (no output tokens, or auth is broken).
-- **`warning`** — non-paging severity. The endpoint is degraded but still serving requests; investigate during business hours unless the trend continues.
-
----
 
 ## Local Development Verification
 
-The AAP § 0.7.2 Observability rule mandates that observability MUST be exercised in the local development environment. The following eight-step checklist walks an operator through that verification end-to-end.
+The following procedure exercises every metric in the local
+development environment, satisfying the AAP §0.7.2 Observability
+mandate that "all observability MUST be exercised in the local
+development environment."
 
-1. **Start the local Ghostfolio API.** A working Postgres + Redis stack is required (e.g., `docker compose -f docker/docker-compose.dev.yml up -d`). Then start the API process:
+1. **Bring up the API.** From the repository root, start Postgres and
+   Redis (`docker compose -f docker/docker-compose.dev.yml up -d`),
+   then start the API in development mode
+   (`npx nx serve api`). Wait for the bootstrap log line
+   `Nest application successfully started`.
+2. **Mint a development JWT.** Create a user via
+   `POST /api/v1/user` (no body required), capture the returned
+   `authToken`, and export it as `JWT=...` in the shell.
+3. **Confirm the registry is populated with the expected HELP lines.**
 
-   ```sh
-   npm run start:api
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^# (HELP|TYPE) ai_chat_'
    ```
 
-   The Nx process should report `🚀 Application is running on: http://localhost:3333/api`. The `/api/v1` URI version is configured globally in `apps/api/src/main.ts`.
-
-2. **Confirm the metrics endpoint returns 200.** The metrics registry from `MetricsModule` (per AAP § 0.5.1.2) emits Prometheus-formatted counters and histograms:
-
-   ```sh
-   curl -i http://localhost:3333/api/v1/metrics
-   ```
-
-   Expect `HTTP/1.1 200 OK` and a body containing one `# HELP` / `# TYPE` line per metric followed by the metric samples. At first start (before any chat request), the AI Chat counters will all read zero — that is expected.
-
-3. **Confirm the Anthropic health probe returns 200.** The probe is implemented in `apps/api/src/app/health/anthropic-health.indicator.ts` per AAP § 0.5.1.2 and is a configuration probe only — it does NOT call `api.anthropic.com` and therefore consumes no API tokens:
-
-   ```sh
-   curl -i http://localhost:3333/api/v1/health/anthropic
-   ```
-
-   Expect `HTTP/1.1 200 OK` with a body of the form `{"status":"up","details":{"anthropic":{"status":"up"}}}`. If the probe returns 503, verify that `ANTHROPIC_API_KEY` is set in `.env` (development) and resolved through `ConfigService` at boot.
-
-4. **Issue a sample SSE request and observe the stream.** Use `curl -N` (no output buffering) so SSE chunks are flushed to the terminal as they arrive:
-
-   ```sh
-   curl -N -X POST http://localhost:3333/api/v1/ai/chat \
-     -H "Authorization: Bearer <jwt>" \
-     -H "Content-Type: application/json" \
-     -H "Accept: text/event-stream" \
-     -d '{"messages":[{"role":"user","content":"What are my current positions?"}]}'
-   ```
-
-   Verify the response begins with the headers:
+   Expected output (order may vary):
 
    ```text
-   HTTP/1.1 200 OK
-   Content-Type: text/event-stream
-   Cache-Control: no-cache
-   Connection: keep-alive
+   # HELP ai_chat_first_token_latency_seconds Latency in seconds between request start and the first text token emitted by Claude.
+   # TYPE ai_chat_first_token_latency_seconds histogram
+   # HELP ai_chat_streams_total Total chat streams completed by terminal outcome (success, error, cancelled).
+   # TYPE ai_chat_streams_total counter
+   # HELP ai_chat_tool_invocations_total Total chat-tool invocations dispatched, labelled by tool name.
+   # TYPE ai_chat_tool_invocations_total counter
    ```
 
-   The `Content-Type: text/event-stream` header is the marker for streaming responses and is the expectation enforced by the Chat agent gate in AAP § 0.7.5.2. Substitute `<jwt>` with a JWT obtained from the Ghostfolio login flow (e.g., `POST /api/v1/auth/anonymous`).
+4. **Issue a chat request.** With a valid `ANTHROPIC_API_KEY` exported,
+   open an SSE stream:
 
-5. **Verify the first SSE token arrives within 3 seconds.** The Chat agent gate in AAP § 0.7.5.2 requires the first SSE token to arrive within **3 seconds on localhost** with valid credentials. Time the wall-clock latency between the `curl` invocation and the first `data: {...}` line printed to the terminal — for example, with `time` and a small Node helper, or by redirecting the stream into a script that timestamps each chunk. Sustained values above 3 s are a regression and should be investigated against Panel 2 and the personalization fetch panel (Panel 7).
-
-6. **Re-fetch `/api/v1/metrics` and confirm the AI Chat counters incremented.** Run the metrics curl again and confirm the following changes from step 2:
-
-   ```sh
-   curl -s http://localhost:3333/api/v1/metrics | grep -E '^ai_chat_'
+   ```bash
+   curl -N -H "Authorization: Bearer $JWT" \
+        -H "Content-Type: application/json" \
+        -X POST http://localhost:3333/api/v1/ai/chat \
+        -d '{"messages":[{"role":"user","content":"Show my current positions"}]}'
    ```
 
-   Expected:
-   - `ai_chat_request_total{...}` has incremented by **1**.
-   - `ai_chat_input_tokens_total` has a non-zero value (the system prompt was sent to Anthropic, consuming input tokens).
-   - `ai_chat_output_tokens_total` has a non-zero value (Claude produced response tokens).
-   - At least one `ai_chat_tool_invocation_total{tool="get_current_positions"}` sample has incremented (the user prompt explicitly asked about positions, so the agent should have called that tool).
-   - `ai_chat_sse_error_total{...}` has **NOT** incremented (the stream completed successfully).
-   - `ai_chat_first_token_latency_seconds_count` and `ai_chat_stream_duration_seconds_count` have both incremented by 1.
+   Allow the stream to complete (Ctrl-C after the final
+   `data: [DONE]` event). The chat agent will likely dispatch
+   `get_current_positions` at least once, exercising the tool-call
+   counter.
 
-7. **Disconnect the client mid-stream to verify Rule 6 telemetry.** Re-run step 4 but interrupt the curl with `Ctrl+C` before the stream finishes. Then re-fetch `/api/v1/metrics` and confirm:
+5. **Observe `ai_chat_streams_total` increment.** Re-scrape the
+   metrics endpoint and confirm an entry for
+   `outcome="success"` (or `"error"` if the request failed):
 
-   ```sh
-   curl -s http://localhost:3333/api/v1/metrics | grep '^ai_chat_sse_error_total'
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^ai_chat_streams_total\{'
    ```
 
-   The series `ai_chat_sse_error_total{error_class="client_disconnect"}` MUST have incremented. This is the server-side baseline of Rule 6 (AAP § 0.7.1.6) — the browser-side `ChatPanelComponent` will set `errorMessage` to a non-empty string and render the reconnect button when the corresponding browser-side `EventSource` `error` handler fires.
+   Expected (sample):
 
-8. **Import the JSON dashboard definition into a local Grafana.** Open Grafana at `http://localhost:3000`, navigate to **Dashboards → New → Import**, paste the JSON block from the [JSON Dashboard Definition](#json-dashboard-definition) section below, select the Prometheus datasource that scrapes `/api/v1/metrics`, and click **Import**. Confirm that all seven panels render data after a few minutes of scrape activity (the panels will appear empty until at least one scrape interval after step 6).
+   ```text
+   ai_chat_streams_total{outcome="success"} 1
+   ```
 
-After completing all eight steps, the dashboard is verified end-to-end against the local development environment, satisfying the AAP § 0.7.2 mandate.
+6. **Observe `ai_chat_first_token_latency_seconds` populate.** The
+   histogram exposes its full bucket ladder plus `_sum` and
+   `_count`:
 
----
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^ai_chat_first_token_latency_seconds(_bucket|_sum|_count)'
+   ```
+
+   Expected to show every default bucket
+   (`le="0.005"` through `le="10"` and `le="+Inf"`) plus
+   non-zero `_sum` and `_count` after one observation.
+
+7. **Observe `ai_chat_tool_invocations_total` increment.** If the
+   chat agent dispatched any tool during the request:
+
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^ai_chat_tool_invocations_total\{'
+   ```
+
+   Expected (one line per tool actually dispatched):
+
+   ```text
+   ai_chat_tool_invocations_total{tool="get_current_positions"} 1
+   ```
+
+8. **Trigger the cancellation path.** Issue another chat request and
+   abort the SSE stream client-side before completion (`Ctrl-C`
+   immediately after the first event). Re-scrape the metrics and
+   confirm an entry for `outcome="cancelled"`.
+
+9. **Trigger the error path.** Restart the API with
+   `ANTHROPIC_API_KEY=invalid` (or any value that triggers an
+   Anthropic 401), issue another chat request, and confirm
+   `outcome="error"` increments. The HTTP 502 / SSE error frame
+   contract is also exercised by the `ChatPanelComponent` Rule 6
+   reconnect button.
+
+If any of the steps above does not produce the expected line, the
+dashboard cannot render correctly. Inspect the structured logs (each
+line is prefixed with `[AiChatService] [<correlationId>]`) and the
+service source (`ai-chat.service.ts`) before declaring the dashboard
+broken.
 
 ## JSON Dashboard Definition
 
-The following JSON is a complete, self-contained Grafana dashboard definition mapping 1:1 to the seven Recommended Panels above. It can be imported into a stock Grafana 9+ instance via **Dashboards → New → Import → Paste JSON**. The `datasource.uid` placeholder of `"Prometheus"` should be reconciled with the UID of the Prometheus datasource provisioned in your Grafana instance (visible at **Connections → Data sources → Prometheus → uid**).
+A self-contained Grafana 9+ dashboard ready for import. Datasource
+UID is parameterised via `${DS_PROMETHEUS}` — replace with the
+local datasource UID before import.
 
 ```json
 {
-  "title": "Ghostfolio — AI Portfolio Chat Agent",
-  "uid": "gf-ai-chat",
+  "title": "AI Portfolio Chat",
+  "tags": ["ghostfolio", "ai-chat", "ai", "blitzy"],
   "schemaVersion": 38,
   "version": 1,
-  "editable": true,
-  "graphTooltip": 1,
-  "tags": ["ghostfolio", "ai-chat", "observability", "claude", "sse"],
-  "time": { "from": "now-6h", "to": "now" },
   "refresh": "30s",
-  "annotations": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
   "templating": {
     "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
       {
         "name": "tool",
         "label": "Tool",
         "type": "query",
-        "query": "label_values(ai_chat_tool_invocation_total, tool)",
-        "datasource": { "type": "prometheus", "uid": "Prometheus" },
-        "refresh": 1,
-        "multi": true,
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(ai_chat_tool_invocations_total, tool)",
         "includeAll": true,
-        "current": { "selected": true, "text": "All", "value": "$__all" }
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
       }
     ]
   },
   "panels": [
     {
       "id": 1,
-      "title": "Chat-Token Throughput",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "description": "Input vs output token rate (tokens/sec). Sourced from Anthropic SDK usage.input_tokens / usage.output_tokens at stream end.",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(ai_chat_input_tokens_total[1m]))",
-          "legendFormat": "input tokens/s"
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(ai_chat_output_tokens_total[1m]))",
-          "legendFormat": "output tokens/s"
-        }
-      ]
-    },
-    {
-      "id": 2,
       "title": "First-Token Latency (p50 / p95 / p99)",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "description": "Time from POST /api/v1/ai/chat receipt to first SSE token. Localhost gate: p95 ≤ 3 s (AAP § 0.7.5.2).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 3 },
-              { "color": "red", "value": 5 }
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 3 }
             ]
           }
         },
         "overrides": []
       },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m])))",
           "legendFormat": "p50"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m])))",
           "legendFormat": "p95"
         },
         {
           "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "expr": "histogram_quantile(0.99, sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m])))",
           "legendFormat": "p99"
         }
-      ]
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
     },
     {
-      "id": 3,
-      "title": "Tool-Call Distribution by Tool Name",
-      "type": "barchart",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "description": "Invocations of get_current_positions, get_performance_metrics, query_history, get_market_data (AAP § 0.5.1.5).",
+      "id": 2,
+      "type": "heatmap",
+      "title": "First-Token Latency Distribution",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "fieldConfig": {
-        "defaults": { "unit": "short" },
+        "defaults": { "unit": "s" },
         "overrides": []
-      },
-      "options": {
-        "orientation": "horizontal",
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single" }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (tool) (rate(ai_chat_tool_invocation_total{tool=~\"$tool\"}[5m]))",
-          "legendFormat": "{{tool}}"
+          "expr": "sum by (le) (rate(ai_chat_first_token_latency_seconds_bucket[5m]))",
+          "format": "heatmap",
+          "legendFormat": "{{le}}"
         }
-      ]
+      ],
+      "options": {
+        "calculate": false,
+        "yAxis": { "unit": "s" }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Stream Outcome Distribution (rate / 5m)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "stacking": { "mode": "normal" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "green" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "error" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "red" }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "cancelled" },
+            "properties": [
+              {
+                "id": "color",
+                "value": { "mode": "fixed", "fixedColor": "yellow" }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(ai_chat_streams_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
     },
     {
       "id": 4,
-      "title": "SSE Error Rate (Rule 6 baseline)",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "description": "Streams that terminate with an error, by error_class. Server-side baseline of Rule 6 (AAP § 0.7.1.6).",
+      "type": "stat",
+      "title": "Stream Error Rate",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 20,
-            "stacking": { "mode": "normal", "group": "A" }
-          },
+          "min": 0,
+          "max": 1,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.02 },
+              { "color": "yellow", "value": 0.01 },
               { "color": "red", "value": 0.05 }
             ]
           }
         },
         "overrides": []
       },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (error_class) (rate(ai_chat_sse_error_total[5m])) / ignoring(error_class) group_left sum(rate(ai_chat_request_total[5m]))",
-          "legendFormat": "{{error_class}}"
+          "expr": "sum(rate(ai_chat_streams_total{outcome=\"error\"}[5m])) / clamp_min(sum(rate(ai_chat_streams_total[5m])), 1e-9)",
+          "legendFormat": "error rate"
         }
-      ]
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area"
+      }
     },
     {
       "id": 5,
-      "title": "Model-Version Histogram (ANTHROPIC_MODEL)",
       "type": "barchart",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "description": "Distribution of Anthropic model identifiers via the ANTHROPIC_MODEL env var (AAP § 0.7.3). Read exclusively through ConfigService (Rule 3).",
+      "title": "Tool-Call Distribution (last 1h)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
       "fieldConfig": {
         "defaults": { "unit": "short" },
         "overrides": []
       },
-      "options": {
-        "orientation": "horizontal",
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "single" }
-      },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum by (model) (rate(ai_chat_request_total[5m]))",
-          "legendFormat": "{{model}}"
+          "expr": "sum by (tool) (increase(ai_chat_tool_invocations_total{tool=~\"$tool\"}[1h]))",
+          "legendFormat": "{{tool}}",
+          "instant": true
         }
-      ]
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
     },
     {
       "id": 6,
-      "title": "End-to-End Stream Duration (p50 / p95 / p99)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "description": "Total time from request receipt to stream close. Captures full Claude generation including all tool round-trips.",
+      "title": "Tool Invocation Rate (per 5m)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
       "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 25 },
-              { "color": "red", "value": 45 }
-            ]
-          }
-        },
+        "defaults": { "unit": "ops" },
         "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(ai_chat_stream_duration_seconds_bucket[5m])))",
-          "legendFormat": "p50"
-        },
-        {
-          "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(ai_chat_stream_duration_seconds_bucket[5m])))",
-          "legendFormat": "p95"
-        },
-        {
-          "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(ai_chat_stream_duration_seconds_bucket[5m])))",
-          "legendFormat": "p99"
+          "expr": "sum by (tool) (rate(ai_chat_tool_invocations_total{tool=~\"$tool\"}[5m]))",
+          "legendFormat": "{{tool}}"
         }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "Personalization Data Fetch Latency (p95)",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
-      "description": "p95 latency of UserFinancialProfileService.findByUserId and PortfolioService.getDetails in the system-prompt build path. Slow personalization directly inflates first-token latency (Panel 2).",
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.5 },
-              { "color": "red", "value": 1 }
-            ]
-          }
-        },
-        "overrides": []
-      },
+      ],
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.95, sum by (le, source) (rate(ai_chat_personalization_fetch_seconds_bucket[5m])))",
-          "legendFormat": "p95 {{source}}"
-        }
-      ]
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "bottom" }
+      }
     }
   ]
 }
 ```
 
----
-
 ## References
 
-- **AAP § 0.7.2 — Observability rule.** The application is not complete until it is observable. Every deliverable MUST include structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, a dashboard template, and local-environment exercise of all of the above.
-- **AAP § 0.7.1.6 — Rule 6 — SSE Disconnection Handling.** `ChatPanelComponent` MUST render a non-empty `errorMessage` and a visible reconnect button when the SSE stream terminates with an error. Silent stream failures with no UI state change are PROHIBITED. Panel 4 of this dashboard is the server-side baseline metric for Rule 6.
-- **AAP § 0.7.5.2 — Chat agent gate.** `POST /api/v1/ai/chat` response has `Content-Type: text/event-stream`; the first SSE token arrives within 3 seconds on localhost with valid credentials; all four tools are present in the `tools` array submitted to the Anthropic SDK. Panel 2 surfaces the first-token target.
-- **AAP § 0.5.1.5 — Chat-Agent Tool Schemas.** The four tools dispatched by `AiChatService.dispatchTool(...)` are `get_current_positions`, `get_performance_metrics`, `query_history`, and `get_market_data`. Panel 3 surfaces their distribution.
-- **AAP § 0.7.3 — `ANTHROPIC_MODEL` env var.** The Claude model identifier is configurable via the `ANTHROPIC_MODEL` environment variable, read exclusively through `ConfigService` (Rule 3). Panel 5 surfaces the resulting `model` label distribution.
-- **`apps/api/src/app/ai-chat/ai-chat.service.ts` — metric emission sites.** The `AiChatService` is responsible for emitting `ai_chat_request_total`, `ai_chat_input_tokens_total`, `ai_chat_output_tokens_total`, `ai_chat_first_token_latency_seconds`, `ai_chat_stream_duration_seconds`, `ai_chat_tool_invocation_total`, `ai_chat_personalization_fetch_seconds`, and `ai_chat_sse_error_total` via the injected `MetricsService`.
-- **`apps/api/src/app/metrics/metrics.controller.ts` — metrics endpoint.** Exposes the in-process metrics registry as Prometheus-format text at `GET /api/v1/metrics`. Created per AAP § 0.5.1.2 alongside `MetricsModule` and `MetricsService`.
-- **`apps/api/src/app/health/anthropic-health.indicator.ts` — health probe.** Exposes a configuration-only readiness probe at `GET /api/v1/health/anthropic` registered additively in `HealthModule`. Created per AAP § 0.5.1.2.
+- **Service** — `apps/api/src/app/ai-chat/ai-chat.service.ts`.
+- **Controller** — `apps/api/src/app/ai-chat/ai-chat.controller.ts`.
+- **Module** — `apps/api/src/app/ai-chat/ai-chat.module.ts`.
+- **Metrics registry** — `apps/api/src/app/metrics/metrics.service.ts`,
+  `apps/api/src/app/metrics/metrics.controller.ts`.
+- **Health probe** — `/api/v1/health/anthropic` (config-only probe;
+  does not exercise outbound Anthropic calls).
+- **Endpoint** — `POST /api/v1/ai/chat` (Server-Sent Events; max 5
+  messages per request per `ChatRequestDto`).
+- **AAP** — §0.1.1 (feature definition), §0.5.1.1 (emitted-metrics
+  scope), §0.7.2 (Observability rule), §0.7.5.2 (3 s first-token
+  acceptance gate).
 
-### Sibling dashboard templates
+### Metric Names (Authoritative List)
 
-- **`docs/observability/snowflake-sync.md`** — Feature A (`SnowflakeSyncModule`) cron + event-listener sync metrics: success rate, sync latency, MERGE row counts, idempotency verification (Rule 7).
-- **`docs/observability/ai-rebalancing.md`** — Feature C (`RebalancingModule`) non-streaming `POST /api/v1/ai/rebalancing` metrics: total request latency (primary), recommendation count per response, warnings rate, structured-output validation failures (Rule 4).
+The dashboard, alerting rules, and verification commands above
+reference **only** the three metric names below. Any metric name not
+appearing in this list is not emitted by `AiChatService` and will
+yield empty Grafana panels if referenced.
+
+- `ai_chat_streams_total` (counter; labels: `outcome`)
+- `ai_chat_first_token_latency_seconds` (histogram; no labels)
+- `ai_chat_tool_invocations_total` (counter; labels: `tool`)
