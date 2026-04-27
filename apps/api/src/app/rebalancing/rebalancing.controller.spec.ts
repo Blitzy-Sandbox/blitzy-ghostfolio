@@ -3,6 +3,7 @@ import type { RequestWithUser } from '@ghostfolio/common/types';
 
 import { HttpStatus } from '@nestjs/common';
 import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
+import type { Response } from 'express';
 
 import { RebalancingRequestDto } from './dtos/rebalancing-request.dto';
 import { RebalancingController } from './rebalancing.controller';
@@ -75,6 +76,27 @@ describe('RebalancingController', () => {
 
   let controller: RebalancingController;
   let rebalancingService: jest.Mocked<RebalancingService>;
+
+  /**
+   * Factory that returns a fresh, minimal `Response` mock per call.
+   *
+   * The controller injects `@Res({ passthrough: true }) response: Response`
+   * (added per QA Checkpoint 11 Issue 4 / AAP § 0.7.2 Observability rule
+   * to expose `X-Correlation-ID` to clients). The only `Response` API
+   * touched by the controller is `setHeader(name, value)`; we capture
+   * it as a `jest.fn()` so individual tests can assert (a) the header
+   * was set and (b) its value matches the per-request `correlationId`.
+   *
+   * A FACTORY (not a shared instance) is used because each `it(...)`
+   * block creates its own Response — without isolation, a regression
+   * that writes to the same `setHeader` mock from multiple tests
+   * would silently leak state across the suite.
+   */
+  const buildMockResponse = (): jest.Mocked<Response> => {
+    return {
+      setHeader: jest.fn()
+    } as unknown as jest.Mocked<Response>;
+  };
 
   /**
    * Synthetic `RequestWithUser` fixture exposing only the single
@@ -162,7 +184,7 @@ describe('RebalancingController', () => {
   it('delegates to RebalancingService.recommend with userId sourced from request.user.id (JWT-authoritative)', async () => {
     const dto: RebalancingRequestDto = {};
 
-    const result = await controller.getRebalancing(dto);
+    const result = await controller.getRebalancing(dto, buildMockResponse());
 
     // The controller MUST source `userId` from `this.request.user.id`,
     // NEVER from the request body — this is the central security
@@ -185,7 +207,7 @@ describe('RebalancingController', () => {
   it('returns the RebalancingResponse from RebalancingService.recommend verbatim', async () => {
     const dto: RebalancingRequestDto = {};
 
-    const result = await controller.getRebalancing(dto);
+    const result = await controller.getRebalancing(dto, buildMockResponse());
 
     // Reference equality (`.toBe`) verifies the controller did NOT
     // construct a new object — it returned the service's promise
@@ -203,8 +225,8 @@ describe('RebalancingController', () => {
   it('controller method delegates exactly once per call (Rule 8 — Controller Thinness)', async () => {
     const dto: RebalancingRequestDto = {};
 
-    await controller.getRebalancing(dto);
-    await controller.getRebalancing(dto);
+    await controller.getRebalancing(dto, buildMockResponse());
+    await controller.getRebalancing(dto, buildMockResponse());
 
     // Exactly one delegation per controller call — no internal loop,
     // no retry, no business-logic branch. Two calls to the controller
@@ -219,7 +241,7 @@ describe('RebalancingController', () => {
   it('passes a correlationId to RebalancingService.recommend for log correlation (Observability rule)', async () => {
     const dto: RebalancingRequestDto = {};
 
-    await controller.getRebalancing(dto);
+    await controller.getRebalancing(dto, buildMockResponse());
 
     // The controller MUST generate a fresh correlationId per request
     // (via `node:crypto.randomUUID()`) and forward it to the service.
@@ -234,8 +256,8 @@ describe('RebalancingController', () => {
   it('generates a distinct correlationId per request (Observability rule)', async () => {
     const dto: RebalancingRequestDto = {};
 
-    await controller.getRebalancing(dto);
-    await controller.getRebalancing(dto);
+    await controller.getRebalancing(dto, buildMockResponse());
+    await controller.getRebalancing(dto, buildMockResponse());
 
     const firstCallArg = rebalancingService.recommend.mock.calls[0][0];
     const secondCallArg = rebalancingService.recommend.mock.calls[1][0];
@@ -247,6 +269,40 @@ describe('RebalancingController', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Test 5b — X-Correlation-ID response header (QA Checkpoint 11 Issue 4)
+  //           Observability rule, AAP § 0.7.2
+  // ---------------------------------------------------------------------------
+
+  it('sets X-Correlation-ID response header matching the per-request correlationId (QA Checkpoint 11 Issue 4)', async () => {
+    const dto: RebalancingRequestDto = {};
+    const httpResponse = buildMockResponse();
+
+    await controller.getRebalancing(dto, httpResponse);
+
+    // QA Checkpoint 11 Issue 4 (INFO): "No X-Correlation-ID header on
+    // rebalancing error responses." The fix injects the Express
+    // `Response` via `@Res({ passthrough: true })` and emits a
+    // `X-Correlation-ID` header carrying the same UUID generated for
+    // the structured-log correlationId — enabling client-side log
+    // correlation when troubleshooting upstream Anthropic/network
+    // failures. The header is set BEFORE the service call so it is
+    // emitted on both 200 and 5xx paths.
+    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      expect.any(String)
+    );
+
+    // The header value MUST equal the same correlationId forwarded to
+    // the service — anchoring server-side logs and client-side
+    // diagnostics to a single id per request.
+    const headerCall = httpResponse.setHeader.mock.calls[0];
+    const headerValue = headerCall[1];
+    const serviceCallArg = rebalancingService.recommend.mock.calls[0][0];
+    expect(headerValue).toBe(serviceCallArg.correlationId);
+  });
+
+  // ---------------------------------------------------------------------------
   // Test 6 — Request DTO body forwarding (validates DTO is wired)
   // ---------------------------------------------------------------------------
 
@@ -255,7 +311,7 @@ describe('RebalancingController', () => {
       targetAllocation: { bonds: 0.3, equity: 0.7 }
     };
 
-    await controller.getRebalancing(dto);
+    await controller.getRebalancing(dto, buildMockResponse());
 
     // The validated DTO body reaches the service unchanged via the
     // `requestPayload` field — the service's `recommend(...)` signature
@@ -268,7 +324,7 @@ describe('RebalancingController', () => {
   it('forwards an empty DTO body (no `targetAllocation`) to the service unchanged', async () => {
     const dto: RebalancingRequestDto = {};
 
-    await controller.getRebalancing(dto);
+    await controller.getRebalancing(dto, buildMockResponse());
 
     // The empty DTO `{}` is the canonical happy-path body (no override
     // fields) and MUST reach the service untouched. A regression that
@@ -286,7 +342,7 @@ describe('RebalancingController', () => {
   it('each recommendation in the returned response has non-empty rationale and goalReference (AAP § 0.7.5.2)', async () => {
     const dto: RebalancingRequestDto = {};
 
-    const result = await controller.getRebalancing(dto);
+    const result = await controller.getRebalancing(dto, buildMockResponse());
 
     // The AAP § 0.7.5.2 rebalancing-engine acceptance gate REQUIRES
     // every recommendation to carry a non-empty `rationale` and

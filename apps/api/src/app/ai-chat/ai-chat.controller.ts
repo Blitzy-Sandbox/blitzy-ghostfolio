@@ -11,11 +11,13 @@ import {
   Inject,
   MessageEvent,
   Post,
+  Res,
   Sse,
   UseGuards
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { Observable } from 'rxjs';
 
@@ -68,9 +70,15 @@ import { ChatRequestDto } from './dtos/chat-request.dto';
  *   `node:crypto` `randomUUID()` (avoiding a `uuid` package dependency —
  *   Node 22.18+ ships `randomUUID` in the standard library, per
  *   `package.json` `engines.node >=22.18.0`). The correlationId is
- *   propagated downstream so structured `Logger` output across the service,
- *   tool dispatches, and Anthropic API calls can be threaded together for
- *   a single chat request.
+ *   (a) propagated downstream so structured `Logger` output across the
+ *   service, tool dispatches, and Anthropic API calls can be threaded
+ *   together for a single chat request, (b) emitted on every SSE `done` /
+ *   `tool_call` / `error` event payload, AND (c) emitted as the
+ *   `X-Correlation-ID` HTTP response header on the initial SSE response
+ *   line so client-side error reporters can capture it without parsing the
+ *   stream (QA Checkpoint 11 Issue 4). The header is set via
+ *   `@Res({ passthrough: true })`, which keeps NestJS's `@Sse()` lifecycle
+ *   in charge of streaming the body while letting us decorate the headers.
  *
  * - **SSE protocol (AAP § 0.7.5.2):** The `@Sse()` decorator instructs
  *   NestJS to subscribe to the returned `Observable<MessageEvent>` and pipe
@@ -147,9 +155,12 @@ export class AiChatController {
   @Sse()
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
   public chat(
-    @Body() chatRequestDto: ChatRequestDto
+    @Body() chatRequestDto: ChatRequestDto,
+    @Res({ passthrough: true }) response: Response
   ): Observable<MessageEvent> {
     const correlationId = randomUUID();
+
+    response.setHeader('X-Correlation-ID', correlationId);
 
     return this.aiChatService.streamChat({
       correlationId,

@@ -11,10 +11,12 @@ import {
   HttpStatus,
   Inject,
   Post,
+  Res,
   UseGuards
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
 import { RebalancingRequestDto } from './dtos/rebalancing-request.dto';
@@ -65,11 +67,17 @@ import { RebalancingService } from './rebalancing.service';
  *
  * - **Per-request correlationId (Observability, AAP § 0.7.2):** A fresh
  *   `correlationId` is generated at the controller boundary on every request
- *   via Node's built-in `node:crypto.randomUUID()`. The id is forwarded to
- *   the service which propagates it through every structured log line and
- *   the downstream Anthropic API invocation, enabling end-to-end request
- *   tracing across the boundary between the HTTP layer and the upstream LLM
- *   provider.
+ *   via Node's built-in `node:crypto.randomUUID()`. The id is (a) forwarded
+ *   to the service which propagates it through every structured log line
+ *   and the downstream Anthropic API invocation, AND (b) emitted to the
+ *   client as the `X-Correlation-ID` HTTP response header so support
+ *   diagnostics can correlate a user-visible failure with the corresponding
+ *   server-side log entries (QA Checkpoint 11 Issue 4 fix). The header is
+ *   set on both the success path and the error path — `@Res({ passthrough:
+ *   true })` keeps NestJS in charge of serializing the typed response body,
+ *   and the global exception filter preserves headers set before the
+ *   thrown exception, so a `BadGatewayException` in the service still
+ *   surfaces the correlation id to the client.
  *
  * - **Auth pipeline (`@UseGuards(AuthGuard('jwt'), HasPermissionGuard)`):**
  *   `AuthGuard('jwt')` activates the existing `JwtStrategy` which reads the
@@ -142,9 +150,12 @@ export class RebalancingController {
   @HasPermission(permissions.readAiRebalancing)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
   public async getRebalancing(
-    @Body() rebalancingRequestDto: RebalancingRequestDto
+    @Body() rebalancingRequestDto: RebalancingRequestDto,
+    @Res({ passthrough: true }) response: Response
   ): Promise<RebalancingResponse> {
     const correlationId = randomUUID();
+
+    response.setHeader('X-Correlation-ID', correlationId);
 
     return this.rebalancingService.recommend({
       correlationId,

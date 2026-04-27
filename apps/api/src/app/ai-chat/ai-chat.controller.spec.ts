@@ -14,6 +14,7 @@ import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import { Observable, lastValueFrom, of } from 'rxjs';
 
 import { AiChatController } from './ai-chat.controller';
@@ -144,6 +145,31 @@ describe('AiChatController', () => {
   let aiChatService: jest.Mocked<AiChatService>;
 
   /**
+   * Factory that returns a fresh, minimal `Response` mock per call.
+   *
+   * The controller injects `@Res({ passthrough: true }) response: Response`
+   * (added per QA Checkpoint 11 Issue 4 / AAP § 0.7.2 Observability rule
+   * to expose `X-Correlation-ID` to clients). The only `Response` API
+   * touched by the controller is `setHeader(name, value)`; we capture
+   * it as a `jest.fn()` so individual tests can assert (a) the header
+   * was set and (b) its value matches the per-request `correlationId`.
+   *
+   * `passthrough: true` keeps NestJS in charge of `@Sse()` body-stream
+   * marshaling — the controller never calls `response.send(...)` or
+   * `response.write(...)`, so the mock only needs `setHeader`.
+   *
+   * A FACTORY (not a shared instance) is used because each `it(...)`
+   * block creates its own Response — without isolation, a regression
+   * that writes to the same `setHeader` mock from multiple tests
+   * would silently leak state across the suite.
+   */
+  const buildMockResponse = (): jest.Mocked<Response> => {
+    return {
+      setHeader: jest.fn()
+    } as unknown as jest.Mocked<Response>;
+  };
+
+  /**
    * Builds a minimal `RequestWithUser` shape that exposes only the two
    * properties the controller reads (`user.id` and `user.permissions`).
    * The synthetic shape lets each test mutate the user payload without
@@ -194,7 +220,7 @@ describe('AiChatController', () => {
     aiChatService.streamChat.mockReturnValueOnce(of(sentinelEvent));
 
     // Act
-    const observable = controller.chat(VALID_DTO);
+    const observable = controller.chat(VALID_DTO, buildMockResponse());
 
     // Assert: streamChat was called exactly once with the JWT userId
     expect(aiChatService.streamChat).toHaveBeenCalledTimes(1);
@@ -252,7 +278,7 @@ describe('AiChatController', () => {
     // type system already enforces.
     const dtoWithSmuggledFields = VALID_DTO;
 
-    controller.chat(dtoWithSmuggledFields);
+    controller.chat(dtoWithSmuggledFields, buildMockResponse());
 
     const [callArgs] = aiChatService.streamChat.mock.calls[0] as [
       { userId: string }
@@ -273,7 +299,7 @@ describe('AiChatController', () => {
     const user2Request = buildRequest(USER_2_ID);
     const user2Controller = new AiChatController(aiChatService, user2Request);
 
-    user2Controller.chat(VALID_DTO);
+    user2Controller.chat(VALID_DTO, buildMockResponse());
 
     const [callArgs] = aiChatService.streamChat.mock.calls[0] as [
       { userId: string }
@@ -298,8 +324,8 @@ describe('AiChatController', () => {
     aiChatService.streamChat.mockReturnValueOnce(of());
     aiChatService.streamChat.mockReturnValueOnce(of());
 
-    controller.chat(VALID_DTO);
-    controller.chat(VALID_DTO);
+    controller.chat(VALID_DTO, buildMockResponse());
+    controller.chat(VALID_DTO, buildMockResponse());
 
     const [firstCallArgs] = aiChatService.streamChat.mock.calls[0] as [
       { correlationId: string }
@@ -321,7 +347,7 @@ describe('AiChatController', () => {
     // `Date.now().toString()`) would fail this test.
     aiChatService.streamChat.mockReturnValueOnce(of());
 
-    controller.chat(VALID_DTO);
+    controller.chat(VALID_DTO, buildMockResponse());
 
     const [callArgs] = aiChatService.streamChat.mock.calls[0] as [
       { correlationId: string }
@@ -329,6 +355,43 @@ describe('AiChatController', () => {
     const v4Pattern =
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
     expect(callArgs.correlationId).toMatch(v4Pattern);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3b — X-Correlation-ID response header
+  //           (QA Checkpoint 11 Issue 4 — Observability rule, AAP § 0.7.2)
+  // -------------------------------------------------------------------------
+
+  it('sets X-Correlation-ID response header matching the per-request correlationId (QA Checkpoint 11 Issue 4)', () => {
+    aiChatService.streamChat.mockReturnValueOnce(of());
+    const httpResponse = buildMockResponse();
+
+    controller.chat(VALID_DTO, httpResponse);
+
+    // QA Checkpoint 11 Issue 4 (INFO): the chat controller MUST emit
+    // an `X-Correlation-ID` HTTP response header carrying the same
+    // UUID generated for the structured-log correlationId — enabling
+    // client-side log correlation when troubleshooting upstream
+    // Anthropic/network failures. The header is set BEFORE the
+    // `streamChat(...)` call so it is emitted on every request,
+    // including the early-throw path (Test 5 above).
+    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      expect.any(String)
+    );
+
+    // The header value MUST equal the same correlationId forwarded
+    // to the service — anchoring server-side logs and client-side
+    // diagnostics to a single id per request. Without this
+    // assertion, a regression that emits a DIFFERENT id for the
+    // header vs. the log-line would silently break log correlation.
+    const headerCall = httpResponse.setHeader.mock.calls[0];
+    const headerValue = headerCall[1] as string;
+    const serviceCallArg = aiChatService.streamChat.mock.calls[0][0] as {
+      correlationId: string;
+    };
+    expect(headerValue).toBe(serviceCallArg.correlationId);
   });
 
   // -------------------------------------------------------------------------
@@ -350,7 +413,7 @@ describe('AiChatController', () => {
     const sourceObservable = of(event1, event2);
     aiChatService.streamChat.mockReturnValueOnce(sourceObservable);
 
-    const result = controller.chat(VALID_DTO);
+    const result = controller.chat(VALID_DTO, buildMockResponse());
 
     // Reference equality — NOT just shape equality. The controller
     // returns the EXACT Observable that streamChat returned.
@@ -402,7 +465,7 @@ describe('AiChatController', () => {
     });
     aiChatService.streamChat.mockReturnValueOnce(erroringObservable);
 
-    const result = controller.chat(VALID_DTO);
+    const result = controller.chat(VALID_DTO, buildMockResponse());
 
     let caught: unknown;
     const collected: MessageEvent[] = [];
@@ -441,7 +504,9 @@ describe('AiChatController', () => {
       throw upstreamError;
     });
 
-    expect(() => controller.chat(VALID_DTO)).toThrow(upstreamError);
+    expect(() => controller.chat(VALID_DTO, buildMockResponse())).toThrow(
+      upstreamError
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -468,7 +533,7 @@ describe('AiChatController', () => {
     aiChatService.streamChat.mockReturnValueOnce(of(sentinelEvent));
 
     const start = Date.now();
-    const observable = controller.chat(VALID_DTO);
+    const observable = controller.chat(VALID_DTO, buildMockResponse());
     const firstEvent = await lastValueFrom(observable);
     const elapsed = Date.now() - start;
 

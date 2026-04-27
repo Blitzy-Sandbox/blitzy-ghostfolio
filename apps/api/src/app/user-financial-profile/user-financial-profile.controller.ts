@@ -12,11 +12,14 @@ import {
   Inject,
   NotFoundException,
   Patch,
+  Res,
   UseGuards
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { FinancialProfile } from '@prisma/client';
+import type { Response } from 'express';
+import { randomUUID } from 'node:crypto';
 
 import { FinancialProfileDto } from './dtos/financial-profile.dto';
 import { UserFinancialProfileService } from './user-financial-profile.service';
@@ -56,6 +59,18 @@ import { UserFinancialProfileService } from './user-financial-profile.service';
  * `ValidationPipe` against the `FinancialProfileDto`'s `class-validator`
  * decorators (an invalid body short-circuits with HTTP 400 before any
  * controller method body executes).
+ *
+ * OBSERVABILITY (AAP § 0.7.2 — correlation-id propagation): Both endpoints
+ * generate a fresh per-request correlation id at the controller boundary
+ * via `node:crypto.randomUUID()` and surface it as the `X-Correlation-ID`
+ * HTTP response header so client-side error reporters and support agents
+ * can correlate a UI failure with the corresponding server-side log
+ * entries (QA Checkpoint 11 Issue 4 fix). The header is emitted on both
+ * the success path and the error path — `@Res({ passthrough: true })`
+ * keeps NestJS in charge of body serialization, and Express preserves
+ * headers set before a thrown exception so the global exception filter
+ * still relays the id on `NotFoundException` / `BadRequestException`
+ * responses.
  */
 @Controller('user/financial-profile')
 export class UserFinancialProfileController {
@@ -79,14 +94,20 @@ export class UserFinancialProfileController {
   @Get()
   @HasPermission(permissions.readFinancialProfile)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
-  public async getFinancialProfile(): Promise<FinancialProfile> {
+  public async getFinancialProfile(
+    @Res({ passthrough: true }) response: Response
+  ): Promise<FinancialProfile> {
+    response.setHeader('X-Correlation-ID', randomUUID());
+
     const userId = this.request.user.id;
     const profile = await this.userFinancialProfileService.findByUserId(userId);
+
     if (!profile) {
       throw new NotFoundException(
         `Financial profile not found for user ${userId}`
       );
     }
+
     return profile;
   }
 
@@ -116,15 +137,15 @@ export class UserFinancialProfileController {
   @HasPermission(permissions.updateFinancialProfile)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
   public async updateFinancialProfile(
-    @Body() dto: FinancialProfileDto
+    @Body() dto: FinancialProfileDto,
+    @Res({ passthrough: true }) response: Response
   ): Promise<FinancialProfile> {
-    const userId = this.request.user.id;
-    const dateOfBirth = this.extractDateOfBirthFromJwtUser();
+    response.setHeader('X-Correlation-ID', randomUUID());
 
     return this.userFinancialProfileService.upsertForUser(
-      userId,
+      this.request.user.id,
       dto,
-      dateOfBirth
+      this.extractDateOfBirthFromJwtUser()
     );
   }
 

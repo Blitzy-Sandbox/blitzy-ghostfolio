@@ -13,6 +13,7 @@ import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { AuthGuard } from '@nestjs/passport';
 import { FinancialProfile, RiskTolerance } from '@prisma/client';
+import type { Response } from 'express';
 
 import { FinancialProfileDto } from './dtos/financial-profile.dto';
 import { UserFinancialProfileController } from './user-financial-profile.controller';
@@ -102,6 +103,27 @@ describe('UserFinancialProfileController', () => {
   let userFinancialProfileService: jest.Mocked<UserFinancialProfileService>;
 
   /**
+   * Factory that returns a fresh, minimal `Response` mock per call.
+   *
+   * The controller injects `@Res({ passthrough: true }) response: Response`
+   * on BOTH endpoints (added per QA Checkpoint 11 Issue 4 / AAP § 0.7.2
+   * Observability rule to expose `X-Correlation-ID` to clients). The only
+   * `Response` API touched by the controller is `setHeader(name, value)`;
+   * we capture it as a `jest.fn()` so individual tests can assert (a) the
+   * header was set and (b) its value matches the per-request `correlationId`.
+   *
+   * A FACTORY (not a shared instance) is used because each `it(...)`
+   * block creates its own Response — without isolation, a regression
+   * that writes to the same `setHeader` mock from multiple tests
+   * would silently leak state across the suite.
+   */
+  const buildMockResponse = (): jest.Mocked<Response> => {
+    return {
+      setHeader: jest.fn()
+    } as unknown as jest.Mocked<Response>;
+  };
+
+  /**
    * Builds a minimal `RequestWithUser` shape that exposes only the two
    * properties the controller reads (`user.id`, `user.settings`). The
    * synthetic shape lets each test mutate the user payload without the
@@ -168,7 +190,10 @@ describe('UserFinancialProfileController', () => {
       upsertedRecord
     );
 
-    const result = await controller.updateFinancialProfile(VALID_DTO);
+    const result = await controller.updateFinancialProfile(
+      VALID_DTO,
+      buildMockResponse()
+    );
 
     // AAP § 0.7.5.2: a valid upsert returns the persisted row verbatim.
     // The HTTP 200 status code itself is asserted via the
@@ -197,9 +222,9 @@ describe('UserFinancialProfileController', () => {
     // which would otherwise be the default for an unhandled `null` access.
     userFinancialProfileService.findByUserId.mockResolvedValueOnce(null);
 
-    await expect(controller.getFinancialProfile()).rejects.toBeInstanceOf(
-      NotFoundException
-    );
+    await expect(
+      controller.getFinancialProfile(buildMockResponse())
+    ).rejects.toBeInstanceOf(NotFoundException);
 
     // Confirm the service was scoped to the JWT-verified userId (Rule 5).
     expect(userFinancialProfileService.findByUserId).toHaveBeenCalledTimes(1);
@@ -215,7 +240,7 @@ describe('UserFinancialProfileController', () => {
     userFinancialProfileService.findByUserId.mockResolvedValueOnce(null);
 
     try {
-      await controller.getFinancialProfile();
+      await controller.getFinancialProfile(buildMockResponse());
       fail('Expected NotFoundException to be thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(NotFoundException);
@@ -247,13 +272,119 @@ describe('UserFinancialProfileController', () => {
       persistedRecord
     );
 
-    const result = await controller.getFinancialProfile();
+    const result = await controller.getFinancialProfile(buildMockResponse());
 
     expect(result).toBe(persistedRecord);
     // Rule 5: GET is scoped to JWT-derived userId.
     expect(userFinancialProfileService.findByUserId).toHaveBeenCalledWith(
       USER_1_ID
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3b — X-Correlation-ID response header on GET endpoint
+  //           (QA Checkpoint 11 Issue 4 — Observability rule, AAP § 0.7.2)
+  // -------------------------------------------------------------------------
+
+  it('sets X-Correlation-ID response header on GET endpoint (QA Checkpoint 11 Issue 4)', async () => {
+    // QA Checkpoint 11 Issue 4 (INFO): "No X-Correlation-ID header on
+    // ... profile responses." The fix injects the Express `Response`
+    // via `@Res({ passthrough: true })` and emits a `X-Correlation-ID`
+    // header carrying a fresh UUID per request — enabling client-side
+    // log correlation when troubleshooting failures. The header is set
+    // BEFORE the service call so it is also emitted on the 404 path
+    // (Express preserves headers set before a thrown exception, so
+    // `NotFoundException` responses still carry the correlation id).
+    const persistedRecord: FinancialProfile = {
+      createdAt: new Date(),
+      investmentGoals: [] as any,
+      monthlyDebtObligations: 1500,
+      monthlyIncome: 8000,
+      retirementTargetAge: 65,
+      retirementTargetAmount: 1_000_000,
+      riskTolerance: 'MEDIUM' as RiskTolerance,
+      timeHorizonYears: 30,
+      updatedAt: new Date(),
+      userId: USER_1_ID
+    };
+    userFinancialProfileService.findByUserId.mockResolvedValueOnce(
+      persistedRecord
+    );
+    const httpResponse = buildMockResponse();
+
+    await controller.getFinancialProfile(httpResponse);
+
+    // Header was set exactly once with a string value.
+    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      expect.any(String)
+    );
+
+    // The header value must be an RFC 4122 v4 UUID (the shape produced
+    // by `node:crypto.randomUUID()`). A regression to a non-v4
+    // generator (e.g. `Date.now().toString()`) would fail this test.
+    const headerCall = httpResponse.setHeader.mock.calls[0];
+    const headerValue = headerCall[1] as string;
+    const v4Pattern =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    expect(headerValue).toMatch(v4Pattern);
+  });
+
+  it('sets X-Correlation-ID response header on PATCH endpoint (QA Checkpoint 11 Issue 4)', async () => {
+    // Same Observability requirement as the GET endpoint — verify the
+    // PATCH endpoint also emits an X-Correlation-ID header carrying a
+    // fresh UUID per request. The header is set BEFORE the service
+    // call so it is emitted regardless of whether the upsert succeeds
+    // (200) or the service throws (e.g., 400 for age-validation).
+    userFinancialProfileService.upsertForUser.mockResolvedValueOnce({
+      ...VALID_DTO,
+      createdAt: new Date(),
+      investmentGoals: VALID_DTO.investmentGoals as any,
+      updatedAt: new Date(),
+      userId: USER_1_ID
+    } as FinancialProfile);
+    const httpResponse = buildMockResponse();
+
+    await controller.updateFinancialProfile(VALID_DTO, httpResponse);
+
+    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      expect.any(String)
+    );
+
+    // RFC 4122 v4 UUID shape — same `randomUUID()` source as GET.
+    const headerCall = httpResponse.setHeader.mock.calls[0];
+    const headerValue = headerCall[1] as string;
+    const v4Pattern =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    expect(headerValue).toMatch(v4Pattern);
+  });
+
+  it('generates fresh, distinct correlationIds across consecutive requests (per-request id)', async () => {
+    // Two consecutive `getFinancialProfile(...)` calls MUST produce
+    // two distinct correlation ids. The `randomUUID()` v4 collision
+    // probability is ~2^-122 — vanishingly small — so any test failure
+    // here indicates the controller cached a single id (regression).
+    userFinancialProfileService.findByUserId.mockResolvedValue(null);
+    const firstResponse = buildMockResponse();
+    const secondResponse = buildMockResponse();
+
+    try {
+      await controller.getFinancialProfile(firstResponse);
+    } catch {
+      /* expected NotFoundException — header is still emitted */
+    }
+    try {
+      await controller.getFinancialProfile(secondResponse);
+    } catch {
+      /* expected NotFoundException — header is still emitted */
+    }
+
+    const firstId = firstResponse.setHeader.mock.calls[0][1] as string;
+    const secondId = secondResponse.setHeader.mock.calls[0][1] as string;
+    expect(firstId).not.toBe(secondId);
   });
 
   // -------------------------------------------------------------------------
@@ -288,7 +419,7 @@ describe('UserFinancialProfileController', () => {
     });
 
     await expect(
-      olderUserController.updateFinancialProfile(tooLowDto)
+      olderUserController.updateFinancialProfile(tooLowDto, buildMockResponse())
     ).rejects.toBeInstanceOf(BadRequestException);
 
     // Rule 5: the dateOfBirth passed to the service is JWT-derived.
@@ -318,7 +449,10 @@ describe('UserFinancialProfileController', () => {
       userId: USER_1_ID
     } as FinancialProfile);
 
-    await controllerWithDob.updateFinancialProfile(VALID_DTO);
+    await controllerWithDob.updateFinancialProfile(
+      VALID_DTO,
+      buildMockResponse()
+    );
 
     const upsertArgs = userFinancialProfileService.upsertForUser.mock.calls[0];
     expect(upsertArgs[2]).toBe('1990-06-15');
@@ -342,7 +476,10 @@ describe('UserFinancialProfileController', () => {
       userId: USER_1_ID
     } as FinancialProfile);
 
-    await controllerNoDob.updateFinancialProfile(VALID_DTO);
+    await controllerNoDob.updateFinancialProfile(
+      VALID_DTO,
+      buildMockResponse()
+    );
 
     const upsertArgs = userFinancialProfileService.upsertForUser.mock.calls[0];
     expect(upsertArgs[2]).toBeNull();
@@ -440,7 +577,7 @@ describe('UserFinancialProfileController', () => {
     userFinancialProfileService.findByUserId.mockResolvedValueOnce(null);
 
     try {
-      await controller.getFinancialProfile();
+      await controller.getFinancialProfile(buildMockResponse());
     } catch {
       /* expected NotFoundException */
     }
@@ -474,7 +611,10 @@ describe('UserFinancialProfileController', () => {
     // Even if a malicious body somehow contained a `userId`, the DTO
     // forbids unknown fields and the controller never reads any
     // userId from the body. The body is the validated DTO only.
-    await user2Controller.updateFinancialProfile(VALID_DTO);
+    await user2Controller.updateFinancialProfile(
+      VALID_DTO,
+      buildMockResponse()
+    );
 
     const upsertArgs = userFinancialProfileService.upsertForUser.mock.calls[0];
     expect(upsertArgs[0]).toBe(USER_2_ID);

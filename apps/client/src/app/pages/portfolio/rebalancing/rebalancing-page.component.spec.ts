@@ -1,7 +1,7 @@
 import { RebalancingService } from '@ghostfolio/client/services/rebalancing.service';
 import { RebalancingResponse } from '@ghostfolio/common/interfaces';
 
-import { provideHttpClient } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 // Initializes the global `$localize` function used by Angular i18n at runtime.
 // The companion `rebalancing-page.component.html` template uses `i18n` and
@@ -12,7 +12,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import '@angular/localize/init';
 import { By } from '@angular/platform-browser';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 
 import { RebalancingPageComponent } from './rebalancing-page.component';
 
@@ -153,5 +153,99 @@ describe('RebalancingPageComponent', () => {
     );
 
     expect(progressBarEl).toBeFalsy();
+  });
+
+  // QA Checkpoint 11 Issue 3 — the component MUST surface the friendly
+  // backend message embedded in HttpErrorResponse.error.message rather than
+  // the framework-generated HttpErrorResponse.message string (which leaks
+  // the API URL).
+  describe('error handling', () => {
+    it('should render the backend error envelope message instead of the raw HttpErrorResponse.message', async () => {
+      const friendlyMessage =
+        'Rebalancing recommendation could not be generated. Please retry.';
+
+      getRecommendationsSpy.mockReturnValue(
+        throwError(
+          () =>
+            new HttpErrorResponse({
+              error: {
+                error: 'Bad Gateway',
+                message: friendlyMessage,
+                statusCode: 502
+              },
+              status: 502,
+              statusText: 'Bad Gateway',
+              url: 'http://localhost:4202/api/v1/ai/rebalancing'
+            })
+        )
+      );
+
+      // Re-create the component to re-trigger ngOnInit with the error
+      // observable.
+      fixture = TestBed.createComponent(RebalancingPageComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      expect(component.errorMessage()).toBe(friendlyMessage);
+      expect(component.errorMessage()).not.toContain('Http failure response');
+      expect(component.errorMessage()).not.toContain('localhost:4202');
+
+      const errorEl = fixture.debugElement.query(By.css('.error-message'));
+
+      expect(errorEl).toBeTruthy();
+      expect(errorEl.nativeElement.textContent).toContain(friendlyMessage);
+    });
+
+    it('should join the backend error envelope when message is a string array', () => {
+      const messages = [
+        'targetAllocation must be an object',
+        'targetAllocation should not be empty'
+      ];
+
+      getRecommendationsSpy.mockReturnValue(
+        throwError(
+          () =>
+            new HttpErrorResponse({
+              error: {
+                error: 'Bad Request',
+                message: messages,
+                statusCode: 400
+              },
+              status: 400,
+              statusText: 'Bad Request'
+            })
+        )
+      );
+
+      fixture = TestBed.createComponent(RebalancingPageComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      expect(component.errorMessage()).toBe(messages.join(', '));
+    });
+
+    it('should fall back to the localized message when no backend message is present', () => {
+      getRecommendationsSpy.mockReturnValue(
+        throwError(
+          () =>
+            new HttpErrorResponse({
+              error: null,
+              status: 503,
+              statusText: 'Service Unavailable',
+              url: 'http://localhost:4202/api/v1/ai/rebalancing'
+            })
+        )
+      );
+
+      fixture = TestBed.createComponent(RebalancingPageComponent);
+      component = fixture.componentInstance;
+      fixture.detectChanges();
+
+      expect(component.errorMessage()).toBeTruthy();
+      // The fallback message must NOT include the URL or the raw HTTP
+      // failure prefix.
+      expect(component.errorMessage()).not.toContain('Http failure response');
+      expect(component.errorMessage()).not.toContain('localhost:4202');
+    });
   });
 });

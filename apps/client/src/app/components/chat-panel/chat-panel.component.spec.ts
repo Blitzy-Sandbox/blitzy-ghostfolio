@@ -192,4 +192,77 @@ describe('ChatPanelComponent', () => {
     fixture.destroy();
     expect(mockAiChatService.closeStreamSpy).toHaveBeenCalled();
   });
+
+  // QA Checkpoint 11 Issue 2 regression guard — ensure non-assistant chunks
+  // are NEVER appended to the messages signal. Without this defense, any
+  // future protocol regression that allows the AiChatService to emit a raw
+  // SSE frame (e.g. {type:'error',...}) would re-introduce the cascading
+  // HTTP 400 bug where a malformed entry pollutes the conversation history
+  // and is forwarded to the backend on the next user send, triggering
+  // class-validator rejection.
+  it('should ignore stream chunks that are not assistant ChatMessages', () => {
+    component.inputText.set('Hello');
+    component.onSend();
+
+    const messageCountBeforeChunk = component.messages().length;
+
+    // Simulate the buggy pre-fix behavior: the service emits a raw
+    // discriminated-union frame instead of a translated ChatMessage. The
+    // component MUST NOT append it to the messages signal.
+    mockAiChatService.streamSubject.next({
+      correlationId: 'fake-uuid',
+      message: 'fake-error-payload',
+      type: 'error'
+    } as unknown as ChatMessage);
+
+    fixture.detectChanges();
+
+    expect(component.messages().length).toBe(messageCountBeforeChunk);
+
+    // Also reject entries with a missing role or non-string content.
+    mockAiChatService.streamSubject.next({} as unknown as ChatMessage);
+    mockAiChatService.streamSubject.next({
+      content: null
+    } as unknown as ChatMessage);
+    mockAiChatService.streamSubject.next({
+      content: 'some text',
+      role: 'user'
+    } as ChatMessage);
+
+    fixture.detectChanges();
+
+    expect(component.messages().length).toBe(messageCountBeforeChunk);
+  });
+
+  it('should append a valid assistant chunk and merge subsequent chunks', () => {
+    component.inputText.set('How are my holdings doing?');
+    component.onSend();
+
+    const userTurnIndex = component.messages().length - 1;
+
+    // First assistant chunk creates a new entry
+    mockAiChatService.streamSubject.next({
+      content: 'Your portfolio ',
+      role: 'assistant'
+    });
+    fixture.detectChanges();
+
+    expect(component.messages().length).toBe(userTurnIndex + 2);
+    expect(component.messages()[userTurnIndex + 1].content).toBe(
+      'Your portfolio '
+    );
+    expect(component.messages()[userTurnIndex + 1].role).toBe('assistant');
+
+    // Second assistant chunk merges into the existing assistant turn
+    mockAiChatService.streamSubject.next({
+      content: 'is up 4.2%.',
+      role: 'assistant'
+    });
+    fixture.detectChanges();
+
+    expect(component.messages().length).toBe(userTurnIndex + 2);
+    expect(component.messages()[userTurnIndex + 1].content).toBe(
+      'Your portfolio is up 4.2%.'
+    );
+  });
 });

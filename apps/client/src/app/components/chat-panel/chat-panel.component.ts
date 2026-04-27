@@ -112,15 +112,33 @@ export class ChatPanelComponent implements OnDestroy {
   }
 
   private handleStreamChunk(chunk: ChatMessage): void {
+    // Defense in depth: AiChatService.parseSseFrame translates the backend's
+    // discriminated SSE union into ChatMessage shape and ONLY emits frames
+    // of role 'assistant' (text deltas). Tool-call / done / error frames are
+    // routed out-of-band via Subject.complete() / Subject.error(). The
+    // pre-fix implementation emitted raw {type,...} payloads here, which
+    // appended malformed entries with no `role` and no `content` — those
+    // entries then poisoned the next request body and triggered cascading
+    // HTTP 400 responses (QA Checkpoint 11 Issue 2 / Rule 6 violation).
+    //
+    // Reject anything that is not a structurally-valid assistant ChatMessage
+    // to ensure the conversation history remains forwardable to the server
+    // without `class-validator` rejection.
+    if (
+      chunk === null ||
+      chunk === undefined ||
+      typeof chunk !== 'object' ||
+      chunk.role !== 'assistant' ||
+      typeof chunk.content !== 'string'
+    ) {
+      return;
+    }
+
     this.messages.update((current) => {
       const last = current[current.length - 1];
 
       // If the assistant turn is in flight, append incoming content to it.
-      if (
-        chunk.role === 'assistant' &&
-        last?.role === 'assistant' &&
-        last !== undefined
-      ) {
+      if (last?.role === 'assistant') {
         const merged: ChatMessage = {
           ...last,
           content: `${last.content}${chunk.content}`
@@ -129,8 +147,8 @@ export class ChatPanelComponent implements OnDestroy {
         return [...current.slice(0, current.length - 1), merged];
       }
 
-      // Otherwise (first chunk of a new assistant turn, or a non-assistant
-      // role), append as a new entry.
+      // Otherwise (first chunk of a new assistant turn), append as a new
+      // entry.
       return [...current, chunk];
     });
   }
