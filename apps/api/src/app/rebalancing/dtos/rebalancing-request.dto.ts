@@ -19,6 +19,34 @@ import { IsObject, IsOptional } from 'class-validator';
  * server-side `RebalancingService` is the authoritative coercion layer:
  * it casts numeric expectations and rejects malformed values with a
  * `BadRequestException`.
+ *
+ * Per-field length validation note (QA Checkpoint 14, Issue #3):
+ *
+ *   The QA security audit recommends `@MaxLength` on string DTO fields
+ *   as a defense-in-depth measure against denial-of-service-style
+ *   payloads. This DTO has **no top-level string fields** — `IsObject`
+ *   covers the only declared field, and the keys of `Record<string,
+ *   number>` are object property names that `class-validator` cannot
+ *   constrain via `@MaxLength` (which targets string-typed values, not
+ *   property keys).
+ *
+ *   Defense-in-depth for this DTO is provided by:
+ *     1. The global Express body-parser limit (`useBodyParser('json',
+ *        { limit: '10mb' })` in `apps/api/src/main.ts`), which caps the
+ *        entire request payload size.
+ *     2. `@IsObject()` rejects non-object types (string, number, array,
+ *        etc.) before the body reaches the service layer.
+ *     3. `@IsOptional()` allows the field to be omitted entirely; an
+ *        absent `targetAllocation` is the canonical happy path and
+ *        does not exercise the upstream `RebalancingService` override
+ *        wiring.
+ *
+ *   When the typed object shape for `targetAllocation` is finalized,
+ *   any newly-introduced string field (e.g., a `symbol` property on a
+ *   nested `TargetAllocationEntryDto`) MUST be decorated with
+ *   `@MaxLength(...)` at that point — the principle expressed in
+ *   `chat-request.dto.ts` and `financial-profile.dto.ts` applies to
+ *   every string-typed DTO field across the new modules.
  */
 export class RebalancingRequestDto {
   @IsObject()

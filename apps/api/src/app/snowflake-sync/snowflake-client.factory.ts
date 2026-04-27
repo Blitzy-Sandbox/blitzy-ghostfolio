@@ -30,9 +30,50 @@ import * as snowflake from 'snowflake-sdk';
  *   and `connection.destroy` APIs are wrapped in `Promise` constructors
  *   inline; the `snowflake-promise` external package is intentionally NOT
  *   introduced.
+ *
+ * Global SDK log-level configuration (QA Checkpoint 14, Issue #2):
+ *
+ *   The `snowflake-sdk@^1.x` driver emits INFO-level log lines at connection
+ *   construction time that include connection metadata such as the account
+ *   identifier, username, database, schema, and warehouse (the actual
+ *   password value is masked by the SDK with the literal string
+ *   `"password is provided"`). While no credential VALUE leaks, the
+ *   connection-metadata names are excessive log noise for a Ghostfolio
+ *   self-host deployment and were flagged as an INFO observation by the
+ *   QA security audit.
+ *
+ *   We mitigate this by invoking `snowflake.configure({ logLevel: 'WARN' })`
+ *   exactly once across the application lifetime, on the first construction
+ *   of `SnowflakeClientFactory`. The static `globalConfigured` guard makes
+ *   the call idempotent so that test harnesses or future multi-instance
+ *   wiring cannot trigger redundant SDK reconfiguration.
+ *
+ *   `'WARN'` was chosen (not `'ERROR'` and not `'OFF'`) so genuine driver
+ *   warnings — which surface real operational issues such as deprecated
+ *   parameters or session-keep-alive failures — continue to reach the
+ *   process stdout. Connection-metadata `'INFO'` logs are suppressed
+ *   while diagnostic signal is preserved.
  */
 @Injectable()
 export class SnowflakeClientFactory {
+  /**
+   * One-shot guard around the global `snowflake.configure(...)` call.
+   *
+   * `snowflake.configure(...)` mutates module-level driver state (the
+   * Snowflake driver maintains its log configuration in a singleton
+   * inside `node_modules/snowflake-sdk/lib/global_config.js`). Even
+   * though calling it repeatedly with identical options is harmless,
+   * an idempotent guard keeps the call site honest and makes the
+   * intent explicit to readers — the global configuration is set
+   * exactly once and never mutated again.
+   *
+   * Test isolation: this static field is reset to `false` only by the
+   * Node module reloader between test runs (or by an explicit reset
+   * helper if a test ever needs to re-exercise the configuration code
+   * path). Production code never resets it.
+   */
+  private static globalConfigured = false;
+
   /**
    * Cached connection — populated after the first successful `connect()`
    * callback resolves. Reset to `null` on `disconnect()` or after a stale
@@ -49,7 +90,32 @@ export class SnowflakeClientFactory {
    */
   private connectionPromise: Promise<snowflake.Connection> | null = null;
 
-  public constructor(private readonly configService: ConfigService) {}
+  public constructor(private readonly configService: ConfigService) {
+    // Configure the global snowflake-sdk log level once per process to
+    // suppress connection-metadata INFO lines emitted by the driver
+    // (QA Checkpoint 14, Issue #2 — defense-in-depth log-noise reduction).
+    //
+    // The `try/catch` is defensive: a malformed `logLevel` would normally
+    // throw `ERR_GLOBAL_CONFIGURE_INVALID_LOG_LEVEL` (403001), but we use
+    // a known-good literal `'WARN'`. The catch-and-warn behavior here
+    // ensures that any SDK-version-driven contract change in
+    // `configure(...)` cannot crash the application during bootstrap; the
+    // worst case is a verbose log stream that the operator can address
+    // with a follow-up SDK upgrade.
+    if (!SnowflakeClientFactory.globalConfigured) {
+      try {
+        snowflake.configure({ logLevel: 'WARN' });
+        SnowflakeClientFactory.globalConfigured = true;
+      } catch (err) {
+        Logger.warn(
+          `snowflake.configure(logLevel: 'WARN') failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          'SnowflakeClientFactory'
+        );
+      }
+    }
+  }
 
   /**
    * Lazily acquires a Snowflake connection.
