@@ -92,8 +92,13 @@
                     recommendation.toPct | percent: '1.0-2'
                   }}</span>
                 </span>
-                <span class="goal-reference" i18n-title title="Goal Reference">
-                  {{ recommendation.goalReference }}
+                <span
+                  class="goal-reference"
+                  i18n-title
+                  title="Goal Reference"
+                  [attr.title]="recommendation.goalReference"
+                >
+                  {{ formatGoalReference(recommendation.goalReference) }}
                 </span>
               </div>
               <p class="rationale">{{ recommendation.rationale }}</p>

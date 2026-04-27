@@ -10,7 +10,7 @@ import type {
 } from '@ghostfolio/common/interfaces';
 
 import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
-import { generateText, tool } from 'ai';
+import { NoObjectGeneratedError, generateObject } from 'ai';
 import { z } from 'zod';
 
 import { RebalancingRequestDto } from './dtos/rebalancing-request.dto';
@@ -133,15 +133,6 @@ export class RebalancingService {
    * are always included.
    */
   private static readonly USER_MESSAGE_HOLDINGS_CAP = 50;
-
-  /**
-   * Tool name used for the single forced tool invocation. Centralized
-   * here so the schema definition (`buildRebalancingTool()`), the
-   * `tool_choice` clause on `generateText(...)`, and downstream
-   * `result.toolCalls.find(...)` lookups all reference the same string
-   * literal.
-   */
-  private static readonly TOOL_NAME = 'rebalancing_recommendations';
 
   /**
    * Allowed `action` values for each recommendation entry. The Zod
@@ -279,60 +270,64 @@ export class RebalancingService {
 
     try {
       const { systemPrompt, userMessage } = await this.buildPrompt(userId);
-      const tools = this.buildRebalancingTool();
 
-      // CRITICAL Rule 4: `toolChoice: 'required'` FORCES the model to
-      // invoke SOME tool from the `tools` map. Since we only register
-      // a single tool (`rebalancing_recommendations`), the model is
-      // pinned to that one — yielding a `result.toolCalls[0]` entry
-      // whose `args` field is the structured `RebalancingResponse`
-      // payload. This is the Vercel AI SDK's portable equivalent of
-      // Anthropic's `tool_choice: { type: 'tool', name }`.
-      const result = await generateText({
-        messages: [{ content: userMessage, role: 'user' }],
-        model: this.aiProviderService.getModel(),
-        system: systemPrompt,
-        toolChoice: 'required',
-        tools
-      });
+      // Use `generateObject` (JSON-mode constrained generation) instead of
+      // `generateText` + `toolChoice: 'required'`. Tool-forcing relies on
+      // function-call training that small Ollama models lack; they echo the
+      // input context back as tool arguments rather than generating the
+      // output schema. `generateObject` uses the provider's JSON mode
+      // (OpenAI-compatible `response_format: {type:"json_object"}` for Ollama,
+      // native structured outputs for Anthropic/OpenAI/Google) and validates
+      // the response against the Zod schema automatically.
+      const schema = this.buildRebalancingSchema();
 
-      // CRITICAL Rule 4 + Refine PR Directive 3: read structured
-      // output ONLY from a `tool_use`-equivalent toolCalls entry.
-      // We additionally narrow by `toolName` so a future expansion
-      // of the `tools` map (e.g., adding a "warning escalation" tool)
-      // does not silently start consuming a different tool's args.
-      const rebalancingToolCall = (result.toolCalls ?? []).find(
-        (call) => call.toolName === RebalancingService.TOOL_NAME
-      );
+      let generatedObject: Awaited<ReturnType<typeof generateObject>>;
 
-      if (!rebalancingToolCall) {
-        // Refine PR Directive 3 pass/fail criterion #2: empty
-        // `toolCalls` (or no matching tool name) — the configured
-        // provider did NOT honor `toolChoice: 'required'`. Common
-        // cause: a local Ollama model that lacks tool-use training.
-        // We log the provider name at ERROR level so operators can
-        // correlate the failure with the AI_PROVIDER setting.
-        outcome = 'no_tool_use';
-        Logger.error(
-          `[${correlationId}] rebalancing returned no tool_use call ` +
-            `(provider=${this.aiProviderService.getProvider()} ` +
-            `model=${this.aiProviderService.getModelId()}) userId=${userId}`,
-          'RebalancingService'
-        );
-        throw new BadGatewayException(
-          'The configured AI provider did not return a structured ' +
-            'rebalancing recommendation. This may indicate the ' +
-            'configured model does not support forced tool use.'
-        );
+      try {
+        generatedObject = await generateObject({
+          model: this.aiProviderService.getModel(),
+          mode: 'json',
+          prompt: userMessage,
+          schema,
+          system: systemPrompt
+        });
+      } catch (genErr) {
+        if (NoObjectGeneratedError.isInstance(genErr)) {
+          outcome = 'no_tool_use';
+          Logger.error(
+            `[${correlationId}] rebalancing: model did not produce a valid ` +
+              `JSON object (provider=${this.aiProviderService.getProvider()} ` +
+              `model=${this.aiProviderService.getModelId()}) userId=${userId} ` +
+              `rawText=${(genErr as NoObjectGeneratedError).text?.slice(0, 300)}`,
+            'RebalancingService'
+          );
+          throw new BadGatewayException(
+            'The configured AI provider did not return a structured ' +
+              'rebalancing recommendation.'
+          );
+        }
+
+        throw genErr;
       }
 
-      // The `args` field is typed as `unknown` from the runtime
-      // perspective because Zod has already parsed it; the `as
-      // RebalancingResponse` cast bridges the SDK's inferred type
-      // (which is `z.infer<typeof rebalancingArgsSchema>`) to our
-      // exported domain interface. Both shapes are structurally
-      // identical for the three top-level fields.
-      const candidate = rebalancingToolCall.args as RebalancingResponse;
+      const raw = generatedObject.object as unknown as RebalancingResponse;
+
+      // Normalize fromPct / toPct: small local models sometimes return
+      // percentages as whole numbers (e.g. 6.8 for 6.8%) rather than decimal
+      // fractions (0.068). The UI uses Angular's `percent` pipe which multiplies
+      // by 100, so any value > 1 is treated as already-a-percentage and divided
+      // by 100 to restore the expected 0.0–1.0 range.  No valid portfolio
+      // holding can exceed 100% allocation, so this guard is always safe.
+      const candidate: RebalancingResponse = {
+        ...raw,
+        recommendations: Array.isArray(raw?.recommendations)
+          ? raw.recommendations.map((rec) => ({
+              ...rec,
+              fromPct: rec.fromPct > 1 ? rec.fromPct / 100 : rec.fromPct,
+              toPct: rec.toPct > 1 ? rec.toPct / 100 : rec.toPct
+            }))
+          : raw?.recommendations
+      };
 
       if (
         !Array.isArray(candidate?.recommendations) ||
@@ -553,7 +548,7 @@ export class RebalancingService {
    * representation the SDK derives for the model — they are critical
    * for output quality.
    */
-  private buildRebalancingTool() {
+  private buildRebalancingSchema() {
     // Zod schema for a single recommendation entry. The runtime
     // constraints (`min(1)` for non-empty strings, `finite()` for
     // fromPct/toPct) are enforced by the Vercel AI SDK during
@@ -634,28 +629,7 @@ export class RebalancingService {
         )
     });
 
-    return {
-      [RebalancingService.TOOL_NAME]: tool({
-        description:
-          'OUTPUT ONLY. Returns structured portfolio rebalancing ' +
-          'recommendations as a JSON object with EXACTLY three top-level ' +
-          'fields: recommendations (array of {action, ticker, fromPct, ' +
-          'toPct, rationale, goalReference}), summary (string), and ' +
-          'warnings (array of strings). Each recommendation MUST include ' +
-          "a plain-language rationale explicitly referencing the user's " +
-          'stated financial goals and a machine-readable goalReference ' +
-          'identifying which financial-profile field or investment-goal ' +
-          'label motivated the recommendation. The summary briefly ' +
-          'explains the overall strategy. The warnings array surfaces ' +
-          'concerns the user should review (e.g., tax implications, ' +
-          'concentration risk). Do NOT include any other top-level fields.',
-        // Zod schema for the model-supplied args. The Vercel AI SDK
-        // derives a JSON Schema from this Zod schema and forwards it
-        // to the model; on response, the SDK parses the model's args
-        // back through the same Zod schema for type safety.
-        parameters: rebalancingArgsSchema
-      })
-    };
+    return rebalancingArgsSchema;
   }
 
   /**
@@ -743,16 +717,18 @@ export class RebalancingService {
     const systemPrompt = [
       'You are a neutral, fiduciary-minded financial advisor providing ' +
         'rebalancing recommendations.',
-      'You MUST invoke the `rebalancing_recommendations` tool to return ' +
-        'structured output. The tool requires EXACTLY THREE top-level ' +
-        'fields: `recommendations` (array), `summary` (string), and ' +
-        '`warnings` (array of strings).',
-      'FREE-FORM TEXT RESPONSES ARE PROHIBITED. You must not respond ' +
-        'with a plain-text answer; every response must invoke the ' +
-        'rebalancing_recommendations tool.',
-      'NO OTHER TOP-LEVEL FIELDS ARE PERMITTED beyond `recommendations`, ' +
-        '`summary`, and `warnings`. Do not add metadata, explanations, ' +
-        'or auxiliary fields to the tool input.',
+      'You MUST respond with a single valid JSON object and nothing else. ' +
+        'The JSON object MUST have EXACTLY THREE top-level fields: ' +
+        '"recommendations" (array), "summary" (string), and "warnings" ' +
+        '(array of strings). Do NOT include any text before or after the JSON.',
+      'NO OTHER TOP-LEVEL FIELDS ARE PERMITTED beyond "recommendations", ' +
+        '"summary", and "warnings". Do not add metadata, explanations, ' +
+        'or auxiliary fields.',
+      'Each item in "recommendations" MUST have these fields: "action" ' +
+        '(one of "BUY", "SELL", "HOLD"), "ticker" (non-empty string), ' +
+        '"fromPct" (decimal fraction 0.0-1.0), "toPct" (decimal fraction ' +
+        '0.0-1.0), "rationale" (non-empty string), "goalReference" ' +
+        '(non-empty string).',
       'Each recommendation MUST cite a specific FinancialProfile field ' +
         'or investmentGoal label in goalReference, and the rationale ' +
         'MUST explicitly mention that goal in plain language.',
@@ -782,7 +758,9 @@ export class RebalancingService {
         'the user financial profile and stated investment goals. Use ' +
         'the allocation history above to identify drift trends when ' +
         'relevant.',
-      'Invoke the rebalancing_recommendations tool with structured output.'
+      'Respond with a JSON object only — no prose, no markdown fences. ' +
+        'The JSON must have exactly three top-level keys: ' +
+        '"recommendations" (array), "summary" (string), "warnings" (array).'
     ].join('\n');
 
     return { systemPrompt, userMessage };

@@ -723,11 +723,22 @@ export class AiChatService {
     // source `authenticatedUserId` from the closure scope.
     return [
       `You are a helpful AI portfolio assistant integrated with Ghostfolio.`,
-      `When you need to refer to the authenticated user in free-form ` +
-        `text, use the placeholder identifier ` +
-        `"${AiChatService.AUTHENTICATED_USER_PLACEHOLDER}". The server ` +
-        `automatically applies the JWT-authenticated user id to every ` +
-        `tool dispatch — tool inputs DO NOT accept a userId argument.`,
+      `Answer the user's questions conversationally and directly using the ` +
+        `portfolio data already provided below in this prompt.`,
+      ``,
+      `CRITICAL RESPONSE RULES — follow these exactly:`,
+      `1. NEVER describe, narrate, or mention function calls, tool invocations, ` +
+        `or JSON objects in your response. Do not write phrases like "I will use ` +
+        `the get_current_positions function", "Here is the JSON response", ` +
+        `"I will call...", or any similar narration.`,
+      `2. NEVER output raw JSON or code blocks in response to a user question.`,
+      `3. Answer immediately and conversationally. If the answer is in the ` +
+        `portfolio data below, use it directly — do not say you need to look ` +
+        `it up.`,
+      `4. If you genuinely cannot answer from the data provided, say so simply ` +
+        `(e.g. "I don't have that data available right now.").`,
+      `5. Keep responses concise and human-friendly. Use plain English, not ` +
+        `field names or parameter identifiers.`,
       ``,
       `# Current Portfolio`,
       portfolioSummary,

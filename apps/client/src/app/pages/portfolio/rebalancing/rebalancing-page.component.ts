@@ -69,6 +69,36 @@ export class RebalancingPageComponent implements OnInit {
     return item;
   }
 
+  /**
+   * Converts a machine-readable `goalReference` value emitted by the model
+   * into a human-friendly display label.
+   *
+   *   - `investmentGoals[*].*`  → "Investment Goals"
+   *   - camelCase field names   → "Title Cased Words"
+   *     (e.g. `riskTolerance`   → "Risk Tolerance")
+   */
+  public formatGoalReference(ref: string): string {
+    if (!ref) {
+      return ref;
+    }
+
+    // Any reference that starts with "investmentGoals" (including indexed
+    // variants like investmentGoals[0].label) collapses to a single label.
+    if (ref.startsWith('investmentGoals')) {
+      return 'Investment Goals';
+    }
+
+    // Extract just the base field name (before any '[' or '.') so that
+    // dotted paths like "retirementTargetAge.foo" are handled cleanly.
+    const base = ref.split(/[.[]/)[0];
+
+    // Convert camelCase to space-separated Title Case words.
+    return base
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, (ch) => ch.toUpperCase())
+      .trim();
+  }
+
   private fetchRecommendations() {
     this.errorMessage.set(null);
     this.isLoading.set(true);

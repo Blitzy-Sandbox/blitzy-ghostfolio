@@ -217,7 +217,7 @@ export class ChatPanelComponent implements OnDestroy {
     }
 
     const deltaX = event.clientX - this.dragStartX;
-    const proposedWidth = this.dragStartWidth - deltaX;
+    const proposedWidth = this.dragStartWidth + deltaX;
     const clampedWidth = Math.min(
       MAX_EXPANDED_WIDTH_PX,
       Math.max(MIN_EXPANDED_WIDTH_PX, proposedWidth)
