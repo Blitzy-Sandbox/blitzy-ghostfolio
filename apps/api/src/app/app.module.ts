@@ -32,6 +32,7 @@ import { AccountModule } from './account/account.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { AdminModule } from './admin/admin.module';
 import { AiChatModule } from './ai-chat/ai-chat.module';
+import { AiProviderModule } from './ai-provider/ai-provider.module';
 import { AppController } from './app.controller';
 import { AssetModule } from './asset/asset.module';
 import { AuthDeviceModule } from './auth-device/auth-device.module';
@@ -74,6 +75,7 @@ import { UserModule } from './user/user.module';
     ActivitiesModule,
     AiChatModule,
     AiModule,
+    AiProviderModule,
     ApiKeysModule,
     AssetModule,
     AssetsModule,

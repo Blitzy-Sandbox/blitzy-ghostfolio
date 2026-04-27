@@ -1,3 +1,4 @@
+import { AiProviderModule } from '@ghostfolio/api/app/ai-provider/ai-provider.module';
 import { MetricsModule } from '@ghostfolio/api/app/metrics/metrics.module';
 import { PortfolioModule } from '@ghostfolio/api/app/portfolio/portfolio.module';
 import { SnowflakeSyncModule } from '@ghostfolio/api/app/snowflake-sync/snowflake-sync.module';
@@ -82,6 +83,7 @@ import { RebalancingService } from './rebalancing.service';
 @Module({
   controllers: [RebalancingController],
   imports: [
+    AiProviderModule,
     ConfigModule,
     MetricsModule,
     PortfolioModule,

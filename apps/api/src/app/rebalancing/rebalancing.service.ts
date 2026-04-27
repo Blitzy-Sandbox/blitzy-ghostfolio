@@ -1,3 +1,4 @@
+import { AiProviderService } from '@ghostfolio/api/app/ai-provider/ai-provider.service';
 import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.service';
 import { SnowflakeSyncService } from '@ghostfolio/api/app/snowflake-sync/snowflake-sync.service';
@@ -8,157 +9,158 @@ import type {
   RebalancingResponse
 } from '@ghostfolio/common/interfaces';
 
-import Anthropic from '@anthropic-ai/sdk';
 import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { generateText, tool } from 'ai';
+import { z } from 'zod';
 
 import { RebalancingRequestDto } from './dtos/rebalancing-request.dto';
 
 /**
  * `RebalancingService` is the core service for **Feature C — Explainable
  * Rebalancing Engine** described in AAP § 0.1.1, § 0.1.2.4, § 0.5.1.1, and
- * § 0.7.5.2 (rebalancing engine gate).
+ * § 0.7.5.2 (rebalancing engine gate), MIGRATED to the Vercel AI SDK per
+ * **Refine PR Directive 3**.
  *
- * Responsibilities:
- *   1. Construct an Anthropic SDK client at module init using credentials read
- *      EXCLUSIVELY through `ConfigService` (Rule 3, AAP § 0.7.1.3).
- *   2. Build a personalized prompt for every request from the authenticated
- *      user's live `PortfolioService.getDetails(...)` snapshot and persisted
- *      `FinancialProfile` (per AAP § 0.5.1.1).
- *   3. Define a single Claude tool schema named `rebalancing_recommendations`
- *      whose `input_schema` mirrors the verbatim `RebalancingResponse`
- *      contract from AAP § 0.1.2.4.
- *   4. Force tool invocation via `tool_choice: { type: 'tool', name: ... }`
- *      so that Claude's response is GUARANTEED to contain a `tool_use`
- *      content block (and never free-form text).
- *   5. Read structured output EXCLUSIVELY from `tool_use` content blocks —
- *      NEVER parse text content (Rule 4, AAP § 0.7.1.4 — central to this
- *      feature).
+ * Migration summary (Refine PR Directive 3):
+ *   - REMOVED: direct `@anthropic-ai/sdk` `Anthropic` constructor +
+ *     `messages.create(...)` call.
+ *   - REMOVED: direct `ConfigService.get('ANTHROPIC_API_KEY' | 'ANTHROPIC_MODEL')`
+ *     reads. Provider + model selection is centralized in the injected
+ *     `AiProviderService` (Refine PR Directive 1) so any of the four
+ *     supported providers (`anthropic`, `openai`, `google`, `ollama`)
+ *     drives recommendation generation transparently.
+ *   - ADDED: Vercel AI SDK `generateText({ model, tools, toolChoice,
+ *     system, prompt, ... })`. The single registered tool
+ *     `rebalancing_recommendations` is FORCED via
+ *     `toolChoice: 'required'`, which is the Vercel SDK's portable
+ *     equivalent of Anthropic's `tool_choice: { type: 'tool', name }`
+ *     (Rule 4 / AAP § 0.7.1.4 preserved).
+ *   - ADDED: Zod `parameters` schema that requires EXACTLY the three
+ *     top-level fields `recommendations`, `summary`, `warnings` —
+ *     anything else is silently stripped. This is the structural
+ *     equivalent of Anthropic's JSON Schema with `required: [...]` and
+ *     no permitted extras.
+ *   - ADDED: tool `description` starts with `OUTPUT ONLY.` and
+ *     enumerates the three required fields, per Refine PR Directive 3.
+ *   - ADDED: hardened system prompt that explicitly enumerates the
+ *     three required output field names, states that no additional
+ *     top-level fields are permitted, and prohibits free-form text
+ *     responses.
+ *   - ADDED: empty-`toolCalls` handling — when the configured provider
+ *     does NOT honor `toolChoice: 'required'` (e.g., a local Ollama
+ *     model that ignores the directive), the service throws
+ *     `BadGatewayException` with the `no_tool_use` outcome label, logs
+ *     the provider name at ERROR level, and increments
+ *     `rebalancing_requests_total{outcome="no_tool_use"}`. This is the
+ *     Refine PR Directive 3 pass/fail criterion #2.
+ *   - PRESERVED: all per-recommendation runtime validation
+ *     (`action` enum, non-empty `ticker`, finite `fromPct`/`toPct`,
+ *     non-empty `rationale` + `goalReference`).
+ *   - PRESERVED: all Observability metrics —
+ *     `rebalancing_requests_total{outcome}` (labels: `success`,
+ *     `no_tool_use`, `shape_invalid`, `error`) and
+ *     `rebalancing_latency_seconds` — emitted on the same boundaries.
  *
  * Hard rules enforced by this class (AAP § 0.7):
  *
  * - **Rule 1 (Module Isolation):** Cross-module dependencies are reached
  *   only through services explicitly listed in their source module's
- *   `exports` array — `PortfolioService` (PortfolioModule),
- *   `SnowflakeSyncService` (SnowflakeSyncModule), and
- *   `UserFinancialProfileService` (UserFinancialProfileModule). No imports
- *   reach into other feature module directories.
+ *   `exports` array — `AiProviderService` (AiProviderModule),
+ *   `MetricsService` (MetricsModule), `PortfolioService`
+ *   (PortfolioModule), `SnowflakeSyncService` (SnowflakeSyncModule),
+ *   and `UserFinancialProfileService` (UserFinancialProfileModule). No
+ *   imports reach into other feature module directories.
  *
- * - **Rule 3 (ConfigService):** Both `ANTHROPIC_API_KEY` and
- *   `ANTHROPIC_MODEL` are read through the injected `ConfigService`. No
- *   direct `process` global access for Anthropic credentials appears
- *   anywhere in this file.
+ * - **Rule 3 (ConfigService) — Indirected:** Provider credentials are
+ *   no longer read directly here; that responsibility moved to
+ *   `AiProviderService` (which reads `ANTHROPIC_API_KEY`,
+ *   `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OLLAMA_BASE_URL` exclusively
+ *   through the injected NestJS `ConfigService`).
  *
  * - **Rule 4 (Tool-Use Structured Output):** The `recommend(...)` method
- *   reads `RebalancingResponse` ONLY from a content block where
- *   `block.type === 'tool_use'`. Free-form text content is NEVER parsed.
- *   When no `tool_use` block is present, the service throws
- *   `BadGatewayException` (HTTP 502) — the canonical NestJS exception for
- *   upstream-service failures.
+ *   reads `RebalancingResponse` ONLY from `result.toolCalls[0].args`.
+ *   Free-form text content (`result.text`) is NEVER parsed. When
+ *   `result.toolCalls` is empty, the service throws
+ *   `BadGatewayException` (HTTP 502) — the canonical NestJS exception
+ *   for upstream-service failures.
  *
- * - **Per-recommendation runtime validation (AAP § 0.7.5.2 gate):** After
- *   the top-level shape check (`recommendations`, `summary`, `warnings`),
- *   `recommend(...)` iterates each `recommendations[i]` entry and rejects
- *   the response with `BadGatewayException` when ANY of the following are
- *   not satisfied for ANY entry:
+ * - **Per-recommendation runtime validation (AAP § 0.7.5.2 gate):**
+ *   After Zod parses the structured top-level shape, `recommend(...)`
+ *   iterates each `recommendations[i]` entry and rejects the response
+ *   with `BadGatewayException` when ANY of the following are not
+ *   satisfied for ANY entry:
  *     * `action` ∈ { 'BUY', 'SELL', 'HOLD' }
  *     * `ticker` is a non-empty string
  *     * `fromPct`/`toPct` are finite numbers
  *     * `rationale` is a non-empty string
  *     * `goalReference` is a non-empty string
- *   This implements the rebalancing-engine acceptance gate which requires
- *   "every item in `recommendations` has a non-empty `rationale` and
- *   `goalReference`".
+ *   The Zod schema declares all of these constraints, but the
+ *   defense-in-depth runtime validator re-checks them server-side so
+ *   no model-emitted entry with empty-string rationale/goalReference
+ *   ever reaches the user.
  *
  * - **JWT-authoritative `userId`:** The `userId` parameter on
  *   `recommend(...)` is sourced by the controller from `request.user.id`
- *   (the JWT-verified user id) — NEVER from the request body. The service
- *   itself trusts this caller-supplied value as authoritative.
+ *   (the JWT-verified user id) — NEVER from the request body.
  *
- * - **Observability (AAP § 0.7.2):** Every `recommend(...)` invocation logs
- *   start and end events with the caller-supplied `correlationId`, the
- *   per-request `userId`, the recommendation count, and the elapsed
- *   milliseconds. The Anthropic API key NEVER appears in any log line.
- *   In addition, `MetricsService` is updated on every invocation:
- *     * `rebalancing_requests_total` — counter labeled by `outcome` ∈
- *       `{ success, no_tool_use, shape_invalid, error }` so dashboards can
- *       compute success rate and break failure modes apart.
- *     * `rebalancing_latency_seconds` — histogram (no labels) capturing
- *       end-to-end wall-clock latency from method entry through structured
- *       output validation.
- *   The static-Logger convention (`Logger.log(message, 'RebalancingService')`)
- *   matches the project-wide pattern (e.g., `snowflake-sync.service.ts`,
- *   `ai-chat.service.ts`).
+ * - **Observability (AAP § 0.7.2):** Every `recommend(...)` invocation
+ *   logs start and end events with the caller-supplied `correlationId`,
+ *   the per-request `userId`, the recommendation count, and the
+ *   elapsed milliseconds. Provider credentials NEVER appear in any log
+ *   line (the credential read is encapsulated inside
+ *   `AiProviderService`).
  *
  * - **Snowflake historical context (AAP § 0.1.3, § 0.5.1.1):** The
- *   personalized prompt enriches the live `PortfolioService` snapshot with
- *   recent historical allocation data fetched from Snowflake via
- *   `SnowflakeSyncService.queryHistory(...)`. The query returns up to 90
- *   days of `portfolio_snapshots` rows for the authenticated user (a
- *   parameterized SELECT — Rule 2 compliant) so Claude can reason about
- *   how the user's allocation has drifted recently. A failure to fetch
- *   historical data does NOT block rebalancing; the prompt degrades
- *   gracefully and the request still completes against live data alone.
+ *   personalized prompt enriches the live `PortfolioService` snapshot
+ *   with recent historical allocation data fetched from Snowflake via
+ *   `SnowflakeSyncService.queryHistory(...)`. The query returns up to
+ *   90 days of `portfolio_snapshots` rows for the authenticated user
+ *   (a parameterized SELECT — Rule 2 compliant) so the model can
+ *   reason about how the user's allocation has drifted recently. A
+ *   failure to fetch historical data does NOT block rebalancing; the
+ *   prompt degrades gracefully and the request still completes against
+ *   live data alone.
  */
 @Injectable()
 export class RebalancingService {
   /**
-   * Default `max_tokens` budget on each `messages.create(...)` call.
-   *
-   * Anthropic's API requires `max_tokens` on every request; 4096 tokens is
-   * a generous budget for structured rebalancing output (typically a few
-   * dozen recommendations plus summary and warnings text — well under the
-   * cap).
-   */
-  private static readonly DEFAULT_MAX_TOKENS = 4096;
-
-  /**
-   * Maximum number of holdings rendered into the personalized user message.
+   * Maximum number of holdings rendered into the personalized user
+   * message.
    *
    * A typical portfolio holds 10–30 positions; capping at 50 keeps the
-   * prompt compact while covering the long tail. Holdings are sorted by
-   * descending allocation percentage so the most material positions are
-   * always included.
+   * prompt compact while covering the long tail. Holdings are sorted
+   * by descending allocation percentage so the most material positions
+   * are always included.
    */
   private static readonly USER_MESSAGE_HOLDINGS_CAP = 50;
 
   /**
-   * Production-grade default Claude model id used when the operator has not
-   * set `ANTHROPIC_MODEL` in the environment. This is intentionally a
-   * stable dated alias (`claude-3-5-sonnet-20241022`) rather than the
-   * floating `claude-3-5-sonnet-latest` so the deployed application's
-   * behavior does not silently change when Anthropic ships a new minor
-   * revision. Operators can override the default at any time via the
-   * `ANTHROPIC_MODEL` env var (per AAP § 0.7.3) without touching source.
-   */
-  private static readonly DEFAULT_MODEL = 'claude-3-5-sonnet-20241022';
-
-  /**
-   * Tool name used for the single forced `tool_use` invocation. Centralized
+   * Tool name used for the single forced tool invocation. Centralized
    * here so the schema definition (`buildRebalancingTool()`), the
-   * `tool_choice` clause on `messages.create(...)`, and downstream
-   * validation can all reference the same string literal.
+   * `tool_choice` clause on `generateText(...)`, and downstream
+   * `result.toolCalls.find(...)` lookups all reference the same string
+   * literal.
    */
   private static readonly TOOL_NAME = 'rebalancing_recommendations';
 
   /**
-   * Allowed `action` values for each recommendation entry. The
-   * `tool_choice`-forced schema declares this enum to Claude and the
+   * Allowed `action` values for each recommendation entry. The Zod
+   * `parameters` schema declares this enum to the model and the
    * runtime validator at `recommend(...)` re-enforces it server-side.
    */
   private static readonly ALLOWED_ACTIONS = ['BUY', 'SELL', 'HOLD'] as const;
 
   /**
-   * Number of days of `portfolio_snapshots` history rendered into the user
-   * message via `SnowflakeSyncService.queryHistory(...)`. Ninety days
-   * provides a quarter of allocation drift context — enough for Claude to
-   * detect material shifts without bloating the prompt.
+   * Number of days of `portfolio_snapshots` history rendered into the
+   * user message via `SnowflakeSyncService.queryHistory(...)`. Ninety
+   * days provides a quarter of allocation drift context — enough for
+   * the model to detect material shifts without bloating the prompt.
    */
   private static readonly HISTORY_LOOKBACK_DAYS = 90;
 
   /**
-   * Maximum number of historical `portfolio_snapshots` rows rendered into
-   * the user message. Holds the prompt size bounded even when the
+   * Maximum number of historical `portfolio_snapshots` rows rendered
+   * into the user message. Holds the prompt size bounded even when the
    * Snowflake query returns the LIMIT-cap of rows allowed by
    * `queryHistory(...)`.
    */
@@ -174,51 +176,24 @@ export class RebalancingService {
 
   /**
    * Prometheus histogram name for end-to-end rebalancing wall-clock
-   * latency. Recorded in seconds (consistent with Prometheus conventions
-   * and with `ai_chat_first_token_latency_seconds`). No labels are used
-   * to keep the histogram cardinality minimal.
+   * latency. Recorded in seconds (consistent with Prometheus
+   * conventions and with `ai_chat_first_token_latency_seconds`). No
+   * labels are used to keep the histogram cardinality minimal.
    */
   private static readonly METRIC_LATENCY_SECONDS =
     'rebalancing_latency_seconds';
 
-  /**
-   * Lazily-constructed Anthropic SDK client. The `apiKey` is read once at
-   * service construction time via
-   * `ConfigService.get<string>('ANTHROPIC_API_KEY')` — never via the
-   * `process` global (Rule 3 / AAP § 0.7.1.3).
-   */
-  private readonly anthropic: Anthropic;
-
-  /**
-   * Resolved Claude model id for every `messages.create(...)` call.
-   * Defaults to {@link RebalancingService.DEFAULT_MODEL} when the operator
-   * has not set `ANTHROPIC_MODEL` in the environment.
-   */
-  private readonly model: string;
-
   public constructor(
-    private readonly configService: ConfigService,
+    private readonly aiProviderService: AiProviderService,
     private readonly metricsService: MetricsService,
     private readonly portfolioService: PortfolioService,
     private readonly snowflakeSyncService: SnowflakeSyncService,
     private readonly userFinancialProfileService: UserFinancialProfileService
   ) {
-    // Rule 3: credential access via ConfigService ONLY. The optional empty
-    // string fallback keeps the SDK constructor from throwing on a missing
-    // env var at boot — the actual API call will fail fast with a 401,
-    // which is the correct failure mode (configuration error, not crash).
-    const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY') ?? '';
-
-    this.anthropic = new Anthropic({ apiKey });
-
-    this.model =
-      this.configService.get<string>('ANTHROPIC_MODEL') ??
-      RebalancingService.DEFAULT_MODEL;
-
-    // Register the two Prometheus metric descriptions so `/api/v1/metrics`
-    // emits proper `# HELP` lines (per the Observability rule). The
-    // registration is idempotent — the registry uses the first
-    // description seen.
+    // Register the two Prometheus metric descriptions so
+    // `/api/v1/metrics` emits proper `# HELP` lines (per the
+    // Observability rule). The registration is idempotent — the
+    // registry uses the first description seen.
     this.metricsService.registerHelp(
       RebalancingService.METRIC_REQUESTS_TOTAL,
       'Total rebalancing recommendation requests handled by RebalancingService, ' +
@@ -236,33 +211,42 @@ export class RebalancingService {
    * authenticated user.
    *
    * Workflow:
-   *   1. Build the personalized prompt (system + user message) from the
-   *      user's live portfolio holdings and persisted `FinancialProfile`.
-   *   2. Construct the single `rebalancing_recommendations` tool schema
-   *      whose `input_schema` mirrors the AAP § 0.1.2.4 contract.
-   *   3. Invoke `anthropic.messages.create(...)` (NON-streaming) with
-   *      `tool_choice: { type: 'tool', name: 'rebalancing_recommendations' }`
-   *      so the model is REQUIRED to invoke that single tool — Claude's
-   *      response will contain a `tool_use` content block, never free-form
-   *      text.
-   *   4. Read structured output EXCLUSIVELY from the `tool_use` content
-   *      block's `input` field (Rule 4). NEVER parse text content blocks.
+   *   1. Build the personalized prompt (system + user message) from
+   *      the user's live portfolio holdings, recent Snowflake history,
+   *      and persisted `FinancialProfile`.
+   *   2. Construct the single `rebalancing_recommendations` tool whose
+   *      Zod `parameters` schema mirrors the AAP § 0.1.2.4 contract
+   *      verbatim and whose description opens with `OUTPUT ONLY.`
+   *      (Refine PR Directive 3).
+   *   3. Invoke `generateText(...)` (NON-streaming) with
+   *      `toolChoice: 'required'` so the model is REQUIRED to invoke
+   *      the registered tool — `result.toolCalls` will contain at
+   *      least one entry, never free-form text alone.
+   *   4. Read structured output EXCLUSIVELY from
+   *      `result.toolCalls[0].args` (Rule 4). NEVER inspect
+   *      `result.text`.
    *   5. Validate that the structured output has the three required
-   *      top-level fields (`recommendations`, `summary`, `warnings`); if
-   *      any are missing, throw `BadGatewayException`.
+   *      top-level fields. Zod has already enforced types but the
+   *      defense-in-depth check rejects empty arrays / strings.
    *
-   * @param   correlationId   per-request id propagated through every log
-   *                          line for the Observability rule.
-   * @param   requestPayload  optional override fields (per AAP § 0.5.1.1,
-   *                          reserved for future expansion — currently
-   *                          unused inside the service body).
-   * @param   userId          authenticated user id from JWT (NEVER from
-   *                          request body).
+   * @param   correlationId   per-request id propagated through every
+   *                          log line for the Observability rule.
+   * @param   requestPayload  optional override fields (per AAP
+   *                          § 0.5.1.1, reserved for future expansion
+   *                          — currently unused inside the service
+   *                          body).
+   * @param   userId          authenticated user id from JWT (NEVER
+   *                          from request body).
    * @returns                 structured `RebalancingResponse` populated
-   *                          exclusively from the Claude `tool_use` block.
-   * @throws  {BadGatewayException} when Anthropic returns no `tool_use`
-   *                                block, an unexpected structured-output
-   *                                shape, or any other upstream failure.
+   *                          exclusively from
+   *                          `result.toolCalls[0].args`.
+   * @throws  {BadGatewayException} when the model returns no tool
+   *                                call (Refine PR Directive 3
+   *                                pass/fail #2: empty toolCalls →
+   *                                HTTP 502 + `no_tool_use` counter
+   *                                increment), an unexpected
+   *                                structured-output shape, or any
+   *                                other upstream failure.
    */
   public async recommend({
     correlationId,
@@ -280,61 +264,75 @@ export class RebalancingService {
       'RebalancingService'
     );
 
-    // Suppress the unused-parameter warning for `requestPayload` — it is
-    // reserved for future override fields per AAP § 0.5.1.1. Once
-    // `targetAllocation` (or other override fields) are wired through into
-    // the user message, this `void` discard goes away.
+    // Suppress the unused-parameter warning for `requestPayload` — it
+    // is reserved for future override fields per AAP § 0.5.1.1. Once
+    // `targetAllocation` (or other override fields) are wired through
+    // into the user message, this `void` discard goes away.
     void requestPayload;
 
     // Track which fault path we exit through so the terminal outcome
-    // counter (`rebalancing_requests_total`) reflects the correct label
-    // and the latency histogram is observed exactly once per call.
+    // counter (`rebalancing_requests_total`) reflects the correct
+    // label and the latency histogram is observed exactly once per
+    // call.
     let outcome: 'success' | 'no_tool_use' | 'shape_invalid' | 'error' =
       'error';
 
     try {
       const { systemPrompt, userMessage } = await this.buildPrompt(userId);
-      const tool = this.buildRebalancingTool();
+      const tools = this.buildRebalancingTool();
 
-      // CRITICAL Rule 4: `tool_choice` FORCES the model to invoke the named
-      // tool. Per Anthropic's API contract, when `tool_choice` selects a
-      // specific tool, the response WILL contain a `tool_use` content
-      // block for that tool — text-only responses are not possible.
-      const response = await this.anthropic.messages.create({
-        max_tokens: RebalancingService.DEFAULT_MAX_TOKENS,
+      // CRITICAL Rule 4: `toolChoice: 'required'` FORCES the model to
+      // invoke SOME tool from the `tools` map. Since we only register
+      // a single tool (`rebalancing_recommendations`), the model is
+      // pinned to that one — yielding a `result.toolCalls[0]` entry
+      // whose `args` field is the structured `RebalancingResponse`
+      // payload. This is the Vercel AI SDK's portable equivalent of
+      // Anthropic's `tool_choice: { type: 'tool', name }`.
+      const result = await generateText({
         messages: [{ content: userMessage, role: 'user' }],
-        model: this.model,
+        model: this.aiProviderService.getModel(),
         system: systemPrompt,
-        tool_choice: { name: RebalancingService.TOOL_NAME, type: 'tool' },
-        tools: [tool]
+        toolChoice: 'required',
+        tools
       });
 
-      // CRITICAL Rule 4: read structured output ONLY from a `tool_use`
-      // content block. The `find(...)` predicate narrows the union via the
-      // discriminated `type` field; no text block is ever inspected.
-      const toolUseBlock = (response.content ?? []).find(
-        (block): block is Anthropic.ToolUseBlock =>
-          block?.type === 'tool_use' &&
-          block.name === RebalancingService.TOOL_NAME
+      // CRITICAL Rule 4 + Refine PR Directive 3: read structured
+      // output ONLY from a `tool_use`-equivalent toolCalls entry.
+      // We additionally narrow by `toolName` so a future expansion
+      // of the `tools` map (e.g., adding a "warning escalation" tool)
+      // does not silently start consuming a different tool's args.
+      const rebalancingToolCall = (result.toolCalls ?? []).find(
+        (call) => call.toolName === RebalancingService.TOOL_NAME
       );
 
-      if (!toolUseBlock || toolUseBlock.input === undefined) {
+      if (!rebalancingToolCall) {
+        // Refine PR Directive 3 pass/fail criterion #2: empty
+        // `toolCalls` (or no matching tool name) — the configured
+        // provider did NOT honor `toolChoice: 'required'`. Common
+        // cause: a local Ollama model that lacks tool-use training.
+        // We log the provider name at ERROR level so operators can
+        // correlate the failure with the AI_PROVIDER setting.
         outcome = 'no_tool_use';
         Logger.error(
-          `[${correlationId}] rebalancing returned no tool_use block ` +
-            `userId=${userId}`,
+          `[${correlationId}] rebalancing returned no tool_use call ` +
+            `(provider=${this.aiProviderService.getProvider()} ` +
+            `model=${this.aiProviderService.getModelId()}) userId=${userId}`,
           'RebalancingService'
         );
         throw new BadGatewayException(
-          'Anthropic returned an unexpected response shape (no tool_use block).'
+          'The configured AI provider did not return a structured ' +
+            'rebalancing recommendation. This may indicate the ' +
+            'configured model does not support forced tool use.'
         );
       }
 
-      // The `input` field is typed as `unknown` by the SDK because Claude
-      // is responsible for shaping it according to the supplied
-      // `input_schema`. We narrow at runtime by checking the three
-      // required top-level fields per AAP § 0.1.2.4 contract.
-      const candidate = toolUseBlock.input as RebalancingResponse;
+      // The `args` field is typed as `unknown` from the runtime
+      // perspective because Zod has already parsed it; the `as
+      // RebalancingResponse` cast bridges the SDK's inferred type
+      // (which is `z.infer<typeof rebalancingArgsSchema>`) to our
+      // exported domain interface. Both shapes are structurally
+      // identical for the three top-level fields.
+      const candidate = rebalancingToolCall.args as RebalancingResponse;
 
       if (
         !Array.isArray(candidate?.recommendations) ||
@@ -343,25 +341,21 @@ export class RebalancingService {
       ) {
         outcome = 'shape_invalid';
         Logger.error(
-          `[${correlationId}] rebalancing tool_use input has unexpected ` +
+          `[${correlationId}] rebalancing tool_use args has unexpected ` +
             `shape userId=${userId}`,
           'RebalancingService'
         );
         throw new BadGatewayException(
-          'Anthropic tool_use response is missing required fields ' +
+          'AI provider tool_use response is missing required fields ' +
             '(recommendations, summary, warnings).'
         );
       }
 
-      // Per-recommendation runtime validation enforces the AAP § 0.7.5.2
-      // rebalancing-engine acceptance gate ("every item in
-      // recommendations has a non-empty rationale and goalReference") and
-      // the implicit per-item required fields declared in the
-      // `input_schema` from `buildRebalancingTool()`. Even though
-      // Anthropic's `tool_choice`-forced invocation typically respects
-      // the schema, we MUST NOT trust upstream output blindly — a
+      // Per-recommendation runtime validation (defense in depth even
+      // though Zod has already parsed the args). This ensures no
       // model-emitted entry with empty-string rationale/goalReference
-      // would otherwise reach the user.
+      // reaches the user — a regression that could otherwise occur if
+      // the Zod schema is loosened in a future change.
       const validationError = this.findRecommendationValidationError(
         candidate.recommendations
       );
@@ -374,7 +368,7 @@ export class RebalancingService {
           'RebalancingService'
         );
         throw new BadGatewayException(
-          `Anthropic tool_use response contains an invalid recommendation: ` +
+          `AI provider tool_use response contains an invalid recommendation: ` +
             `${validationError}`
         );
       }
@@ -392,17 +386,19 @@ export class RebalancingService {
 
       return candidate;
     } catch (err) {
-      // BadGatewayException already carries the right HTTP-502 mapping —
-      // re-throw as-is so the global exception filter preserves the status.
-      // The `outcome` label was set to the appropriate value at each
-      // throw site (`no_tool_use` or `shape_invalid`); fall through to
-      // the `finally` block which emits the metrics.
+      // BadGatewayException already carries the right HTTP-502
+      // mapping — re-throw as-is so the global exception filter
+      // preserves the status. The `outcome` label was set to the
+      // appropriate value at each throw site (`no_tool_use` or
+      // `shape_invalid`); fall through to the `finally` block which
+      // emits the metrics.
       if (err instanceof BadGatewayException) {
         throw err;
       }
 
-      // Any non-BadGatewayException (network, SDK runtime, JSON parse,
-      // etc.) maps to the generic `error` outcome label.
+      // Any non-BadGatewayException (network, SDK runtime, JSON parse
+      // / Zod validation error inside the SDK, etc.) maps to the
+      // generic `error` outcome label.
       outcome = 'error';
 
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -415,17 +411,18 @@ export class RebalancingService {
 
       // Map any other upstream / unexpected failure to HTTP 502. The
       // user-facing message is intentionally generic — the detailed
-      // `errorMessage` lives only in the structured log line above and
-      // never leaks the API key (it is constructed from `ConfigService`
-      // values that are not interpolated into the message).
+      // `errorMessage` lives only in the structured log line above
+      // and never leaks credentials (provider keys are encapsulated
+      // inside `AiProviderService`, not interpolated into the
+      // message).
       throw new BadGatewayException(
         'Rebalancing recommendation could not be generated. Please retry.'
       );
     } finally {
       // Emit the terminal-outcome counter and the latency histogram
       // exactly once per recommend() call regardless of return path.
-      // Labels use a fixed-cardinality `outcome` field and no userId or
-      // correlationId — preventing the metrics registry's
+      // Labels use a fixed-cardinality `outcome` field and no userId
+      // or correlationId — preventing the metrics registry's
       // MAX_LABEL_CARDINALITY guard from silently dropping series.
       const elapsedSeconds = (Date.now() - startTime) / 1000;
       this.metricsService.incrementCounter(
@@ -441,11 +438,12 @@ export class RebalancingService {
   }
 
   /**
-   * Validates the per-item shape of `recommendations` returned by Claude
-   * inside the `tool_use` block. Implements the AAP § 0.7.5.2 rebalancing-
-   * engine gate ("every item in `recommendations` has a non-empty
-   * `rationale` and `goalReference`") and the broader per-field schema
-   * declared in `buildRebalancingTool()`'s `input_schema.required`:
+   * Validates the per-item shape of `recommendations` returned by the
+   * model inside the tool call. Implements the AAP § 0.7.5.2
+   * rebalancing-engine gate ("every item in `recommendations` has a
+   * non-empty `rationale` and `goalReference`") and the broader
+   * per-field schema declared by the Zod parameters schema in
+   * `buildRebalancingTool()`:
    *
    *   - `action`        ∈ { 'BUY', 'SELL', 'HOLD' }
    *   - `ticker`        non-empty string
@@ -454,16 +452,17 @@ export class RebalancingService {
    *   - `rationale`     non-empty string
    *   - `goalReference` non-empty string
    *
-   * The function returns `null` when every entry passes validation, or a
-   * concise human-readable description of the FIRST failure (e.g.,
-   * `"recommendations[2].fromPct is not a finite number"`). The returned
-   * string never contains user-supplied or model-supplied values that
-   * could leak PII into log lines — only the field path and a generic
-   * failure descriptor.
+   * The function returns `null` when every entry passes validation,
+   * or a concise human-readable description of the FIRST failure
+   * (e.g., `"recommendations[2].fromPct is not a finite number"`).
+   * The returned string never contains user-supplied or model-
+   * supplied values that could leak PII into log lines — only the
+   * field path and a generic failure descriptor.
    *
-   * Note: `recommendations` itself is permitted to be empty (Claude's
-   * "no rebalancing recommended" response is `recommendations: []`); the
-   * empty-array case is therefore explicitly accepted (returns `null`).
+   * Note: `recommendations` itself is permitted to be empty (the
+   * model's "no rebalancing recommended" response is
+   * `recommendations: []`); the empty-array case is therefore
+   * explicitly accepted (returns `null`).
    */
   private findRecommendationValidationError(
     recommendations: RebalancingResponse['recommendations']
@@ -476,12 +475,13 @@ export class RebalancingService {
       }
 
       // Widen `ALLOWED_ACTIONS` (a `readonly` tuple, narrow type at
-      // compile time) to `readonly string[]` so the runtime `includes`
-      // call accepts any string. The compile-time type of `item.action`
-      // is `'BUY' | 'SELL' | 'HOLD'` because of the `as RebalancingResponse`
-      // cast, but the actual data from Anthropic can be ANY string at
-      // runtime — a defensive `typeof` guard and the widened includes
-      // call form the runtime validator.
+      // compile time) to `readonly string[]` so the runtime
+      // `includes` call accepts any string. The compile-time type of
+      // `item.action` is `'BUY' | 'SELL' | 'HOLD'` because of the
+      // `as RebalancingResponse` cast, but the actual data from the
+      // model can be ANY string at runtime — a defensive `typeof`
+      // guard and the widened includes call form the runtime
+      // validator.
       if (
         typeof item.action !== 'string' ||
         !(RebalancingService.ALLOWED_ACTIONS as readonly string[]).includes(
@@ -522,153 +522,169 @@ export class RebalancingService {
   }
 
   /**
-   * Builds the single Claude tool whose `input_schema` mirrors the
-   * `RebalancingResponse` contract from AAP § 0.1.2.4 verbatim.
+   * Builds the single tool whose Zod `parameters` schema mirrors the
+   * `RebalancingResponse` contract from AAP § 0.1.2.4 verbatim. The
+   * Vercel AI SDK accepts a `tools` map keyed by tool name; we register
+   * exactly one entry so `toolChoice: 'required'` pins the model to
+   * this tool.
    *
-   * The tool is forced via `tool_choice` on every `messages.create(...)`
-   * call so the model's response is GUARANTEED to invoke it — yielding a
-   * `tool_use` content block whose `input` field is the structured
-   * `RebalancingResponse` payload.
+   * Tool description (Refine PR Directive 3):
+   *   - MUST open with `OUTPUT ONLY.` so the model treats the tool
+   *     description as the canonical output contract.
+   *   - MUST enumerate the three required top-level fields
+   *     (`recommendations`, `summary`, `warnings`).
    *
    * Schema fidelity (AAP § 0.1.2.4):
    *   - `recommendations[].action` ∈ { 'BUY', 'SELL', 'HOLD' }
-   *   - `recommendations[].ticker` — string
-   *   - `recommendations[].fromPct` — number (decimal fraction 0.0–1.0)
-   *   - `recommendations[].toPct`   — number (decimal fraction 0.0–1.0)
-   *   - `recommendations[].rationale` — non-empty string referencing the
-   *     user's stated financial goal (Rule 4 verification gate)
+   *   - `recommendations[].ticker` — non-empty string
+   *   - `recommendations[].fromPct` — finite number (decimal fraction
+   *     0.0–1.0)
+   *   - `recommendations[].toPct`   — finite number (decimal fraction
+   *     0.0–1.0)
+   *   - `recommendations[].rationale` — non-empty string referencing
+   *     the user's stated financial goal (Rule 4 verification gate)
    *   - `recommendations[].goalReference` — non-empty FinancialProfile
-   *     field name OR investmentGoals[<index>].label (Rule 4 verification)
+   *     field name OR investmentGoals[<index>].label (Rule 4
+   *     verification)
    *   - `summary`  — string
    *   - `warnings` — string[]
    *
-   * The descriptions are written in natural language because the model
-   * uses them to generate higher-quality outputs (per the Anthropic
-   * tool-use guide: "Tool descriptions should be as detailed as possible").
-   *
-   * Type note: `Anthropic.Tool` is the canonical SDK type for a custom
-   * tool definition; it matches the project-wide convention established
-   * by `AiChatService.buildTools()` (`apps/api/src/app/ai-chat/ai-chat.service.ts`).
+   * The descriptions on each Zod field are surfaced in the JSON-Schema
+   * representation the SDK derives for the model — they are critical
+   * for output quality.
    */
-  private buildRebalancingTool(): Anthropic.Tool {
+  private buildRebalancingTool() {
+    // Zod schema for a single recommendation entry. The runtime
+    // constraints (`min(1)` for non-empty strings, `finite()` for
+    // fromPct/toPct) are enforced by the Vercel AI SDK during
+    // model-output parsing — invalid args produce a thrown error
+    // surfaced to our outer try/catch.
+    const recommendationSchema = z.object({
+      action: z
+        .enum(RebalancingService.ALLOWED_ACTIONS)
+        .describe(
+          'Trade action: BUY to increase allocation, SELL to decrease, ' +
+            'HOLD to keep as-is.'
+        ),
+      fromPct: z
+        .number()
+        .finite()
+        .describe(
+          'Current allocation as a decimal fraction (0.0 to 1.0). For ' +
+            'example, 0.10 means 10%.'
+        ),
+      goalReference: z
+        .string()
+        .min(1)
+        .describe(
+          'Machine-readable reference. Either a FinancialProfile field ' +
+            "name (e.g., 'retirementTargetAge', 'riskTolerance', " +
+            "'timeHorizonYears', 'monthlyIncome', 'monthlyDebtObligations', " +
+            "'retirementTargetAmount') OR an investment-goal label " +
+            '(e.g., "investmentGoals[0].label=\'House Down Payment\'"). ' +
+            'MUST NOT be empty.'
+        ),
+      rationale: z
+        .string()
+        .min(1)
+        .describe(
+          "Plain-language explanation referencing the user's financial " +
+            'goals. MUST NOT be empty. Should mention the specific ' +
+            'goal/profile-field motivating this action.'
+        ),
+      ticker: z
+        .string()
+        .min(1)
+        .describe('Asset ticker symbol (e.g., VTI, AAPL, BND).'),
+      toPct: z
+        .number()
+        .finite()
+        .describe(
+          'Target allocation as a decimal fraction (0.0 to 1.0). Same ' +
+            'scale as fromPct.'
+        )
+    });
+
+    // Zod schema for the full structured-output payload. The three
+    // top-level fields are REQUIRED — anything else the model emits
+    // is silently stripped by Zod's default object-parsing behavior
+    // (which satisfies Refine PR Directive 3's "no other top-level
+    // fields are permitted" requirement: extras are not part of the
+    // returned object, so they cannot appear in the user-facing
+    // RebalancingResponse).
+    const rebalancingArgsSchema = z.object({
+      recommendations: z
+        .array(recommendationSchema)
+        .describe(
+          'Ordered list of rebalancing actions. Empty array means no ' +
+            'changes recommended.'
+        ),
+      summary: z
+        .string()
+        .describe(
+          'Brief overall summary of the rebalancing strategy in one or ' +
+            'two sentences.'
+        ),
+      warnings: z
+        .array(z.string())
+        .describe(
+          "List of concerns the user should review (e.g., 'Tax " +
+            "implications of selling X should be reviewed.'). Empty " +
+            'array if no warnings.'
+        )
+    });
+
     return {
-      description:
-        'Returns structured portfolio rebalancing recommendations. Each ' +
-        'recommendation MUST include a plain-language rationale ' +
-        "explicitly referencing the user's stated financial goals and a " +
-        'machine-readable goalReference identifying which financial-' +
-        'profile field or investment-goal label motivated the ' +
-        'recommendation. The summary briefly explains the overall ' +
-        'strategy. The warnings array surfaces concerns the user should ' +
-        'review (e.g., tax implications, concentration risk).',
-      input_schema: {
-        properties: {
-          recommendations: {
-            description:
-              'Ordered list of rebalancing actions. Empty array means no ' +
-              'changes recommended.',
-            items: {
-              properties: {
-                action: {
-                  description:
-                    'Trade action: BUY to increase allocation, SELL to ' +
-                    'decrease, HOLD to keep as-is.',
-                  enum: ['BUY', 'SELL', 'HOLD'],
-                  type: 'string'
-                },
-                fromPct: {
-                  description:
-                    'Current allocation as a decimal fraction (0.0 to ' +
-                    '1.0). For example, 0.10 means 10%.',
-                  type: 'number'
-                },
-                goalReference: {
-                  description:
-                    'Machine-readable reference. Either a FinancialProfile ' +
-                    "field name (e.g., 'retirementTargetAge', " +
-                    "'riskTolerance', 'timeHorizonYears', 'monthlyIncome', " +
-                    "'monthlyDebtObligations', 'retirementTargetAmount') " +
-                    'OR an investment-goal label (e.g., ' +
-                    '"investmentGoals[0].label=\'House Down Payment\'"). ' +
-                    'MUST NOT be empty.',
-                  type: 'string'
-                },
-                rationale: {
-                  description:
-                    "Plain-language explanation referencing the user's " +
-                    'financial goals. MUST NOT be empty. Should mention ' +
-                    'the specific goal/profile-field motivating this ' +
-                    'action.',
-                  type: 'string'
-                },
-                ticker: {
-                  description: 'Asset ticker symbol (e.g., VTI, AAPL, BND).',
-                  type: 'string'
-                },
-                toPct: {
-                  description:
-                    'Target allocation as a decimal fraction (0.0 to ' +
-                    '1.0). Same scale as fromPct.',
-                  type: 'number'
-                }
-              },
-              required: [
-                'action',
-                'ticker',
-                'fromPct',
-                'toPct',
-                'rationale',
-                'goalReference'
-              ],
-              type: 'object'
-            },
-            type: 'array'
-          },
-          summary: {
-            description:
-              'Brief overall summary of the rebalancing strategy in one ' +
-              'or two sentences.',
-            type: 'string'
-          },
-          warnings: {
-            description:
-              "List of concerns the user should review (e.g., 'Tax " +
-              "implications of selling X should be reviewed.'). Empty " +
-              'array if no warnings.',
-            items: { type: 'string' },
-            type: 'array'
-          }
-        },
-        required: ['recommendations', 'summary', 'warnings'],
-        type: 'object'
-      },
-      name: RebalancingService.TOOL_NAME
+      [RebalancingService.TOOL_NAME]: tool({
+        description:
+          'OUTPUT ONLY. Returns structured portfolio rebalancing ' +
+          'recommendations as a JSON object with EXACTLY three top-level ' +
+          'fields: recommendations (array of {action, ticker, fromPct, ' +
+          'toPct, rationale, goalReference}), summary (string), and ' +
+          'warnings (array of strings). Each recommendation MUST include ' +
+          "a plain-language rationale explicitly referencing the user's " +
+          'stated financial goals and a machine-readable goalReference ' +
+          'identifying which financial-profile field or investment-goal ' +
+          'label motivated the recommendation. The summary briefly ' +
+          'explains the overall strategy. The warnings array surfaces ' +
+          'concerns the user should review (e.g., tax implications, ' +
+          'concentration risk). Do NOT include any other top-level fields.',
+        // Zod schema for the model-supplied args. The Vercel AI SDK
+        // derives a JSON Schema from this Zod schema and forwards it
+        // to the model; on response, the SDK parses the model's args
+        // back through the same Zod schema for type safety.
+        parameters: rebalancingArgsSchema
+      })
     };
   }
 
   /**
-   * Builds the personalized prompt sent to Claude for a single
+   * Builds the personalized prompt sent to the model for a single
    * `recommend(...)` invocation.
    *
    * The prompt has two halves:
-   *   - **systemPrompt** — neutral, fiduciary-minded persona; explicit
-   *     instruction to invoke the `rebalancing_recommendations` tool;
-   *     instruction to cite specific FinancialProfile fields or
-   *     investmentGoal labels; instruction on the percentage-as-decimal-
-   *     fraction convention used in `fromPct` / `toPct`.
-   *   - **userMessage** — Markdown-style sections containing the user's
-   *     current portfolio holdings (top {@link USER_MESSAGE_HOLDINGS_CAP}
-   *     by allocation), recent historical allocation snapshots from
-   *     Snowflake (last {@link HISTORY_LOOKBACK_DAYS} days for asset-class
-   *     drift context), and the user's persisted `FinancialProfile` (or a
-   *     "no profile on file" sentinel when `findByUserId` returns `null`).
+   *   - **systemPrompt** — neutral, fiduciary-minded persona. Refine
+   *     PR Directive 3 mandates the system prompt explicitly state:
+   *     (a) the three required top-level output field names, (b) that
+   *     no additional top-level fields are permitted, and (c) that
+   *     free-form text responses are prohibited. All three are
+   *     enforced verbatim below.
+   *   - **userMessage** — Markdown-style sections containing the
+   *     user's current portfolio holdings (top
+   *     {@link USER_MESSAGE_HOLDINGS_CAP} by allocation), recent
+   *     historical allocation snapshots from Snowflake (last
+   *     {@link HISTORY_LOOKBACK_DAYS} days for asset-class drift
+   *     context), and the user's persisted `FinancialProfile` (or a
+   *     "no profile on file" sentinel when `findByUserId` returns
+   *     `null`).
    *
-   * All three inputs (live portfolio, persisted profile, and Snowflake
-   * history) are fetched in parallel via `Promise.allSettled` so any one
-   * fetch failure does NOT bring down the rebalancing flow — the prompt
-   * degrades gracefully into one whose corresponding `userMessage`
-   * section describes the missing data, and the LLM is instructed (via
-   * the system prompt) to surface a warning-array entry as needed.
+   * All three inputs (live portfolio, persisted profile, and
+   * Snowflake history) are fetched in parallel via
+   * `Promise.allSettled` so any one fetch failure does NOT bring down
+   * the rebalancing flow — the prompt degrades gracefully into one
+   * whose corresponding `userMessage` section describes the missing
+   * data, and the model is instructed (via the system prompt) to
+   * surface a warning-array entry as needed.
    */
   private async buildPrompt(userId: string): Promise<{
     systemPrompt: string;
@@ -677,13 +693,14 @@ export class RebalancingService {
     const [portfolioDetailsResult, profileResult, historyResult] =
       await Promise.allSettled([
         this.portfolioService.getDetails({
-          // `impersonationId: undefined` mirrors the existing controller
-          // pattern when no `x-impersonation-id` header is present.
-          // `validateImpersonationId` then falls back to its default
-          // `aId = ''`, which Prisma accepts. Passing `null` is rejected by
-          // Prisma 7 because `Access.id` is non-nullable (QA Checkpoint 9
-          // CRITICAL #1 follow-on after the synthetic-REQUEST provider fix).
-          // Standardized across `RebalancingService` and `AiChatService`.
+          // `impersonationId: undefined` mirrors the existing
+          // controller pattern when no `x-impersonation-id` header is
+          // present. `validateImpersonationId` then falls back to its
+          // default `aId = ''`, which Prisma accepts. Passing `null`
+          // is rejected by Prisma 7 because `Access.id` is
+          // non-nullable (QA Checkpoint 9 CRITICAL #1 follow-on after
+          // the synthetic-REQUEST provider fix). Standardized across
+          // `RebalancingService` and `AiChatService`.
           impersonationId: undefined,
           userId
         }),
@@ -699,11 +716,12 @@ export class RebalancingService {
     // The Prisma-generated `FinancialProfile` row has
     // `investmentGoals: JsonValue` whereas the application-domain
     // `FinancialProfile` interface (from `@ghostfolio/common/interfaces`)
-    // narrows that field to `InvestmentGoal[]`. The two shapes overlap on
-    // every other field, and `summarizeProfile(...)` defensively re-checks
-    // `Array.isArray(profile.investmentGoals)` before iterating. We
-    // therefore cast through `unknown` to bridge the JSON-vs-typed-array
-    // discrepancy without weakening the consumer's typing.
+    // narrows that field to `InvestmentGoal[]`. The two shapes
+    // overlap on every other field, and `summarizeProfile(...)`
+    // defensively re-checks `Array.isArray(profile.investmentGoals)`
+    // before iterating. We therefore cast through `unknown` to bridge
+    // the JSON-vs-typed-array discrepancy without weakening the
+    // consumer's typing.
     const profile: FinancialProfile | null =
       profileResult.status === 'fulfilled'
         ? (profileResult.value as unknown as FinancialProfile | null)
@@ -716,23 +734,37 @@ export class RebalancingService {
     const profileSummary = this.summarizeProfile(profile);
     const historySummary = this.summarizeHistory(historyRows);
 
+    // Refine PR Directive 3 hardened system prompt. Each line below
+    // satisfies a specific clause of the directive:
+    //   (a) The three required output field names are enumerated:
+    //       "recommendations", "summary", "warnings".
+    //   (b) No additional top-level fields are permitted (line 4).
+    //   (c) Free-form text responses are prohibited (line 3).
     const systemPrompt = [
       'You are a neutral, fiduciary-minded financial advisor providing ' +
         'rebalancing recommendations.',
       'You MUST invoke the `rebalancing_recommendations` tool to return ' +
-        'structured output. Do NOT respond with free-form text.',
-      'Each recommendation MUST cite a specific FinancialProfile field or ' +
-        'investmentGoal label in goalReference, and the rationale MUST ' +
-        'explicitly mention that goal in plain language.',
+        'structured output. The tool requires EXACTLY THREE top-level ' +
+        'fields: `recommendations` (array), `summary` (string), and ' +
+        '`warnings` (array of strings).',
+      'FREE-FORM TEXT RESPONSES ARE PROHIBITED. You must not respond ' +
+        'with a plain-text answer; every response must invoke the ' +
+        'rebalancing_recommendations tool.',
+      'NO OTHER TOP-LEVEL FIELDS ARE PERMITTED beyond `recommendations`, ' +
+        '`summary`, and `warnings`. Do not add metadata, explanations, ' +
+        'or auxiliary fields to the tool input.',
+      'Each recommendation MUST cite a specific FinancialProfile field ' +
+        'or investmentGoal label in goalReference, and the rationale ' +
+        'MUST explicitly mention that goal in plain language.',
       'If the user has no financial profile on file, return an empty ' +
         'recommendations array and a warning that the user should fill ' +
         'in their FinancialProfile.',
-      'Use percentages as decimal fractions in fromPct and toPct (e.g., ' +
-        '0.10 for 10%).',
+      'Use percentages as decimal fractions in fromPct and toPct ' +
+        '(e.g., 0.10 for 10%).',
       'When historical allocation data is provided in the user message, ' +
         'use it ONLY to inform context about recent drift — do NOT ' +
-        'reference historical rows in goalReference (which must point at ' +
-        'a FinancialProfile field or investmentGoal label).'
+        'reference historical rows in goalReference (which must point ' +
+        'at a FinancialProfile field or investmentGoal label).'
     ].join('\n');
 
     const userMessage = [
@@ -747,8 +779,9 @@ export class RebalancingService {
       '',
       '# Task',
       'Recommend rebalancing trades to align the current portfolio with ' +
-        'the user financial profile and stated investment goals. Use the ' +
-        'allocation history above to identify drift trends when relevant.',
+        'the user financial profile and stated investment goals. Use ' +
+        'the allocation history above to identify drift trends when ' +
+        'relevant.',
       'Invoke the rebalancing_recommendations tool with structured output.'
     ].join('\n');
 
@@ -757,22 +790,22 @@ export class RebalancingService {
 
   /**
    * Fetches the authenticated user's recent allocation history from
-   * Snowflake via `SnowflakeSyncService.queryHistory(...)`. Returns up to
-   * {@link USER_MESSAGE_HISTORY_ROWS_CAP} rows ordered by most recent
-   * snapshot first.
+   * Snowflake via `SnowflakeSyncService.queryHistory(...)`. Returns up
+   * to {@link USER_MESSAGE_HISTORY_ROWS_CAP} rows ordered by most
+   * recent snapshot first.
    *
    * The query is a parameterized SELECT against `portfolio_snapshots`
    * (Rule 2: bind variables only — `?` placeholder for `user_id`, no
-   * caller-controlled string interpolation). The chronologically-bounded
-   * `DATEADD(day, -<N>, CURRENT_DATE())` filter uses a static class
-   * constant for the lookback so no caller value flows into the SQL
-   * string.
+   * caller-controlled string interpolation). The chronologically-
+   * bounded `DATEADD(day, -<N>, CURRENT_DATE())` filter uses a static
+   * class constant for the lookback so no caller value flows into the
+   * SQL string.
    *
    * Failure is non-fatal: if Snowflake is unreachable or the query
    * fails, this method logs at warn-level and returns `null`. The
    * caller treats `null` as "no history available" and the prompt
-   * degrades gracefully — the rebalancing flow still completes against
-   * live `PortfolioService` data alone.
+   * degrades gracefully — the rebalancing flow still completes
+   * against live `PortfolioService` data alone.
    */
   private async fetchAllocationHistory(
     userId: string
@@ -794,9 +827,10 @@ export class RebalancingService {
       }
 
       // Snowflake driver returns rows whose column names match the
-      // SELECT projection (case may vary by driver settings). We accept
-      // either uppercase or original-case keys and coerce to a small,
-      // strongly-typed shape rendered by `summarizeHistory(...)`.
+      // SELECT projection (case may vary by driver settings). We
+      // accept either uppercase or original-case keys and coerce to
+      // a small, strongly-typed shape rendered by
+      // `summarizeHistory(...)`.
       return rows
         .slice(0, RebalancingService.USER_MESSAGE_HISTORY_ROWS_CAP)
         .map((raw): AllocationHistoryRow => {
@@ -846,37 +880,40 @@ export class RebalancingService {
   }
 
   /**
-   * Coerces a Snowflake driver-returned value to a YYYY-MM-DD date string
-   * suitable for prompt rendering. Handles both `Date` (driver default
-   * for DATE columns) and `string` (alternate driver settings).
+   * Coerces a Snowflake driver-returned value to a YYYY-MM-DD date
+   * string suitable for prompt rendering. Handles both `Date` (driver
+   * default for DATE columns) and `string` (alternate driver
+   * settings).
    */
   private toDateString(value: unknown): string {
     if (value instanceof Date && !Number.isNaN(value.getTime())) {
       return value.toISOString().slice(0, 10);
     }
     if (typeof value === 'string' && value.length > 0) {
-      // Already in YYYY-MM-DD or ISO 8601; pass through with a length cap.
+      // Already in YYYY-MM-DD or ISO 8601; pass through with a
+      // length cap.
       return value.slice(0, 10);
     }
     return 'UNKNOWN';
   }
 
   /**
-   * Renders a compact text representation of the user's current portfolio
-   * holdings for inclusion in the LLM user message.
+   * Renders a compact text representation of the user's current
+   * portfolio holdings for inclusion in the LLM user message.
    *
    * Behavior:
    *   - When `portfolio` is `null` (fetch failed) — returns a sentinel
    *     phrase the LLM can surface as a warning.
    *   - When `portfolio.holdings` is empty — returns "No holdings."
-   *   - Otherwise — sorts holdings by descending `allocationInPercentage`,
-   *     truncates to {@link USER_MESSAGE_HOLDINGS_CAP}, and formats each
-   *     row as a single Markdown bullet line.
+   *   - Otherwise — sorts holdings by descending
+   *     `allocationInPercentage`, truncates to
+   *     {@link USER_MESSAGE_HOLDINGS_CAP}, and formats each row as a
+   *     single Markdown bullet line.
    *
    * Each formatted row falls back across `assetProfile` and the
-   * `PortfolioPosition`'s deprecated top-level fields so the formatting
-   * works against both the canonical and the legacy shape exposed by
-   * `PortfolioService.getDetails(...)`.
+   * `PortfolioPosition`'s deprecated top-level fields so the
+   * formatting works against both the canonical and the legacy shape
+   * exposed by `PortfolioService.getDetails(...)`.
    */
   private summarizePortfolio(
     portfolio: (PortfolioDetails & { hasErrors?: boolean }) | null
@@ -923,14 +960,15 @@ export class RebalancingService {
    * `FinancialProfile` for inclusion in the LLM user message.
    *
    * Behavior:
-   *   - When `profile` is `null` (no record yet, `findByUserId` returned
-   *     `null`) — returns a sentinel phrase the LLM is instructed (via the
-   *     system prompt) to surface as a warning-array entry asking the
-   *     user to complete their profile.
-   *   - Otherwise — emits one Markdown bullet line per persisted field.
-   *     `investmentGoals` is JSON-stringified verbatim so the model can
-   *     reference each `label` in the `goalReference` field of any
-   *     recommendation it emits.
+   *   - When `profile` is `null` (no record yet, `findByUserId`
+   *     returned `null`) — returns a sentinel phrase the LLM is
+   *     instructed (via the system prompt) to surface as a
+   *     warning-array entry asking the user to complete their
+   *     profile.
+   *   - Otherwise — emits one Markdown bullet line per persisted
+   *     field. `investmentGoals` is JSON-stringified verbatim so the
+   *     model can reference each `label` in the `goalReference` field
+   *     of any recommendation it emits.
    */
   private summarizeProfile(profile: FinancialProfile | null): string {
     if (!profile) {
@@ -953,20 +991,22 @@ export class RebalancingService {
   }
 
   /**
-   * Renders a compact text representation of the user's recent allocation
-   * history (fetched from Snowflake) for inclusion in the LLM user message.
+   * Renders a compact text representation of the user's recent
+   * allocation history (fetched from Snowflake) for inclusion in the
+   * LLM user message.
    *
    * Behavior:
-   *   - When `rows` is `null` (Snowflake fetch failed) — returns a sentinel
-   *     phrase indicating history is unavailable. Rebalancing still
-   *     proceeds against live data alone.
-   *   - When `rows` is empty — returns a sentinel phrase indicating no
-   *     historical snapshots have been recorded yet (typical for a new
-   *     user).
-   *   - Otherwise — emits one Markdown bullet line per row in the form
-   *     `- <date> | <asset_class> | <allocation_pct>% | $<total_value_usd>`.
-   *     `allocation_pct` is rendered as a percentage with 2 decimals;
-   *     numeric columns that failed coercion are rendered as `N/A`.
+   *   - When `rows` is `null` (Snowflake fetch failed) — returns a
+   *     sentinel phrase indicating history is unavailable. Rebalancing
+   *     still proceeds against live data alone.
+   *   - When `rows` is empty — returns a sentinel phrase indicating
+   *     no historical snapshots have been recorded yet (typical for a
+   *     new user).
+   *   - Otherwise — emits one Markdown bullet line per row in the
+   *     form `- <date> | <asset_class> | <allocation_pct>% |
+   *     $<total_value_usd>`. `allocation_pct` is rendered as a
+   *     percentage with 2 decimals; numeric columns that failed
+   *     coercion are rendered as `N/A`.
    */
   private summarizeHistory(rows: AllocationHistoryRow[] | null): string {
     if (rows === null) {
@@ -1000,10 +1040,10 @@ export class RebalancingService {
 }
 
 /**
- * Internal-only typed shape for each row of the allocation-history fetch
- * via `SnowflakeSyncService.queryHistory(...)`. Defined adjacent to the
- * service that owns the fetch path; not exported because no other module
- * consumes this shape.
+ * Internal-only typed shape for each row of the allocation-history
+ * fetch via `SnowflakeSyncService.queryHistory(...)`. Defined adjacent
+ * to the service that owns the fetch path; not exported because no
+ * other module consumes this shape.
  */
 interface AllocationHistoryRow {
   /** Snapshot date in YYYY-MM-DD form, or `'UNKNOWN'` on coercion failure. */
@@ -1011,9 +1051,10 @@ interface AllocationHistoryRow {
   /** Asset class label (e.g., `'EQUITY'`, `'FIXED_INCOME'`). */
   assetClass: string;
   /**
-   * Allocation as a decimal fraction (`0.0`–`1.0`); matches the schema
-   * convention used by `fromPct`/`toPct`. `null` when the underlying
-   * Snowflake column is null or could not be coerced to a finite number.
+   * Allocation as a decimal fraction (`0.0`–`1.0`); matches the
+   * schema convention used by `fromPct`/`toPct`. `null` when the
+   * underlying Snowflake column is null or could not be coerced to a
+   * finite number.
    */
   allocationPct: number | null;
   /**

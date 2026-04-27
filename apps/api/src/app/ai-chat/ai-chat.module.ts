@@ -1,3 +1,4 @@
+import { AiProviderModule } from '@ghostfolio/api/app/ai-provider/ai-provider.module';
 import { MetricsModule } from '@ghostfolio/api/app/metrics/metrics.module';
 import { PortfolioModule } from '@ghostfolio/api/app/portfolio/portfolio.module';
 import { SnowflakeSyncModule } from '@ghostfolio/api/app/snowflake-sync/snowflake-sync.module';
@@ -80,6 +81,7 @@ import { AiChatService } from './ai-chat.service';
 @Module({
   controllers: [AiChatController],
   imports: [
+    AiProviderModule,
     ConfigModule,
     MetricsModule,
     PortfolioModule,

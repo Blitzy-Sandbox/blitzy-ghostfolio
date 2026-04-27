@@ -94,14 +94,6 @@ export const routes: Routes = [
       import('./pages/open/open-page.routes').then((m) => m.routes)
   },
   {
-    canActivate: [AuthGuard],
-    loadComponent: () =>
-      import('./pages/portfolio/rebalancing/rebalancing-page.component').then(
-        (m) => m.RebalancingPageComponent
-      ),
-    path: 'portfolio/rebalancing'
-  },
-  {
     path: internalRoutes.portfolio.path,
     loadChildren: () =>
       import('./pages/portfolio/portfolio-page.routes').then((m) => m.routes)

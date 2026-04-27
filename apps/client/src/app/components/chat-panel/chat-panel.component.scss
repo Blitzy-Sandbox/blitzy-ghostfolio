@@ -1,5 +1,26 @@
+// Refine PR Directive 6 — :host styling rules.
+//
+// MANDATORY :host declarations per the directive:
+//   - position: relative   — required so the absolutely-positioned
+//                            `.resize-handle` (top:0; right:0) anchors to
+//                            the panel boundary rather than the viewport.
+//   - flex-shrink: 0       — keeps the panel from being compressed by
+//                            sibling flex items in the parent layout when
+//                            the panel reaches its 600px maximum.
+//   - overflow: hidden     — clips the conditionally-rendered content
+//                            during the width transition so the inner
+//                            elements do not flash outside the new bounds.
+//   - transition: width    — animates the collapse/expand width change
+//                            (driven by the host-binding getter on the
+//                            component) at 0.2s with an `ease` curve.
+//
+// `display: block` is preserved so the host renders as a block-level box.
 :host {
   display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  transition: width 0.2s ease;
 }
 
 .chat-panel-container {
@@ -7,6 +28,82 @@
   flex-direction: column;
   height: 100%;
   min-height: 24rem;
+}
+
+// Refine PR Directive 6 — Collapse / expand header.
+//
+// The header is rendered above the chat content (and the resize handle) and
+// hosts the toggle button. `display: flex` + `margin-left: auto` on the
+// toggle pushes the button to the panel's right edge, where it remains
+// visible (and clickable) in both expanded and collapsed states.
+.chat-panel-header {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  padding: 0.25rem;
+}
+
+.chat-panel-toggle {
+  // Push the toggle button flush to the panel's right edge so it is the
+  // sole visible affordance when the panel is collapsed to 2.75rem.
+  margin-left: auto;
+}
+
+// Refine PR Directive 6 — CSS-only chevron.
+//
+// Pure CSS triangle constructed from two solid borders. NO icon-font
+// imports are permitted (no `<mat-icon>`, no `<ion-icon>`, no
+// FontAwesome / Material Icons). The chevron rotates 180° between
+// directions so the same square is reused for both states without
+// duplicated markup or sprite assets.
+//
+// The triangle is built by drawing a 0.5rem × 0.5rem square with two
+// adjacent borders set to 2px solid (the visible color) and the other
+// two transparent. The result is a 90° angle pointing in the direction
+// of the two visible borders. Rotating that square 45° gives a chevron.
+//
+// `currentColor` lets the chevron inherit the toggle button's text color,
+// keeping the icon in lockstep with theme changes (light/dark mode + the
+// material disabled / hover states the wrapper button applies).
+.chevron {
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  display: inline-block;
+  height: 0.5rem;
+  width: 0.5rem;
+}
+
+// Right-pointing chevron — used when the panel is EXPANDED, inviting the
+// user to collapse it toward the page edge.
+.chevron-right {
+  transform: rotate(-45deg);
+}
+
+// Left-pointing chevron — used when the panel is COLLAPSED, inviting the
+// user to expand it back into the page.
+.chevron-left {
+  transform: rotate(135deg);
+}
+
+// Refine PR Directive 6 — Drag-resize handle.
+//
+// Mandatory style declarations per the directive:
+//   position: absolute; right: 0; top: 0; width: 5px; cursor: col-resize
+// The handle spans the full panel height so a user can grab it from any
+// vertical position. A subtle hover affordance darkens the strip without
+// changing the panel's brand palette.
+.resize-handle {
+  bottom: 0;
+  cursor: col-resize;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 5px;
+  z-index: 1;
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.1);
+  }
 }
 
 .message-list {
@@ -123,5 +220,9 @@
 
   .message-empty {
     color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .resize-handle:hover {
+    background-color: rgba(255, 255, 255, 0.1);
   }
 }
