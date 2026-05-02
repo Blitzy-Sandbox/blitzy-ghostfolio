@@ -1,0 +1,86 @@
+// Module wrapper chrome stylesheet — see
+// apps/client/src/app/dashboard/module-wrapper/module-wrapper.component.ts
+// and AAP § 0.5.3 (Material 3 design-token catalog) and AAP § 0.8.1.7
+// (Rule 7: var/fallback pattern is mandatory).
+//
+// Every Material 3 token reference uses
+//   var(--mat-sys-<token>, <hardcoded-fallback>)
+// per Decision D-020. The fallback values mirror Angular Material 21's
+// default Material 3 light-theme values from AAP § 0.5.3.1 and are
+// rendered when the global theme has not yet evaluated.
+//
+// Rule 2 (Single source of truth, AAP § 0.8.1.2): the wrapper does NOT
+// own layout state. The `:host` rule below intentionally omits any
+// `position`, `transform`, `top`, `left`, `right`, `bottom`, or
+// state-class selector — those are owned by gridster (the canvas
+// layer) and the wrapper merely fills the cell its parent allocates.
+
+:host {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.gf-module-wrapper {
+  background-color: var(--mat-sys-surface-container, #f3edf7);
+  border: 1px solid var(--mat-sys-outline, #79747e);
+  border-radius: var(--mat-sys-corner-extra-small, 4px);
+  box-shadow: var(--mat-sys-level1, 0 1px 2px rgba(0, 0, 0, 0.1));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+
+  &:hover {
+    background-color: var(--mat-sys-surface-container-high, #ece6f0);
+    box-shadow: var(--mat-sys-level2, 0 2px 4px rgba(0, 0, 0, 0.12));
+  }
+}
+
+.gf-module-header {
+  align-items: center;
+  background-color: var(--mat-sys-surface-container, #f3edf7);
+  border-bottom: 1px solid var(--mat-sys-outline-variant, #cac4d0);
+  color: var(--mat-sys-on-surface, #1d1b20);
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.5rem;
+  height: 40px;
+  padding: 0 0.5rem;
+}
+
+.gf-module-drag-handle {
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.gf-module-title-icon {
+  align-items: center;
+  display: flex;
+  font-size: 1.125rem;
+}
+
+.gf-module-title {
+  color: var(--mat-sys-on-surface, #1d1b20);
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gf-module-remove {
+  color: var(--mat-sys-on-surface-variant, #49454f);
+}
+
+.gf-module-content {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+}
