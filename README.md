@@ -301,6 +301,23 @@ Grant access of type _Public_ in the _Access_ tab of _My Ghostfolio_.
 }
 ```
 
+## Dashboard
+
+Ghostfolio offers a single-canvas modular dashboard where every existing feature — portfolio overview, holdings, transactions, analysis, and the AI chat panel — is rendered as an independently placeable grid module on a 12-column drag-and-drop canvas. Per-user layouts persist server-side, so returning users see their saved workspace and new users start with a blank canvas plus the module catalog auto-opened on first visit.
+
+### API Endpoints
+
+| Method  | Endpoint              | Description                                                            |
+| ------- | --------------------- | ---------------------------------------------------------------------- |
+| `GET`   | `/api/v1/user/layout` | Returns the authenticated user's saved dashboard layout (404 if none). |
+| `PATCH` | `/api/v1/user/layout` | Upserts the authenticated user's dashboard layout (idempotent).        |
+
+Both endpoints require a valid JWT Bearer token and the corresponding `readUserDashboardLayout` / `updateUserDashboardLayout` permission. They are protected by the existing Ghostfolio `AuthGuard('jwt')` and `HasPermissionGuard` pattern; unauthenticated requests return `401 Unauthorized`.
+
+### Observability
+
+Operational telemetry, metrics, log shapes, correlation-id propagation, and Grafana dashboard templates for the dashboard layout endpoints are documented in [`docs/observability/dashboard-layout.md`](./docs/observability/dashboard-layout.md).
+
 ## Community Projects
 
 Discover a variety of community projects for Ghostfolio: https://github.com/topics/ghostfolio
