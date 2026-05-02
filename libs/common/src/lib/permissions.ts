@@ -51,6 +51,7 @@ export const permissions = {
   readPlatforms: 'readPlatforms',
   readPlatformsWithAccountCount: 'readPlatformsWithAccountCount',
   readTags: 'readTags',
+  readUserDashboardLayout: 'readUserDashboardLayout',
   readWatchlist: 'readWatchlist',
   reportDataGlitch: 'reportDataGlitch',
   syncDemoUserAccount: 'syncDemoUserAccount',
@@ -66,6 +67,7 @@ export const permissions = {
   updateOwnAccessToken: 'updateOwnAccessToken',
   updatePlatform: 'updatePlatform',
   updateTag: 'updateTag',
+  updateUserDashboardLayout: 'updateUserDashboardLayout',
   updateUserSettings: 'updateUserSettings',
   updateViewMode: 'updateViewMode'
 } as const;
@@ -105,6 +107,7 @@ export function getPermissions(aRole: Role): string[] {
         permissions.readPlatforms,
         permissions.readPlatformsWithAccountCount,
         permissions.readTags,
+        permissions.readUserDashboardLayout,
         permissions.readWatchlist,
         permissions.triggerSnowflakeSync,
         permissions.updateAccount,
@@ -116,6 +119,7 @@ export function getPermissions(aRole: Role): string[] {
         permissions.updateMarketDataOfOwnAssetProfile,
         permissions.updatePlatform,
         permissions.updateTag,
+        permissions.updateUserDashboardLayout,
         permissions.updateUserSettings,
         permissions.updateViewMode
       ];
@@ -152,6 +156,7 @@ export function getPermissions(aRole: Role): string[] {
         permissions.readFinancialProfile,
         permissions.readMarketDataOfOwnAssetProfile,
         permissions.readPlatforms,
+        permissions.readUserDashboardLayout,
         permissions.readWatchlist,
         permissions.updateAccount,
         permissions.updateAccess,
@@ -159,6 +164,7 @@ export function getPermissions(aRole: Role): string[] {
         permissions.updateAuthDevice,
         permissions.updateFinancialProfile,
         permissions.updateMarketDataOfOwnAssetProfile,
+        permissions.updateUserDashboardLayout,
         permissions.updateUserSettings,
         permissions.updateViewMode
       ];
