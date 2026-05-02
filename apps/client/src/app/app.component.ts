@@ -33,8 +33,6 @@ import { openOutline } from 'ionicons/icons';
 import { DeviceDetectorService } from 'ngx-device-detector';
 import { filter } from 'rxjs/operators';
 
-import { GfFooterComponent } from './components/footer/footer.component';
-import { GfHeaderComponent } from './components/header/header.component';
 import { GfHoldingDetailDialogComponent } from './components/holding-detail-dialog/holding-detail-dialog.component';
 import { GfAppQueryParams } from './interfaces/interfaces';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
@@ -42,7 +40,7 @@ import { UserService } from './services/user/user.service';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [GfFooterComponent, GfHeaderComponent, RouterLink, RouterOutlet],
+  imports: [RouterLink, RouterOutlet],
   selector: 'gf-root',
   styleUrls: ['./app.component.scss'],
   templateUrl: './app.component.html'
