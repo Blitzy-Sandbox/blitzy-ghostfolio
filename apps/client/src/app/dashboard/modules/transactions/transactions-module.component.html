@@ -1,0 +1,17 @@
+<gf-module-wrapper
+  [iconName]="iconName"
+  [title]="title"
+  (remove)="remove.emit()"
+>
+  @if (activities()) {
+    <gf-activities-table
+      [dataSource]="activities()"
+      [hasPermissionToCreateActivity]="false"
+      [hasPermissionToDeleteActivity]="false"
+      [hasPermissionToExportActivities]="false"
+      [hasPermissionToFilterByType]="false"
+      [hasPermissionToOpenDetails]="false"
+      [showActions]="false"
+    />
+  }
+</gf-module-wrapper>
