@@ -1,0 +1,101 @@
+<gf-module-wrapper
+  [iconName]="iconName"
+  [title]="title"
+  (remove)="remove.emit()"
+>
+  @if (performance() && user()) {
+    <div class="mb-3 row">
+      <div class="col-lg-4 mb-3 mb-lg-0">
+        <mat-card appearance="outlined">
+          <mat-card-content>
+            <gf-value
+              i18n
+              size="large"
+              [isCurrency]="true"
+              [locale]="user()?.settings?.locale"
+              [precision]="precision"
+              [unit]="user()?.settings?.baseCurrency"
+              [value]="performance()?.currentValueInBaseCurrency"
+              >Total amount</gf-value
+            >
+          </mat-card-content>
+        </mat-card>
+      </div>
+      <div class="col-lg-4 mb-3 mb-lg-0">
+        <mat-card appearance="outlined">
+          <mat-card-content>
+            <gf-value
+              i18n
+              size="large"
+              [colorizeSign]="true"
+              [isCurrency]="true"
+              [locale]="user()?.settings?.locale"
+              [precision]="precision"
+              [unit]="user()?.settings?.baseCurrency"
+              [value]="performance()?.netPerformanceWithCurrencyEffect"
+              >Change with currency effect</gf-value
+            >
+          </mat-card-content>
+        </mat-card>
+      </div>
+      <div class="col-lg-4">
+        <mat-card appearance="outlined">
+          <mat-card-content>
+            <gf-value
+              i18n
+              size="large"
+              [colorizeSign]="true"
+              [isPercent]="true"
+              [locale]="user()?.settings?.locale"
+              [value]="
+                performance()?.netPerformancePercentageWithCurrencyEffect
+              "
+              >Performance with currency effect</gf-value
+            >
+          </mat-card-content>
+        </mat-card>
+      </div>
+    </div>
+
+    <div class="mb-3 row">
+      <div class="col-lg">
+        <gf-benchmark-comparator
+          class="h-100"
+          [benchmark]="benchmark()"
+          [benchmarkDataItems]="benchmarkDataItems()"
+          [benchmarks]="benchmarks()"
+          [colorScheme]="user()?.settings?.colorScheme"
+          [isLoading]="isLoadingBenchmarkComparator()"
+          [locale]="user()?.settings?.locale"
+          [performanceDataItems]="performanceDataItemsInPercentage()"
+          [user]="user()"
+          (benchmarkChanged)="onChangeBenchmark($event)"
+        />
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-lg">
+        <div class="align-items-center d-flex mb-3">
+          <div
+            class="align-items-center d-flex flex-grow-1 h6 mb-0 text-truncate"
+            i18n
+          >
+            Portfolio Evolution
+          </div>
+        </div>
+        <gf-investment-chart
+          benchmarkDataLabel="Portfolio Evolution"
+          class="h-100"
+          i18n-benchmarkDataLabel
+          [benchmarkDataItems]="investments()"
+          [currency]="user()?.settings?.baseCurrency"
+          [historicalDataItems]="performanceDataItems()"
+          [isInPercentage]="user()?.settings?.isRestrictedView ?? false"
+          [isLoading]="isLoadingInvestmentChart()"
+          [locale]="user()?.settings?.locale"
+        />
+      </div>
+    </div>
+  }
+</gf-module-wrapper>
