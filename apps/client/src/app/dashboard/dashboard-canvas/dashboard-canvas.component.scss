@@ -1,0 +1,126 @@
+// Dashboard canvas stylesheet — see
+// apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.ts
+// and AAP § 0.5.3 (Material 3 design-token catalog) and AAP § 0.8.1.7
+// (Rule 7: var/fallback pattern is mandatory).
+//
+// Every Material 3 token reference uses
+//   var(--mat-sys-<token>, <hardcoded-fallback>)
+// per Decision D-020. The fallback values mirror Angular Material 21's
+// default Material 3 light-theme values from AAP § 0.5.3.1 (color),
+// AAP § 0.5.3.3 (shape/radius), and AAP § 0.5.3.5 (typography), and are
+// rendered when the global theme has not yet evaluated.
+//
+// Layout constants (1rem = 16px, 1.25rem = 20px, 1.5rem = 24px) are
+// permitted spacing values per AAP § 0.5.3.2 (M3 4/8/16/24 px scale).
+//
+// Rule 2 (AAP § 0.8.1.2): the canvas is the single source of truth for
+// module positions and sizes — gridster's `dashboard` array owns layout
+// state. This stylesheet styles the canvas chrome (root, loading bar,
+// error banner, gridster host, drop preview, FAB) only; sibling-component
+// chrome (module-wrapper, module-catalog) is owned by the respective
+// component's own SCSS.
+
+// Component host element (`<gf-dashboard-canvas>`). `display: block` is
+// required so the host fills its parent (the app shell's `<router-outlet>`
+// projects components inline; without `display: block` the canvas would
+// shrink to its content). The full viewport height is appropriate because
+// the app shell is reduced to `<router-outlet />` per AAP § 0.6.1.5 (no
+// header/footer offset). `position: relative` establishes a positioning
+// context for the loading bar's absolute positioning.
+:host {
+  background-color: var(--mat-sys-surface, #fffbfe);
+  display: block;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+// Single root wrapper inside the host. Inherits the host's full viewport
+// dimensions and provides a clean positioning context separate from `:host`
+// for any future absolutely-positioned children. Kept simple — no
+// background or borders here so the host's `--mat-sys-surface` shows
+// through unchanged.
+.gf-canvas-root {
+  height: 100%;
+  position: relative;
+  width: 100%;
+}
+
+// Indeterminate progress bar pinned to the top of the canvas during the
+// initial GET /api/v1/user/layout request. `z-index: 10` keeps it above
+// the gridster surface but below the FAB (z-index 1000) and any open
+// Material dialog (CDK overlay container z-index ≥ 1000). The bar's
+// color is owned by Material's `MatProgressBar` component theme, which
+// already consumes `--mat-sys-primary` internally — no override here.
+.gf-canvas-loading {
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 10;
+}
+
+// Error banner shown when the layout GET or PATCH fails. Uses the M3
+// error-container surface (red-tinted background) with the matching
+// on-error-container text token so contrast is theme-correct. The
+// `font:` shorthand consumes the M3 `body-medium` typography token;
+// the fallback `400 14px / 20px Roboto` mirrors Material's default
+// body-medium spec (font-weight: 400; font-size: 14px; line-height:
+// 20px; font-family: Roboto) per AAP § 0.5.3.5.
+.gf-canvas-error {
+  background-color: var(--mat-sys-error-container, #f9dedc);
+  border-radius: var(--mat-sys-corner-small, 8px);
+  color: var(--mat-sys-on-error-container, #410e0b);
+  font: var(--mat-sys-body-medium, 400 14px / 20px Roboto);
+  margin: 1rem;
+  padding: 1rem 1.25rem;
+  position: relative;
+  z-index: 5;
+}
+
+// `<gridster>` is the angular-gridster2 v21.0.1 standalone component.
+// Its internal CSS (loaded globally via the gridster base stylesheet
+// per AAP § 0.6.1.8) handles cell math. The explicit `display: block`,
+// `height: 100%`, and `width: 100%` declarations ensure the gridster
+// host fills the canvas — without them, gridster's intrinsic sizing
+// can collapse to zero in some flex/grid contexts.
+//
+// Gridster drag/resize visuals (`<gridster-preview>` element) are
+// styled via `::ng-deep` because they are created by gridster as a
+// child component and component-scoped styles do not penetrate the
+// gridster sub-tree. This matches the documented escape-hatch pattern
+// for third-party child components used elsewhere in the repository.
+// The placeholder uses the M3 surface-variant (neutral container)
+// background with a dashed outline border to clearly signal "this is
+// where the item will land" without overpowering the canvas.
+.gf-canvas-gridster {
+  display: block;
+  height: 100%;
+  width: 100%;
+
+  ::ng-deep gridster-preview {
+    background-color: var(--mat-sys-surface-variant, #e7e0ec);
+    border: 2px dashed var(--mat-sys-outline, #79747e);
+    border-radius: var(--mat-sys-corner-extra-small, 4px);
+    opacity: 0.65;
+  }
+}
+
+// Floating Action Button anchored to the viewport bottom-right. `position:
+// fixed` (not `absolute`) is intentional — the FAB stays in place when
+// the canvas scrolls, matching M3's bottom-right FAB placement spec for
+// desktop layouts (AAP § 0.7.3 excludes mobile/responsive support, so
+// the desktop 24-px / 1.5rem offset is the only applicable value).
+// `z-index: 1000` puts the FAB above gridster, the loading bar, and the
+// error banner. Material's `MatDialog` uses z-index 1000+ via the CDK
+// overlay container, so an open catalog dialog correctly obscures the
+// FAB while it is open. The button's color is owned by Material's
+// `MatFab` component theme, which already consumes `--mat-sys-primary`
+// and `--mat-sys-on-primary` internally — no override here.
+.gf-canvas-fab {
+  bottom: 1.5rem;
+  position: fixed;
+  right: 1.5rem;
+  z-index: 1000;
+}
