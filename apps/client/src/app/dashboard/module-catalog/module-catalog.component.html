@@ -1,0 +1,45 @@
+<h2 i18n mat-dialog-title>Module catalog</h2>
+
+<mat-dialog-content class="gf-module-catalog-content">
+  <mat-form-field appearance="outline" class="gf-module-catalog-search">
+    <mat-label i18n>Search modules</mat-label>
+    <input
+      matInput
+      type="text"
+      [attr.aria-label]="searchAriaLabel"
+      [ngModel]="searchTerm()"
+      (ngModelChange)="searchTerm.set($event)"
+    />
+  </mat-form-field>
+
+  @if (filteredModules().length === 0) {
+    <div class="gf-module-catalog-empty" i18n>
+      No modules match your search.
+    </div>
+  }
+
+  <mat-list class="gf-module-catalog-list">
+    @for (module of filteredModules(); track module.name) {
+      <mat-list-item class="gf-module-catalog-row">
+        <ion-icon aria-hidden="true" matListItemIcon [name]="module.iconName" />
+        <span matListItemTitle>{{ module.displayLabel }}</span>
+        <span class="gf-module-catalog-row-meta" matListItemLine>
+          <span i18n>Min size:</span>
+          {{ module.minCols }} × {{ module.minRows }}
+        </span>
+        <button
+          mat-icon-button
+          matListItemMeta
+          [attr.aria-label]="getAddAriaLabel(module.displayLabel)"
+          (click)="onAddModule(module.name)"
+        >
+          <mat-icon>add</mat-icon>
+        </button>
+      </mat-list-item>
+    }
+  </mat-list>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button i18n mat-button (click)="onCloseDialog()">Close</button>
+</mat-dialog-actions>
