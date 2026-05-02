@@ -48,7 +48,12 @@
  * - Each of {@link LayoutItem.cols}, {@link LayoutItem.rows},
  *   {@link LayoutItem.x}, and {@link LayoutItem.y} MUST be a
  *   non-negative integer; additionally `cols >= 2`, `rows >= 2`, and
- *   `x + cols <= 12`.
+ *   `x + cols <= 12`. The cross-field constraint (`x + cols <= 12`) is
+ *   enforced server-side by the custom `IsWithinGridWidth` decorator on
+ *   `LayoutItemDto.cols` in `update-dashboard-layout.dto.ts`, which
+ *   complements the angular-gridster2 client-side `pushItems: true`
+ *   clamping behavior. Both layers together form the defense-in-depth
+ *   posture mandated by AAP § 0.8.4.
  *
  * **Forward-compatibility note**: when this schema evolves (for example,
  * adding a top-level `theme` field or per-item module configuration),
@@ -122,9 +127,14 @@ export interface LayoutItem {
   /**
    * Width of the item measured in grid columns. Server-side validation
    * enforces `cols >= 2` (the global minimum item size per AAP § 0.6.1)
-   * and `x + cols <= 12` (item must fit within the 12-column grid).
-   * TypeScript cannot encode the integer / range constraints; they are
-   * runtime invariants enforced exclusively by the server-side DTO.
+   * and `x + cols <= 12` (item must fit within the 12-column grid; the
+   * cross-field check is implemented by the custom `IsWithinGridWidth`
+   * decorator on `LayoutItemDto.cols` in
+   * `apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts`, in
+   * addition to the angular-gridster2 client-side `pushItems: true`
+   * clamping behavior). TypeScript cannot encode the integer / range
+   * constraints; they are runtime invariants enforced by the server-side
+   * DTO.
    */
   cols: number;
 
@@ -150,10 +160,13 @@ export interface LayoutItem {
 
   /**
    * Horizontal position of the item on the grid (0-indexed, leftmost
-   * column is `0`). Server-side validation enforces `x >= 0` (integer)
-   * and `x + cols <= 12` (item must fit within the 12-column grid).
+   * column is `0`). Server-side validation enforces `x >= 0`,
+   * `x <= 11` (integers), and `x + cols <= 12` (item must fit within the
+   * 12-column grid; the cross-field check is implemented by the custom
+   * `IsWithinGridWidth` decorator on `LayoutItemDto.cols` in
+   * `apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts`).
    * TypeScript cannot encode the integer / non-negative constraint; it
-   * is a runtime invariant enforced exclusively by the server-side DTO.
+   * is a runtime invariant enforced by the server-side DTO.
    */
   x: number;
 

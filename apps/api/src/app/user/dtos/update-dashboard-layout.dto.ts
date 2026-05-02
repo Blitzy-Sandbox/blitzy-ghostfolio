@@ -10,7 +10,10 @@ import {
   Max,
   MaxLength,
   Min,
-  ValidateNested
+  registerDecorator,
+  ValidateNested,
+  ValidationArguments,
+  ValidationOptions
 } from 'class-validator';
 
 /**
@@ -72,7 +75,9 @@ const SUPPORTED_LAYOUT_VERSIONS = [1] as const;
  *
  * Used as the upper bound for `cols` (full-width item) and as the basis for
  * the `(GRID_COLUMN_COUNT - 1)` upper bound of column origin
- * (`x ∈ [0, GRID_COLUMN_COUNT - 1]`).
+ * (`x ∈ [0, GRID_COLUMN_COUNT - 1]`). Also forms the upper bound of the
+ * cross-field constraint `x + cols ≤ GRID_COLUMN_COUNT` enforced by
+ * {@link IsWithinGridWidth}.
  */
 const GRID_COLUMN_COUNT = 12;
 
@@ -86,6 +91,90 @@ const GRID_COLUMN_COUNT = 12;
 const MIN_ITEM_CELLS = 2;
 
 /**
+ * Custom cross-field validator decorator enforcing `x + cols ≤ GRID_COLUMN_COUNT`
+ * on a {@link LayoutItemDto} property — the constraint that a layout item must
+ * fit horizontally within the 12-column grid (AAP § 0.6.1.7, AAP § 0.8.4).
+ *
+ * Why a custom decorator (NOT a class-level validator):
+ *   - `class-validator` does not expose first-class cross-field decorators in
+ *     0.15.x; the canonical workaround is `registerDecorator(...)` on a
+ *     property-level decorator that reaches across the validating object via
+ *     `ValidationArguments.object`.
+ *   - The same pattern is already used elsewhere in this repository at
+ *     `libs/common/src/lib/validators/is-currency-code.ts`, which establishes
+ *     the precedent for custom decorators in Ghostfolio.
+ *
+ * Why apply it to `cols` (and not `x`):
+ *   - The constraint is symmetric — both fields participate equally — but the
+ *     decorator MUST be attached to exactly one field to avoid duplicate
+ *     error messages. `cols` is chosen because the cross-field check is
+ *     conceptually "does my width fit at my origin", which reads naturally
+ *     when the validation message references `cols`.
+ *   - The error message includes both the offending `x` and `cols` values so
+ *     the client can correct either field independently.
+ *
+ * Why this exists at all (defense-in-depth):
+ *   - The angular-gridster2 client engine clamps overflowing items via its
+ *     `pushItems: true` config at render time, so a benign client never
+ *     submits an overflowing payload. However, a malicious or buggy client
+ *     bypassing the gridster engine could submit `{ x: 11, cols: 12 }`, which
+ *     would be persisted as-is without this server-side check, creating a
+ *     stale-data hazard for any future client that does NOT clamp on render.
+ *   - This validator brings the API layer into strict alignment with AAP
+ *     § 0.6.1.7's specified contract (`x + cols ≤ 12`) and AAP § 0.8.4's
+ *     security requirement that the DTO enforce the grid-fit invariant.
+ *
+ * @param validationOptions Optional class-validator options forwarded to the
+ *   underlying `registerDecorator` call (e.g., custom `message`, `groups`).
+ * @returns A property decorator that registers the cross-field constraint
+ *   against the target class.
+ */
+function IsWithinGridWidth(validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      constraints: [],
+      name: 'isWithinGridWidth',
+      options: validationOptions,
+      propertyName,
+      target: object.constructor,
+      validator: {
+        defaultMessage(args: ValidationArguments): string {
+          // The sibling field name is hard-coded to `x` because the only
+          // cross-field reference this validator makes is to the column
+          // origin; if the LayoutItemDto field names ever change, this
+          // message and the validate() body MUST be updated in lockstep.
+          const item = args.object as Partial<LayoutItemDto>;
+          return (
+            `${args.property} (${args.value}) plus x (${item.x}) must be ` +
+            `less than or equal to ${GRID_COLUMN_COUNT} so the layout item ` +
+            `fits within the ${GRID_COLUMN_COUNT}-column grid`
+          );
+        },
+        validate(value: unknown, args: ValidationArguments): boolean {
+          // The validator runs AFTER each field's @IsInt / @Min / @Max
+          // checks; if either x or cols is non-integer or out of range, an
+          // earlier validator already produced a 400 error and this method
+          // should not be reached for that property. This guard nonetheless
+          // returns `true` (pass) on non-numeric inputs to avoid duplicating
+          // type-error messages — class-validator's `stopAtFirstError` is
+          // false by default, so multiple decorators on the same field
+          // accumulate errors, and conjunction logic should defer to the
+          // type-specific validators.
+          if (typeof value !== 'number' || !Number.isInteger(value)) {
+            return true;
+          }
+          const item = args.object as Partial<LayoutItemDto>;
+          if (typeof item.x !== 'number' || !Number.isInteger(item.x)) {
+            return true;
+          }
+          return value + item.x <= GRID_COLUMN_COUNT;
+        }
+      }
+    });
+  };
+}
+
+/**
  * Single layout item describing one module's grid placement.
  *
  * Per AAP § 0.6.1.7 contract:
@@ -95,17 +184,11 @@ const MIN_ITEM_CELLS = 2;
  *     - `rows` has no upper bound (canvas is vertically scrollable).
  *   - `x`: column origin in [0, 11] (12-column grid).
  *   - `y`: row origin ≥ 0.
- *
- * NOTE on cross-field validation: The constraint `x + cols ≤ 12` (item must
- * fit horizontally) is NOT enforced at this DTO level — it requires
- * cross-field comparison which `class-validator` does not natively support
- * within a single class without custom validators.
- *
- * Per the AAP's accepted approach, the constraint is permitted at this layer;
- * the angular-gridster2 client engine clamps any overflow via its
- * `pushItems: true` config at render time. A future custom cross-field
- * validator may be added; until then, an overflowing payload is persisted
- * as-is and rendered correctly by gridster on the client.
+ *   - Cross-field: `x + cols ≤ 12` (the item must fit horizontally within
+ *     the 12-column grid). Enforced at this DTO layer by the custom
+ *     {@link IsWithinGridWidth} decorator on `cols` per AAP § 0.6.1.7 and
+ *     AAP § 0.8.4 (security: defense-in-depth alongside the angular-gridster2
+ *     client-side `pushItems: true` clamping behavior).
  */
 export class LayoutItemDto {
   @IsString()
@@ -116,6 +199,7 @@ export class LayoutItemDto {
   @IsInt()
   @Min(MIN_ITEM_CELLS)
   @Max(GRID_COLUMN_COUNT)
+  @IsWithinGridWidth()
   cols: number;
 
   @IsInt()

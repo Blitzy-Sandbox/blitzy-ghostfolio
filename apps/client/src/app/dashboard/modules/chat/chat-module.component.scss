@@ -1,3 +1,28 @@
+// Chat module wrapper stylesheet — intentionally minimal.
+//
+// Layout, chrome, spacing, and colors are owned by
+// `GfModuleWrapperComponent` (sibling under
+// apps/client/src/app/dashboard/module-wrapper/). The wrapped
+// `ChatPanelComponent` from
+// `@ghostfolio/client/components/chat-panel/chat-panel.component`
+// brings its own styles. This file's only responsibility is to make
+// the host element behave as a block-level container that fills the
+// gridster cell.
+//
+// Per Rule 7 (AAP § 0.8.1.7), no Material 3 tokens are referenced
+// here — there are no chrome surfaces to color. If a future
+// enhancement requires module-specific accent or branding, every
+// token reference MUST follow the `var(--mat-sys-<token>, <fallback>)`
+// pattern per Decision D-020.
+//
+// DEVIATION POINT (per AAP § 0.7.2): the inner `<app-chat-panel>` is
+// the standalone-grid-module form of the chat panel that was
+// previously embedded at `apps/client/src/app/pages/portfolio/`
+// `portfolio-page.html:32`. The chat panel's internal selector,
+// styles, and behavior are unchanged; only the mount-point host is
+// replaced. The deviation is recorded in the decision log entry
+// referenced from AAP § 0.7.2.
+
 :host {
   display: block;
   height: 100%;
