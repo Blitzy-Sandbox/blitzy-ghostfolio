@@ -80,11 +80,24 @@
 }
 
 // `<gridster>` is the angular-gridster2 v21.0.1 standalone component.
-// Its internal CSS (loaded globally via the gridster base stylesheet
-// per AAP § 0.6.1.8) handles cell math. The explicit `display: block`,
-// `height: 100%`, and `width: 100%` declarations ensure the gridster
-// host fills the canvas — without them, gridster's intrinsic sizing
-// can collapse to zero in some flex/grid contexts.
+// Its internal CSS is bundled INSIDE the component decorators via
+// `@Component({ styles: [...], encapsulation: ViewEncapsulation.None })`
+// in the package's fesm2022 ES module — there is NO standalone
+// `gridster.css` file shipped with v21.0.1, and no global stylesheet
+// import is required. Per Decision D-024 (see
+// docs/decisions/agent-action-plan-decisions.md), the AAP § 0.6.1.8
+// directive to add `@import 'angular-gridster2/css/gridster.css';` to
+// `apps/client/src/styles.scss` is intentionally not implemented
+// because the referenced file does not exist in the package and
+// adding the import would cause `npx nx build client` to fail with
+// `Module not found`. The styles for the `gridster`, `gridster-item`,
+// and `gridster-preview` selectors load automatically the first time
+// the component renders, courtesy of `ViewEncapsulation.None`.
+//
+// The explicit `display: block`, `height: 100%`, and `width: 100%`
+// declarations ensure the gridster host fills the canvas — without
+// them, gridster's intrinsic sizing can collapse to zero in some
+// flex/grid contexts.
 //
 // Gridster drag/resize visuals (`<gridster-preview>` element) are
 // styled via `::ng-deep` because they are created by gridster as a
