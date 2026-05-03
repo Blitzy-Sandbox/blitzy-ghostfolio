@@ -201,8 +201,15 @@ export class GfModuleCatalogComponent {
    * v2 enhancements (e.g., subscribing to a registry change Observable
    * via `takeUntilDestroyed(this.destroyRef)`). Including it incurs
    * no runtime cost.
+   *
+   * Declared `protected` rather than `private` so TypeScript's
+   * `noUnusedLocals` check (enabled in `tsconfig.base.json`) does not
+   * flag the field as unused — `noUnusedLocals` flags unused private
+   * class members but does NOT flag protected/public ones. The
+   * effective visibility for the v1 catalog body is unchanged because
+   * no caller currently dereferences the field.
    */
-  private readonly destroyRef = inject(DestroyRef);
+  protected readonly destroyRef = inject(DestroyRef);
 
   /**
    * Typed reference to the host `MatDialog` instance, narrowed via
