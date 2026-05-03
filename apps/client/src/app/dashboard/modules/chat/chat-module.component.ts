@@ -224,6 +224,19 @@ export class GfChatModuleComponent {
  * comfortable initial size for a usable chat experience with a visible
  * message history and composer.
  *
+ * **Decision D-036** (`docs/decisions/agent-action-plan-decisions.md`)
+ * formally records the `defaultCols = 3` choice. The Checkpoint 4
+ * scope description suggested `defaultCols = 4`; the implementation
+ * reconciles to `3` because the wrapped `ChatPanelComponent`'s
+ * `DEFAULT_EXPANDED_WIDTH_PX = 280` corresponds to roughly three
+ * grid columns at the canvas's typical column widths (with a 1280
+ * × 800 desktop viewport and `fixedRowHeight = 64`, each column is
+ * about 95 px gross before margins; 280 ÷ 95 ≈ 2.95 ≈ 3 cols). The
+ * 3-column default preserves first-paint UX (no empty horizontal
+ * whitespace inside the cell) while still satisfying every Rule 6
+ * invariant. See D-036 for the full alternatives-considered analysis
+ * and the verification evidence cross-references.
+ *
  * Field invariants (cross-checked against
  * {@link DashboardModuleDescriptor} contract):
  *

@@ -12,16 +12,16 @@ new endpoints `GET /api/v1/user/layout` and
 
 1. `dashboard_layout_get_total` — counter; terminal-outcome counter
    for every `GET /api/v1/user/layout` invocation. Labelled by
-   `outcome` (`success`, `not_found`, `error`).
+   `outcome` (`found`, `not_found`, `error`).
 2. `dashboard_layout_patch_total` — counter; terminal-outcome counter
    for every `PATCH /api/v1/user/layout` invocation. Labelled by
    `outcome` (`success`, `error`).
 3. `dashboard_layout_save_failures_total` — counter; per-reason
    breakdown of layout save failures. Labelled by `reason`
-   (`validation`, `db`, `internal`).
+   (`db_error` — single value emitted on Prisma upsert failure).
 4. `dashboard_layout_request_duration_seconds` — histogram; end-to-end
    wall-clock latency of layout endpoint requests, partitioned by
-   `route` and `method`.
+   `method` (`GET` or `PATCH`).
 
 The dashboard is intentionally scoped to **only** the metrics actually
 emitted by `UserDashboardLayoutService`. The following signals are
@@ -141,12 +141,12 @@ modular dashboard's persistence layer. Operators authoring panels
 or alert rules must reference these names exactly; any other name
 will yield empty results.
 
-| Metric                                      | Type      | Labels                                                         | HELP text                                                                                     |
-| ------------------------------------------- | --------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `dashboard_layout_get_total`                | counter   | `outcome` ∈ {`success`, `not_found`, `error`}                  | Total GET /api/v1/user/layout invocations partitioned by outcome (success, not_found, error). |
-| `dashboard_layout_patch_total`              | counter   | `outcome` ∈ {`success`, `error`}                               | Total PATCH /api/v1/user/layout invocations partitioned by outcome (success, error).          |
-| `dashboard_layout_save_failures_total`      | counter   | `reason` ∈ {`validation`, `db`, `internal`}                    | Total layout save failures partitioned by reason (validation, db, internal).                  |
-| `dashboard_layout_request_duration_seconds` | histogram | `route` ∈ {`/api/v1/user/layout`}; `method` ∈ {`GET`, `PATCH`} | Layout endpoint request duration in seconds, partitioned by route and HTTP method.            |
+| Metric                                      | Type      | Labels                                      | HELP text                                                          |
+| ------------------------------------------- | --------- | ------------------------------------------- | ------------------------------------------------------------------ |
+| `dashboard_layout_get_total`                | counter   | `outcome` ∈ {`found`, `not_found`, `error`} | Total GET /api/v1/user/layout invocations partitioned by outcome   |
+| `dashboard_layout_patch_total`              | counter   | `outcome` ∈ {`success`, `error`}            | Total PATCH /api/v1/user/layout invocations partitioned by outcome |
+| `dashboard_layout_save_failures_total`      | counter   | `reason` ∈ {`db_error`}                     | Total layout save failures partitioned by reason                   |
+| `dashboard_layout_request_duration_seconds` | histogram | `method` ∈ {`GET`, `PATCH`}                 | Layout endpoint request duration in seconds                        |
 
 The histogram exposes the canonical Prometheus suffixes
 `_bucket{le="..."}`, `_sum`, and `_count`. Default buckets (in
@@ -166,24 +166,23 @@ service's terminal code paths. The following table is the
 authoritative reference; downstream alert rules and Grafana panel
 queries must use these label values verbatim.
 
-| Counter / Label                                             | Triggering condition                                                                                                                                                                                                                                        |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dashboard_layout_get_total{outcome="success"}`             | `findByUserId` returned a row. Controller responds 200 OK with the persisted `LayoutData` body. This is the steady-state returning-user path.                                                                                                               |
-| `dashboard_layout_get_total{outcome="not_found"}`           | `findByUserId` returned `null`. Controller raises `NotFoundException` (HTTP 404). This is the first-visit case (Rule 10: catalog auto-opens on the client) and is not an error condition.                                                                   |
-| `dashboard_layout_get_total{outcome="error"}`               | Prisma threw during `findUnique` (rare; usually a database connectivity issue or a transient `PrismaClientKnownRequestError`). Controller propagates the exception to the global filter, which renders HTTP 500.                                            |
-| `dashboard_layout_patch_total{outcome="success"}`           | `upsertForUser` returned the persisted row. Controller responds 200 OK with the upserted `LayoutData`. This is the steady-state save path triggered every ≥ 500 ms by the client `LayoutPersistenceService`.                                                |
-| `dashboard_layout_patch_total{outcome="error"}`             | Prisma threw during `upsert` (rare; constraint violation, connection loss, JSON column rejection, etc.). The `dashboard_layout_save_failures_total{reason="db"}` counter increments alongside this counter so operators can disambiguate the cause.         |
-| `dashboard_layout_save_failures_total{reason="validation"}` | Reserved for future class-validator failure paths if the service ever performs server-side payload re-validation. Currently NestJS's global `ValidationPipe` rejects malformed bodies with HTTP 400 BEFORE reaching the service, so this label is reserved. |
-| `dashboard_layout_save_failures_total{reason="db"}`         | Prisma `upsert` threw a `PrismaClientKnownRequestError` (or any other Prisma error). The most common operational failure mode. Increments alongside `dashboard_layout_patch_total{outcome="error"}`.                                                        |
-| `dashboard_layout_save_failures_total{reason="internal"}`   | Reserved for unexpected internal errors not covered by the `db` reason — for example, unexpected runtime exceptions in the service layer that are not Prisma-originated. Should be near zero in steady state.                                               |
+| Counter / Label                                           | Triggering condition                                                                                                                                                                                                                                      |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard_layout_get_total{outcome="found"}`             | `findByUserId` returned a row. Controller responds 200 OK with the persisted `LayoutData` body. This is the steady-state returning-user path.                                                                                                             |
+| `dashboard_layout_get_total{outcome="not_found"}`         | `findByUserId` returned `null`. Controller raises `NotFoundException` (HTTP 404). This is the first-visit case (Rule 10: catalog auto-opens on the client) and is not an error condition.                                                                 |
+| `dashboard_layout_get_total{outcome="error"}`             | Prisma threw during `findUnique` (rare; usually a database connectivity issue or a transient `PrismaClientKnownRequestError`). Controller propagates the exception to the global filter, which renders HTTP 500.                                          |
+| `dashboard_layout_patch_total{outcome="success"}`         | `upsertForUser` returned the persisted row. Controller responds 200 OK with the upserted `LayoutData`. This is the steady-state save path triggered every ≥ 500 ms by the client `LayoutPersistenceService`.                                              |
+| `dashboard_layout_patch_total{outcome="error"}`           | Prisma threw during `upsert` (rare; constraint violation, connection loss, JSON column rejection, etc.). The `dashboard_layout_save_failures_total{reason="db_error"}` counter increments alongside this counter so operators can disambiguate the cause. |
+| `dashboard_layout_save_failures_total{reason="db_error"}` | Prisma `upsert` threw a `PrismaClientKnownRequestError` (or any other Prisma error). The single emitted reason value. Increments alongside `dashboard_layout_patch_total{outcome="error"}` so operators can rate-alert on the failure counter directly.   |
 
 The single histogram
-`dashboard_layout_request_duration_seconds{route, method}` is
-observed exactly once per request in a `try/finally` block, which
-guarantees the histogram is recorded for every outcome including
-401, 403, 404, and 500 responses. The histogram's `route` label is
-fixed to `/api/v1/user/layout` and the `method` label is one of
-`GET` or `PATCH`. PromQL queries that filter only by `method` are
+`dashboard_layout_request_duration_seconds{method}` is observed
+exactly once per request in a `try/finally` block, which guarantees
+the histogram is recorded for every outcome including 401, 403,
+404, and 500 responses. The `method` label is one of `GET` or
+`PATCH`. There is no `route` label; the metric scopes to the layout
+endpoints implicitly via its name and the `UserDashboardLayoutService`
+emission site. PromQL queries that filter only by `method` are
 sufficient to disambiguate the two endpoints.
 
 ## Structured-Log Fields
@@ -304,7 +303,7 @@ Operator workflow for a user-reported layout-save failure:
    (controller entry, service invocation, Prisma query, response
    completion, plus any error-level frames).
 4. If the trace shows
-   `dashboard_layout_save_failures_total{reason="db"}` incremented,
+   `dashboard_layout_save_failures_total{reason="db_error"}` incremented,
    the operator inspects PrismaService health and the
    `/api/v1/health` probe before declaring the incident closed.
 
@@ -398,27 +397,30 @@ serialization add a few tens of milliseconds at the median.
 ### Panel 3 — Error Rate by Outcome (Stacked)
 
 Stacked time series showing outcome composition across both
-endpoints — six possible series in total (`success`, `not_found`,
-`error` for GET; `success`, `error` for PATCH).
-`outcome="success"` should dominate during steady state;
-`outcome="not_found"` is expected on first-visit GET requests
-(it is not an error) and will appear as a small but persistent
-band in the stack. A sustained increase in `outcome="error"` for
-either endpoint is the principal incident signal for the layout
-persistence layer; the operator should immediately open Panel 4
-to disambiguate the failure cause.
+endpoints — five possible series in total (`found`, `not_found`,
+`error` for GET; `success`, `error` for PATCH). The two
+"healthy" outcomes (`found` for GET and `success` for PATCH)
+should dominate during steady state; `outcome="not_found"` is
+expected on first-visit GET requests (it is not an error) and
+will appear as a small but persistent band in the stack. A
+sustained increase in `outcome="error"` for either endpoint is
+the principal incident signal for the layout persistence layer;
+the operator should immediately open Panel 4 to disambiguate the
+failure cause.
 
 ### Panel 4 — Save Failures by Reason
 
-PATCH-specific failure breakdown. `reason="db"` is the most
-common operational failure (Prisma upsert errors due to
-connection loss, constraint violations, or JSON column
-rejections); `reason="validation"` and `reason="internal"` are
-reserved for future labels and should be near zero in steady
-state. A sustained spike in `reason="db"` typically correlates
-with a Postgres incident and should be cross-referenced with the
-global `/api/v1/health` probe and the operational Postgres
-metrics.
+PATCH-specific failure breakdown. The service emits a single
+reason value `reason="db_error"` covering every Prisma upsert
+failure (connection loss, constraint violations, JSON column
+rejections, transient `PrismaClientKnownRequestError` instances,
+etc.). The panel renders as a single time series — kept as a
+"by reason" panel rather than collapsing to a flat counter so
+that future reasons added to the service can appear without
+panel changes. A sustained spike in `reason="db_error"`
+typically correlates with a Postgres incident and should be
+cross-referenced with the global `/api/v1/health` probe and the
+operational Postgres metrics.
 
 ### Panel 5 — PATCH Error Rate Ratio
 
@@ -515,12 +517,12 @@ groups:
             have terminated in the error outcome over the last
             10 minutes. User layout changes are silently failing
             to persist. Inspect dashboard_layout_save_failures_total
-            partitioned by reason to disambiguate the cause —
-            reason="db" indicates a Prisma upsert failure (most
-            common) and reason="internal" indicates an unexpected
-            service-layer exception. Cross-reference correlationId
-            values against the structured logs and the
-            /api/v1/health probe.
+            (the service emits the single reason value
+            reason="db_error" covering every Prisma upsert failure
+            mode). Cross-reference correlationId values against
+            the structured logs and the /api/v1/health probe to
+            disambiguate the underlying cause (connection loss,
+            constraint violation, JSON column rejection, etc.).
 
       - alert: DashboardLayoutEndpointDown
         expr: |
@@ -605,13 +607,13 @@ produce the expected output.
    Expected output (order may vary):
 
    ```text
-   # HELP dashboard_layout_get_total Total GET /api/v1/user/layout invocations partitioned by outcome (success, not_found, error).
+   # HELP dashboard_layout_get_total Total GET /api/v1/user/layout invocations partitioned by outcome
    # TYPE dashboard_layout_get_total counter
-   # HELP dashboard_layout_patch_total Total PATCH /api/v1/user/layout invocations partitioned by outcome (success, error).
+   # HELP dashboard_layout_patch_total Total PATCH /api/v1/user/layout invocations partitioned by outcome
    # TYPE dashboard_layout_patch_total counter
-   # HELP dashboard_layout_request_duration_seconds Layout endpoint request duration in seconds, partitioned by route and HTTP method.
+   # HELP dashboard_layout_request_duration_seconds Layout endpoint request duration in seconds
    # TYPE dashboard_layout_request_duration_seconds histogram
-   # HELP dashboard_layout_save_failures_total Total layout save failures partitioned by reason (validation, db, internal).
+   # HELP dashboard_layout_save_failures_total Total layout save failures partitioned by reason
    # TYPE dashboard_layout_save_failures_total counter
    ```
 
@@ -695,11 +697,11 @@ produce the expected output.
    ```
 
    Expected `HTTP/1.1 200 OK` with the empty-items layout in the
-   response body. Verify the success counter incremented:
+   response body. Verify the `found` outcome counter incremented:
 
    ```bash
    curl -s http://localhost:3333/api/v1/metrics \
-     | grep -E '^dashboard_layout_get_total\{outcome="success"'
+     | grep -E '^dashboard_layout_get_total\{outcome="found"'
    ```
 
 8. **Test the 400 validation failure** with a malformed body:
@@ -713,12 +715,12 @@ produce the expected output.
 
    Expected `HTTP/1.1 400 Bad Request` (NestJS global
    `ValidationPipe` rejection). Note that
-   `dashboard_layout_save_failures_total{reason="validation"}`
-   does **not** increment on this path in the current
-   implementation — the global `ValidationPipe` rejects the
-   request before the service runs, so the `validation` label is
-   reserved for future server-side re-validation paths. The 400
-   response itself is the verifiable signal for this step.
+   `dashboard_layout_save_failures_total` does **not** increment
+   on this path in the current implementation — the global
+   `ValidationPipe` rejects the request before the service runs,
+   and the service emits the failures counter only on Prisma
+   upsert failure (`reason="db_error"`). The 400 response itself
+   is the verifiable signal for this step.
 
 9. **Verify `X-Correlation-ID` propagation.** Every successful and
    unsuccessful response (excluding the 401 path tested in
@@ -940,29 +942,11 @@ scrape intervals.
         "defaults": { "unit": "ops" },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "db" },
+            "matcher": { "id": "byName", "options": "db_error" },
             "properties": [
               {
                 "id": "color",
                 "value": { "mode": "fixed", "fixedColor": "red" }
-              }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "validation" },
-            "properties": [
-              {
-                "id": "color",
-                "value": { "mode": "fixed", "fixedColor": "yellow" }
-              }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "internal" },
-            "properties": [
-              {
-                "id": "color",
-                "value": { "mode": "fixed", "fixedColor": "orange" }
               }
             ]
           }
@@ -1067,4 +1051,4 @@ if referenced.
 - `dashboard_layout_get_total` (counter; labels: `outcome`)
 - `dashboard_layout_patch_total` (counter; labels: `outcome`)
 - `dashboard_layout_save_failures_total` (counter; labels: `reason`)
-- `dashboard_layout_request_duration_seconds` (histogram; labels: `route`, `method`)
+- `dashboard_layout_request_duration_seconds` (histogram; labels: `method`)

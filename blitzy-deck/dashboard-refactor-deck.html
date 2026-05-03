@@ -549,8 +549,8 @@
         </div>
         <p class="callout warning">
           <i data-lucide="git-branch"></i>
-          <b>Intentional deviation.</b>
-          The chat panel ships today embedded at <code>portfolio-page.html:32</code>. This refactor promotes it to a co-equal grid module on the same footing as every other module &mdash; recorded in the decision log per the Explainability rule.
+          <b>Intentional deviation (Decision D-026).</b>
+          The chat panel ships today embedded at <code>portfolio-page.html:32</code>. This refactor promotes it to a co-equal grid module on the same footing as every other module &mdash; recorded as Decision D-026 in <code>docs/decisions/agent-action-plan-decisions.md</code> with a verbatim quote of the user prompt mandate and the alternatives considered, satisfying the Explainability project rule.
         </p>
       </section>
 
@@ -745,6 +745,7 @@ erDiagram
               <li><i data-lucide="component"></i> Imports: <code>Gridster</code> and <code>GridsterItemComponent</code></li>
               <li><i data-lucide="settings"></i> <code>gridType: 'fixed'</code>, <code>pushItems: true</code>, <code>swap: true</code></li>
               <li><i data-lucide="zap"></i> Per-frame layout math runs <code>NgZone.runOutsideAngular</code></li>
+              <li><i data-lucide="file-x"></i> CSS embedded via <code>ViewEncapsulation.None</code>; no <code>styles.scss</code> import (Decision D-024)</li>
             </ul>
           </div>
           <div class="col">
@@ -878,7 +879,7 @@ sequenceDiagram
         <h2><i data-lucide="rocket"></i> Get Started in Five Steps</h2>
         <ol class="next-steps">
           <li><i data-lucide="folder-open"></i> <b>Read the Agent Action Plan.</b> Sections 0.1 through 0.9 capture intent, scope, integration map, design-system compliance, and execution plan.</li>
-          <li><i data-lucide="package-plus"></i> <b>Install the grid engine.</b> <code>npm install angular-gridster2@21.0.1</code> and import <code>angular-gridster2/css/gridster.css</code> from <code>styles.scss</code>.</li>
+          <li><i data-lucide="package-plus"></i> <b>Install the grid engine.</b> <code>npm install angular-gridster2@21.0.1</code>. The package ships its CSS via <code>ViewEncapsulation.None</code> in <code>fesm2022/angular-gridster2.mjs</code>; no <code>@import</code> from <code>styles.scss</code> is required (Decision D-024).</li>
           <li><i data-lucide="database"></i> <b>Run the migration.</b> <code>npx prisma migrate dev --name add-user-dashboard-layout</code> creates the table, FK with cascade, and regenerates the typed client.</li>
           <li><i data-lucide="hammer"></i> <b>Verify the build.</b> <code>npx nx build client &amp;&amp; npx nx build api</code> must complete with zero errors and zero warnings.</li>
           <li><i data-lucide="search"></i> <b>Walk the gates.</b> Eleven acceptance gates in AAP &sect; 0.8.6; ten engineering rules in &sect; 0.8.1; segmented PR review per <code>CODE_REVIEW.md</code>.</li>
