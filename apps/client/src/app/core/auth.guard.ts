@@ -51,12 +51,30 @@ export class AuthGuard {
             ) {
               resolve(true);
               return EMPTY;
-            } else if (state.url !== '/start') {
-              this.router.navigate(publicRoutes.start.routerLink);
-              resolve(false);
-              return EMPTY;
             }
 
+            // The dashboard refactor (AAP § 0.6.1.5) collapsed the
+            // application route table to a single root route plus a `**`
+            // wildcard redirect. As a side effect, the legacy `/start`
+            // landing page no longer exists as a routable path: the
+            // wildcard re-resolves any `/start` navigation back to `/`,
+            // which re-runs this guard. Redirecting to
+            // `publicRoutes.start.routerLink` here would therefore create
+            // an infinite redirect cascade and leave the user on a blank,
+            // unrecoverable page (QA Checkpoint 3 Issue #1).
+            //
+            // Instead, allow the route to activate and let the
+            // `GfDashboardCanvasComponent` handle the unauthenticated
+            // state internally. The canvas's `ngOnInit` translates the
+            // 401 response from `GET /api/v1/user/layout` into a
+            // "Could not load your dashboard layout" snack-bar (see
+            // `dashboard-canvas.component.ts` `ngOnInit`/`catchError`),
+            // and the global `HttpResponseInterceptor` calls
+            // `userService.signOut()` on any 401, clearing stale
+            // credentials. The guard's success-path branches at lines
+            // ~80–103 (which redirect for ZEN-mode users and for users
+            // already on `/start`) remain intact and continue to govern
+            // authenticated traffic.
             resolve(true);
             return EMPTY;
           })
