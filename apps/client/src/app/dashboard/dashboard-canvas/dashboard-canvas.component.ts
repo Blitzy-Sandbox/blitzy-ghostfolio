@@ -877,6 +877,67 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
   }
 
   /**
+   * Resolves a module's icon name (Ionicons identifier) from its registry
+   * descriptor for binding to the wrapper's `[iconName]` input. Bound in
+   * the template as `<gf-module-wrapper [iconName]="resolveIconName(item.name)">`.
+   *
+   * **Why a method (not an inline template expression)?** The agent prompt
+   * for the canvas template (AAP § 0.6.1.4) prefers a public helper method
+   * over inlining `moduleRegistry.getByName(item.name)?.iconName ?? 'apps-outline'`
+   * directly into the template binding because:
+   *
+   * 1. Centralizing the fallback (`'apps-outline'`) ensures the template
+   *    and the {@link GfModuleWrapperComponent} default agree — the wrapper
+   *    declares `iconName = input<string>('apps-outline')` so passing the
+   *    same fallback explicitly keeps the contract documented at the call
+   *    site.
+   * 2. Keeps the template clean and free of registry-protocol details.
+   * 3. Allows the template's type-checker to validate the call signature
+   *    (the registry's `getByName(name)` accepts a `string`; the helper's
+   *    parameter type makes that explicit at the API boundary).
+   *
+   * **Defensive fallback**: if the registry has no descriptor for the
+   * supplied name (e.g., a stale layout referencing a module that has
+   * since been removed from the registry), the helper returns the
+   * generic `'apps-outline'` icon. In production this path is
+   * unreachable because {@link hydrateFromLayout} filters unregistered
+   * items out of `dashboard()` before the template ever calls this
+   * helper — but the fallback is cheap insurance.
+   *
+   * **Stateless / pure**: the method has no side effects and depends
+   * only on the registry's content. Safe to call repeatedly during
+   * change detection without performance impact (the registry's
+   * `getByName` is an `O(1)` Map lookup).
+   *
+   * @param name the module's registered name (also the `GridItem.name`
+   *   discriminator).
+   * @returns the descriptor's `iconName` if registered, else the default
+   *   `'apps-outline'` Ionicons identifier.
+   */
+  public resolveIconName(name: string): string {
+    return this.moduleRegistry.getByName(name)?.iconName ?? 'apps-outline';
+  }
+
+  /**
+   * Resolves a module's display title from its registry descriptor for
+   * binding to the wrapper's `[title]` input. Bound in the template as
+   * `<gf-module-wrapper [title]="resolveTitle(item.name)">`.
+   *
+   * Mirrors {@link resolveIconName} — same rationale, same defensive
+   * fallback, same `O(1)` cost. Returns the descriptor's `displayLabel`
+   * (the user-visible, localized module title) if registered, else the
+   * raw `name` as a last-resort label so something meaningful renders
+   * in the unlikely event of a stale-layout race condition.
+   *
+   * @param name the module's registered name.
+   * @returns the descriptor's `displayLabel` if registered, else the
+   *   `name` itself as a fallback.
+   */
+  public resolveTitle(name: string): string {
+    return this.moduleRegistry.getByName(name)?.displayLabel ?? name;
+  }
+
+  /**
    * Hydrates the canvas from a persisted layout document (or renders
    * blank + auto-opens catalog on null/empty input — Rule 10,
    * AAP § 0.8.1.10).

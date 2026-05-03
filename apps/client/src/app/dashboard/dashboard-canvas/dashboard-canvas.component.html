@@ -1,18 +1,15 @@
-@if (isLoading()) {
-  <mat-progress-bar
-    class="gf-canvas-loading"
-    color="primary"
-    mode="indeterminate"
-  />
-}
-
 <div class="gf-canvas-root">
+  @if (isLoading()) {
+    <mat-progress-bar class="gf-canvas-loading" mode="indeterminate" />
+  }
+
   @if (hasError()) {
     <div
       class="gf-canvas-error"
       i18n="
-        Error banner shown when the layout failed to load|Inline alert shown
-        when GET /api/v1/user/layout fails with a non-404 error
+        Error banner shown when the layout fails to load|Inline error message
+        displayed at the top of the canvas when GET /api/v1/user/layout returns
+        a non-success response
       "
       role="alert"
     >
@@ -21,11 +18,11 @@
   }
 
   <gridster class="gf-canvas-gridster" [options]="options">
-    @for (item of dashboard(); track item) {
+    @for (item of dashboard(); track item.name + '|' + item.x + '|' + item.y) {
       <gridster-item [item]="item">
         <gf-module-wrapper
-          [iconName]="moduleRegistry.getByName(item.name)?.iconName ?? ''"
-          [title]="moduleRegistry.getByName(item.name)?.displayLabel ?? ''"
+          [iconName]="resolveIconName(item.name)"
+          [title]="resolveTitle(item.name)"
           (remove)="removeItem(item)"
         >
           <ng-container [gfDashboardModuleHost]="item.name" />
@@ -43,7 +40,13 @@
     [attr.aria-label]="addModuleLabel"
     (click)="openCatalog()"
   >
-    <mat-icon>add</mat-icon>
-    <span>{{ addModuleLabel }}</span>
+    <mat-icon aria-hidden="true">add</mat-icon>
+    <span
+      i18n="
+        Visible label for the Add module FAB|Visible label on the floating
+        action button that opens the module catalog dialog
+      "
+      >Add module</span
+    >
   </button>
 </div>
