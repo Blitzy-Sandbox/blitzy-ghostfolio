@@ -33,9 +33,12 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  *     closure rather than the bind-time state.
  *   - Re-bind safety — calling `bind(...)` a second time before
  *     `unbind()` silently disposes the previous subscription.
- *   - Error-recovery contract — a failing PATCH does NOT throw
- *     uncaught (the `subscribe({ error })` handler swallows it per
- *     v1 contract). The error handler is intentionally a no-op for v1.
+ *   - Error-recovery contract — a failing PATCH does NOT terminate
+ *     the outer pipeline. The SUT applies `catchError(() => EMPTY)`
+ *     INSIDE the `switchMap` callback so inner errors are swallowed
+ *     before they can propagate to the outer subscription. After an
+ *     inner error, subsequent debounced bursts MUST still trigger
+ *     fresh `update(...)` calls (exact count `=== 2`).
  *   - Synchronous-update completion — the pipeline completes cleanly
  *     when {@link UserDashboardLayoutService.update} returns a
  *     synchronous Observable (e.g., `of(...)`) — exercises the
@@ -585,22 +588,28 @@ describe('LayoutPersistenceService', () => {
   }));
 
   // ===========================================================
-  // Test 4.9 — Failed PATCH: error handler is a no-op for v1.
+  // Test 4.9 — Failed PATCH: outer pipeline survives via
+  //                          `catchError(() => EMPTY)` inside switchMap.
   // ===========================================================
   // The SUT's class-level JSDoc documents the v1 error-handling
-  // contract: the `subscribe({ error: () => {} })` handler is
-  // intentionally a no-op. After an error, the inner sequence
-  // terminates per RxJS semantics. This test pins the contract that
-  // the error does NOT escape the subscription as an uncaught
-  // exception — the test would crash if the SUT lacked the error
-  // handler.
+  // contract: errors emitted by the inner `update(...)` Observable
+  // are swallowed INSIDE the `switchMap` callback via
+  // `catchError(() => EMPTY)`. The OUTER pipeline therefore continues
+  // to react to subsequent debounced bursts — a transient PATCH
+  // failure does NOT silently disable persistence for the rest of the
+  // session.
   //
-  // The agent prompt explicitly notes that this assertion is
-  // intentionally permissive (`>= 1`) to accommodate future retry
-  // semantics without churning the test. The KEY invariant is that
-  // the first PATCH attempt fired AND the error did not propagate as
-  // an uncaught exception.
-  it('should keep the test alive after a failed PATCH (error handler swallows the error)', fakeAsync(() => {
+  // This test pins both halves of the contract:
+  //   1. The error does NOT escape the subscription as an uncaught
+  //      exception (the test would crash if the SUT lacked the inner
+  //      `catchError`).
+  //   2. After the inner error is swallowed, a SECOND debounced burst
+  //      DOES trigger a second `update(...)` call — exact count
+  //      `=== 2`. If the SUT moved the `catchError` outside the
+  //      `switchMap` (the regression this test guards against), the
+  //      outer subscription would terminate after the first error
+  //      and the second `update(...)` call would never fire.
+  it('should swallow inner errors and keep the pipeline live for subsequent bursts', fakeAsync(() => {
     const firstUpdate = new Subject<LayoutData>();
     const secondUpdate = new Subject<LayoutData>();
     let callCount = 0;
@@ -625,30 +634,30 @@ describe('LayoutPersistenceService', () => {
     tick(500);
     expect(updateSpy).toHaveBeenCalledTimes(1);
 
-    // Error the first in-flight PATCH. The SUT's `error: () => {}`
-    // handler swallows the error — the test does NOT crash with an
-    // uncaught exception. If the SUT lacked the error handler, RxJS
-    // would propagate the error as an unhandled exception via
-    // `EmptyError` or similar, failing this test.
+    // Error the first in-flight PATCH. The SUT's inner
+    // `catchError(() => EMPTY)` swallows the error and replaces it
+    // with a benign `EMPTY`-completion, so the OUTER subscription
+    // survives. The test does NOT crash with an uncaught exception —
+    // if the SUT lacked the inner `catchError`, RxJS would propagate
+    // the error as an unhandled exception, failing this test.
     firstUpdate.error(new Error('network down'));
 
-    // Second emission. Per default RxJS semantics, an errored
-    // subscription terminates the whole chain — so this second
-    // emission does not necessarily reach `updateSpy`. The assertion
-    // below is intentionally permissive (`>= 1`) to accommodate the
-    // current "swallow + don't recover" v1 contract AND a hypothetical
-    // future retry strategy without churning the test.
+    // Second emission. After the inner error was swallowed, the outer
+    // pipeline is still alive — `switchMap` accepts the next outer
+    // emission and spawns a fresh inner Observable. The second
+    // `update(...)` call MUST fire after the debounce window.
     changesSubject.next();
     tick(500);
 
-    // The KEY invariant: at least one save attempt fired. The exact
-    // count is implementation-defined per the agent prompt's guidance.
-    expect(updateSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // EXACT count `=== 2`: the first PATCH fired, was errored
+    // (swallowed inside `switchMap`), and a second PATCH then fired
+    // after the next debounced burst. This pins the post-fix contract
+    // that the outer pipeline is NOT terminated by inner errors.
+    expect(updateSpy).toHaveBeenCalledTimes(2);
 
-    // Defensive cleanup — even if the second subscription was never
-    // active, calling `next/complete` on a Subject with no observers
-    // is a safe no-op. If the second PATCH did fire, this also drains
-    // the fakeAsync zone.
+    // Drain the second in-flight PATCH so the `fakeAsync` zone has no
+    // pending tasks at test end. Without this, `fakeAsync` would
+    // throw "1 periodic timer(s) still in the queue" at zone teardown.
     secondUpdate.next(SAMPLE_LAYOUT);
     secondUpdate.complete();
   }));

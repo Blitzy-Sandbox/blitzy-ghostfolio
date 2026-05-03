@@ -1,7 +1,7 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Observable, Subscription } from 'rxjs';
-import { debounceTime, switchMap } from 'rxjs/operators';
+import { EMPTY, Observable, Subscription } from 'rxjs';
+import { catchError, debounceTime, switchMap } from 'rxjs/operators';
 
 import { LayoutData } from '../interfaces/layout-data.interface';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
@@ -97,13 +97,15 @@ interface PersistenceBinding {
  * ```
  *   binding.changes$
  *     .pipe(
- *       debounceTime(PERSISTENCE_DEBOUNCE_MS),  // collapse bursts
- *       switchMap(() => userDashboardLayoutService.update(  // latest-wins
- *         binding.layoutSelector()                          // capture final state
- *       )),
- *       takeUntilDestroyed(destroyRef)                      // auto-cleanup
+ *       debounceTime(PERSISTENCE_DEBOUNCE_MS),       // collapse bursts
+ *       switchMap(() =>
+ *         userDashboardLayoutService                 // latest-wins
+ *           .update(binding.layoutSelector())        // capture final state
+ *           .pipe(catchError(() => EMPTY))           // swallow inner err
+ *       ),
+ *       takeUntilDestroyed(destroyRef)               // auto-cleanup
  *     )
- *     .subscribe({ error: () => { ... } });                 // no-op v1
+ *     .subscribe();                                  // no error handler
  * ```
  *
  * **Operator rationale**:
@@ -119,6 +121,18 @@ interface PersistenceBinding {
  *   the authoritative one — out-of-order PATCH responses (mergeMap) or
  *   queued writes (concatMap) would either corrupt server state or stall
  *   the pipeline behind a slow request.
+ * - `catchError(() => EMPTY)` is applied INSIDE the `switchMap` callback
+ *   (i.e., on the inner `update(...)` Observable) rather than on the
+ *   outer pipeline. This is the critical detail of the v1 error-handling
+ *   contract: per default RxJS semantics, an error emitted by the inner
+ *   Observable would propagate UP through `switchMap` to the outer
+ *   subscription and TERMINATE it — so all subsequent debounced bursts
+ *   would be silently lost until the canvas was rebuilt. Swallowing
+ *   inside `switchMap` converts the inner error into a benign
+ *   `EMPTY`-completion, leaving the outer pipeline live and ready to
+ *   process the next debounced burst. This guarantees Rule 4 spirit
+ *   (AAP § 0.8.1.4) holds end-to-end: a transient PATCH failure does
+ *   NOT silently disable persistence for the rest of the session.
  * - `takeUntilDestroyed(destroyRef)` — placed LAST in the pipe chain so
  *   that all upstream operators tear down cleanly when the binder
  *   component (the canvas) is destroyed. The service is `providedIn:
@@ -140,13 +154,18 @@ interface PersistenceBinding {
  *   already disposes the subscription when the canvas is destroyed —
  *   `unbind()` is a redundant safety mechanism.
  *
- * **Error handling**: the `subscribe({ error: () => { ... } })` callback
- * is intentionally a no-op for v1. Auto-retry would create a feedback
- * loop (failed save → grid state unchanged → no new event → no retry),
- * and surfacing the failure to the user is the canvas's responsibility
- * (AAP § 0.6.3 places the `MatSnackBar` toast in the canvas's chrome,
- * not the service's). The next grid state-change event will trigger a
- * fresh PATCH; the service does NOT auto-recover.
+ * **Error handling**: errors are swallowed inside the `switchMap`
+ * callback via `catchError(() => EMPTY)` on the inner `update(...)`
+ * Observable. This guarantees the outer pipeline survives transient
+ * inner failures and continues to react to subsequent debounced bursts —
+ * the next grid state-change event triggers a fresh PATCH attempt
+ * automatically, no manual recovery is required. The outer
+ * `.subscribe()` therefore needs NO `error` handler. Auto-retry of the
+ * SAME failed payload is intentionally NOT implemented (it would create
+ * a feedback loop: failed save → grid state unchanged → no new event →
+ * no retry), and surfacing the failure to the user is the canvas's
+ * responsibility (AAP § 0.6.3 places the `MatSnackBar` toast in the
+ * canvas's chrome, not the service's).
  *
  * **Rule 4 compliance** (AAP § 0.8.1.4): the public API is exactly
  * `bind(binding, destroyRef): void` and `unbind(): void`. There is NO
@@ -250,10 +269,13 @@ export class LayoutPersistenceService {
    * correctly tears down all upstream operators (the debounce timer,
    * the in-flight `switchMap` HTTP call) when the canvas is destroyed.
    *
-   * **Error handling**: the `subscribe({ error: ... })` handler is a
-   * no-op for v1 — see the class-level JSDoc for rationale. The
-   * subscription does NOT auto-recover; the next grid-state change
-   * will trigger a new save attempt.
+   * **Error handling**: errors are swallowed INSIDE the `switchMap`
+   * callback via `catchError(() => EMPTY)` on the inner `update(...)`
+   * Observable — see the class-level JSDoc for rationale. The outer
+   * subscription survives inner failures and continues to react to
+   * subsequent debounced bursts; the next grid-state change will
+   * trigger a fresh PATCH attempt automatically. The outer
+   * `.subscribe()` therefore needs NO `error` handler.
    *
    * @param binding The canvas's grid state-change stream and layout-
    *   selector callback. The binding's `changes$` Observable is
@@ -284,33 +306,35 @@ export class LayoutPersistenceService {
         // inside switchMap, so the captured snapshot reflects the
         // canvas state AT save time (end of debounce window), not at
         // bind time.
+        //
+        // `catchError(() => EMPTY)` is applied to the INNER `update(...)`
+        // Observable (i.e., inside the `switchMap` callback) — NOT to
+        // the outer pipeline. This is the v1 error-handling contract
+        // (AAP § 0.8.1.4 Rule 4 spirit): per default RxJS semantics, an
+        // error emitted by the inner Observable would propagate UP
+        // through `switchMap` and terminate the OUTER subscription, so
+        // every subsequent debounced burst would be silently lost until
+        // the canvas was rebuilt. Swallowing inside `switchMap`
+        // converts the inner error into a benign `EMPTY`-completion,
+        // leaving the outer pipeline live and ready for the next
+        // debounced burst. The next user-driven grid change therefore
+        // triggers a fresh PATCH attempt automatically — no manual
+        // recovery, no feedback loop. Auto-retry of the SAME failed
+        // payload is intentionally not implemented; surfacing the
+        // failure to the user is the canvas's responsibility (the
+        // `MatSnackBar` toast lives in the canvas chrome, not in this
+        // service's API surface).
         switchMap(() =>
-          this.userDashboardLayoutService.update(binding.layoutSelector())
+          this.userDashboardLayoutService
+            .update(binding.layoutSelector())
+            .pipe(catchError(() => EMPTY))
         ),
         // MUST be the LAST operator in the pipe chain so it correctly
         // tears down all upstream operators (debounce timer, in-flight
         // switchMap HTTP call) when the canvas is destroyed.
         takeUntilDestroyed(destroyRef)
       )
-      .subscribe({
-        error: () => {
-          // Intentional no-op for v1. Rationale (see class-level JSDoc
-          // for full discussion):
-          //
-          //   1. Surfacing the failure to the user is the canvas's
-          //      responsibility — `MatSnackBar` is part of the canvas
-          //      chrome, not this service's API surface.
-          //   2. Auto-retry would create a feedback loop: failed save →
-          //      grid state unchanged → no new event → no retry. The
-          //      next user-driven grid change will trigger a fresh
-          //      PATCH attempt.
-          //   3. The subscription does NOT recover automatically. After
-          //      an error emission, RxJS terminates the inner sequence;
-          //      `switchMap` will spawn a new inner Observable on the
-          //      next outer emission, so the outer pipeline continues
-          //      to react to subsequent debounced bursts.
-        }
-      });
+      .subscribe();
   }
 
   /**

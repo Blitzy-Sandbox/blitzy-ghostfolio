@@ -35,11 +35,6 @@ import { LayoutData, LayoutItem } from '../interfaces/layout-data.interface';
 import { GfModuleCatalogComponent } from '../module-catalog/module-catalog.component';
 import { ModuleRegistryService } from '../module-registry.service';
 import { GfModuleWrapperComponent } from '../module-wrapper/module-wrapper.component';
-import { GfAnalysisModuleComponent } from '../modules/analysis/analysis-module.component';
-import { GfChatModuleComponent } from '../modules/chat/chat-module.component';
-import { GfHoldingsModuleComponent } from '../modules/holdings/holdings-module.component';
-import { GfPortfolioOverviewModuleComponent } from '../modules/portfolio-overview/portfolio-overview-module.component';
-import { GfTransactionsModuleComponent } from '../modules/transactions/transactions-module.component';
 import { DashboardTelemetryService } from '../services/dashboard-telemetry.service';
 import { LayoutPersistenceService } from '../services/layout-persistence.service';
 import { UserDashboardLayoutService } from '../services/user-dashboard-layout.service';
@@ -122,9 +117,32 @@ const DISMISS_LABEL = $localize`:Snack-bar dismiss button label|Action button la
  * (since gridster supports auto-placement with missing coordinates); the
  * canvas's hydration and persistence flows require all four fields, so the
  * intersection narrows them to `number` (non-optional).
+ *
+ * **Why `minItemCols` / `minItemRows` are explicitly carried per-item?**
+ * angular-gridster2 v21.0.1's `GridsterItemConfig` declares both fields
+ * as optional `number | undefined`; the engine reads them via
+ * `<gridster-item [minItemCols]="item.minItemCols">` bindings on the
+ * template and falls back to the global floor on `GridsterConfig`
+ * (`options.minItemCols`, `options.minItemRows`) when the per-item value
+ * is missing. Per Rule 6 (AAP § 0.8.1.6), each module declares its own
+ * minimum cell dimensions in its registry descriptor, and the canvas MUST
+ * propagate those declarations into per-item bindings — otherwise the
+ * gridster engine would only enforce the global 2 × 2 floor and a user
+ * could shrink (e.g.) the Holdings module (descriptor `minCols: 4`,
+ * `minRows: 4`) below its declared minimum. {@link addModule} and
+ * {@link hydrateFromLayout} are the two entry points that produce
+ * `GridItem` instances; both look up the descriptor via
+ * {@link ModuleRegistryService.getByName} and project
+ * `descriptor.minCols → minItemCols`, `descriptor.minRows → minItemRows`
+ * onto the resulting `GridItem`. The fields are kept OPTIONAL in this
+ * type so future entry points (e.g., a hypothetical "blank placeholder
+ * item" used during async load) can omit them and inherit the global
+ * floor — current production code always populates them.
  */
 type GridItem = GridsterItemConfig & {
   cols: number;
+  minItemCols?: number;
+  minItemRows?: number;
   name: string;
   rows: number;
   x: number;
@@ -296,14 +314,23 @@ export class GfDashboardModuleHostDirective implements OnInit {
  *
  * **Standalone**: `true` (Angular 21 default; the explicit declaration is
  * optional but the codebase uses explicit `standalone: true` for clarity
- * per the chat-panel pattern). The five module-wrapper components
- * (analysis, chat, holdings, portfolio-overview, transactions) are imported
- * into the `imports: [...]` array PURELY so the standalone DI graph
- * tree-shakes them in — the canvas NEVER references them by name in code.
- * The registry-mediated `viewContainerRef.createComponent(descriptor.component)`
- * inside {@link GfDashboardModuleHostDirective} requires the components to
- * be reachable in the standalone DI graph; importing them here is the
- * canonical way to ensure that.
+ * per the chat-panel pattern). The canvas's `imports: [...]` array
+ * intentionally OMITS every module-wrapper component (analysis, chat,
+ * holdings, portfolio-overview, transactions). Per Rule 3 (AAP § 0.8.1.3),
+ * the canvas MUST NOT contain hard-coded `import { GfHoldingsModuleComponent }`
+ * statements; the registry indirection is the SOLE mechanism by which
+ * module-wrapper classes participate in the canvas. Module wrappers are
+ * imported and registered exclusively in `dashboard.providers.ts` (the
+ * `provideAppInitializer(...)` factory that calls
+ * `moduleRegistry.register(HOLDINGS_MODULE_DESCRIPTOR)` etc. at
+ * application bootstrap), making the registration site the SINGLE place
+ * the wrapper classes are referenced by name. The
+ * registry-mediated `viewContainerRef.createComponent(descriptor.component)`
+ * inside {@link GfDashboardModuleHostDirective} works without any compile-
+ * time import of the resolved class because Angular standalone components
+ * are dynamically instantiable as long as the class symbol is reachable
+ * via at least one import in the application's bootstrap graph
+ * (`dashboard.providers.ts` provides that reachability).
  *
  * **Zone integration**: angular-gridster2 v21 internally invokes
  * `NgZone.run` / `NgZone.runOutsideAngular` for its drag/resize math (per
@@ -311,9 +338,16 @@ export class GfDashboardModuleHostDirective implements OnInit {
  * `provideZoneChangeDetection()` (`apps/client/src/main.ts:87`), so
  * gridster's zone integration works automatically and satisfies the
  * < 100 ms drag/resize SLO from AAP § 0.6.3.3 without explicit
- * `ngZone.runOutsideAngular(...)` wrapping in this file. `NgZone` is
- * injected as a future-proof hook for viewport-relative recomputation if
- * v2 ever needs it.
+ * `ngZone.runOutsideAngular(...)` wrapping in this file. The canvas's
+ * own `itemChangeCallback` / `itemResizeCallback` handlers
+ * ({@link onItemChange}, {@link onItemResize}) wrap their bodies in
+ * `ngZone.run(...)` as forward-compatible defense-in-depth: a
+ * hypothetical future gridster regression that invokes the callback
+ * OUTSIDE the zone would otherwise cause signal updates and the
+ * persistence Subject emission inside the callbacks to skip change
+ * detection — with the wrapper, the < 100 ms SLO is preserved
+ * regardless. See the {@link ngZone} field JSDoc for the full
+ * defense-in-depth rationale.
  *
  * **Rule compliance summary**:
  *   - **Rule 2** (Single source of truth, AAP § 0.8.1.2): the canvas owns
@@ -347,15 +381,21 @@ export class GfDashboardModuleHostDirective implements OnInit {
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    // Per Rule 3 (AAP § 0.8.1.3), the five module-wrapper components
+    // (GfAnalysisModuleComponent, GfChatModuleComponent,
+    // GfHoldingsModuleComponent, GfPortfolioOverviewModuleComponent,
+    // GfTransactionsModuleComponent) are intentionally OMITTED from
+    // this list. Module-wrapper classes are imported and registered
+    // exclusively in `dashboard.providers.ts` via the
+    // `provideAppInitializer(...)` factory; that file is the SINGLE
+    // place the wrapper classes are referenced by name. The
+    // registry-mediated dynamic instantiation in
+    // `GfDashboardModuleHostDirective` resolves the descriptor at
+    // runtime — no compile-time import of the resolved class is needed.
     CommonModule,
-    GfAnalysisModuleComponent,
-    GfChatModuleComponent,
     GfDashboardModuleHostDirective,
-    GfHoldingsModuleComponent,
     GfModuleCatalogComponent,
     GfModuleWrapperComponent,
-    GfPortfolioOverviewModuleComponent,
-    GfTransactionsModuleComponent,
     Gridster,
     GridsterItem,
     MatButtonModule,
@@ -547,12 +587,27 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
   private readonly moduleRegistry = inject(ModuleRegistryService);
 
   /**
-   * Angular `NgZone` — reserved for future viewport-relative
-   * recomputation of `fixedColWidth`. angular-gridster2 v21 internally
-   * invokes `NgZone.run` / `NgZone.runOutsideAngular` for its drag/resize
-   * math, so the canvas does NOT need explicit zone wrapping for the
-   * < 100 ms SLO (per the v21 release notes). Injected here purely as a
-   * future-proof hook; v1 does not call `ngZone.run` directly.
+   * Angular `NgZone` — used by {@link onItemChange} and
+   * {@link onItemResize} to wrap their telemetry-then-persistence
+   * sequence in `ngZone.run(...)`.
+   *
+   * **Defense-in-depth rationale**: angular-gridster2 v21 currently
+   * invokes its `itemChangeCallback` / `itemResizeCallback` INSIDE the
+   * Angular zone (verified against
+   * `node_modules/angular-gridster2/fesm2022/angular-gridster2.mjs`),
+   * so the host's `provideZoneChangeDetection()` setup
+   * (`apps/client/src/main.ts:87`) already triggers change detection
+   * naturally — the explicit `ngZone.run(...)` wrapper is a no-op in
+   * the current v21 line. The wrapper exists to guard against a
+   * hypothetical future gridster regression that invokes the callback
+   * OUTSIDE the zone (e.g., from a `NgZone.runOutsideAngular`-bracketed
+   * RAF tick): without the wrapper, signal updates and the persistence
+   * `Subject` emission inside the callbacks would NOT mark the view
+   * dirty, and the < 100 ms drag/resize SLO from AAP § 0.6.3.3 could
+   * be missed silently. The `ngZone.run(...)` wrapper documents the
+   * canvas's zone-awareness intent (per the AAP § 0.6.3.3
+   * "validate zone/zoneless interaction with angular-gridster2 v21's
+   * NgZone calls" requirement) and is forward-compatible.
    */
   private readonly ngZone = inject(NgZone);
 
@@ -752,10 +807,18 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
    *    sized at the descriptor's `defaultCols` × `defaultRows`. The
    *    gridster engine's `pushItems: true` setting handles fine-grained
    *    collision resolution if `x: 0` would overlap an existing item.
-   * 3. Update the `dashboard()` signal with a NEW array reference (per
+   * 3. Project `descriptor.minCols → minItemCols` and
+   *    `descriptor.minRows → minItemRows` onto the new item so the
+   *    gridster engine enforces the per-module Rule 6 floor (AAP
+   *    § 0.8.1.6) — without this, only the global 2 × 2 floor would
+   *    apply and a user could shrink the new item below its declared
+   *    minimum. The bindings are read by gridster via
+   *    `<gridster-item [minItemCols]="item.minItemCols"
+   *    [minItemRows]="item.minItemRows">` on the template.
+   * 4. Update the `dashboard()` signal with a NEW array reference (per
    *    OnPush + signal semantics — `.update((items) => [...items, item])`,
    *    NEVER `.push(...)`).
-   * 4. Emit on {@link gridStateChange$} to trigger the persistence
+   * 5. Emit on {@link gridStateChange$} to trigger the persistence
    *    pipeline (Rule 4, AAP § 0.8.1.4).
    *
    * **Public API**: this method is the canvas's only programmatic way
@@ -775,8 +838,17 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
       return;
     }
 
+    // Project descriptor minimums onto the per-item gridster fields so
+    // the engine rejects user-initiated resize/move operations that
+    // would shrink THIS item below the declared per-module floor.
+    // Without these projections, only the global `options.minItemCols
+    // = 2`, `options.minItemRows = 2` floor would apply and (e.g.) the
+    // Holdings module (descriptor `minCols: 4`, `minRows: 4`) could be
+    // resized to 2 × 2 — a Rule 6 violation per AAP § 0.8.1.6.
     const newItem: GridItem = {
       cols: descriptor.defaultCols,
+      minItemCols: descriptor.minCols,
+      minItemRows: descriptor.minRows,
       name: descriptor.name,
       rows: descriptor.defaultRows,
       x: 0,
@@ -821,18 +893,22 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
    *
    * **Path B — non-empty saved layout** (returning user): map
    * {@link LayoutItem} entries → {@link GridItem} entries (rename
-   * `moduleId` → `name`) and skip items whose `moduleId` is not
+   * `moduleId` → `name`), skip items whose `moduleId` is not
    * registered (defensive — protects against stale layouts referencing
-   * removed module types).
+   * removed module types), and project the resolved descriptor's
+   * `minCols` / `minRows` onto each `GridItem` as `minItemCols` /
+   * `minItemRows` so the gridster engine enforces the per-module
+   * Rule 6 floor (AAP § 0.8.1.6) on resize/move attempts.
    *
    * **Why filter unregistered items?** A `LayoutItem` with an unknown
    * `moduleId` would cause {@link GfDashboardModuleHostDirective} to
    * render nothing (its defensive null-check), leaving an empty
    * `<gridster-item>` slot on the canvas. Filtering at hydration time
    * is cleaner — the slot doesn't appear at all rather than rendering
-   * a phantom empty cell. The mapping order (`filter` then `map`)
-   * matters because `filter` short-circuits before the `map`
-   * projection, avoiding any work for filtered-out items.
+   * a phantom empty cell. We use a single `flatMap` rather than
+   * `filter` + `map` so each `LayoutItem` is resolved through the
+   * registry exactly once (versus the previous two-pass `filter` then
+   * `map` which would call `getByName` twice per surviving item).
    *
    * Always clears {@link isLoading} regardless of path (the GET has
    * resolved either way; the progress bar disappears).
@@ -856,20 +932,35 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
       return;
     }
 
-    // Path B — non-empty saved layout. Filter out unregistered items
-    // (defensive against stale layouts referencing removed modules)
-    // and project each LayoutItem → GridItem (rename moduleId → name).
-    const items: GridItem[] = layout.items
-      .filter(
-        (item) => this.moduleRegistry.getByName(item.moduleId) !== undefined
-      )
-      .map((item) => ({
-        cols: item.cols,
-        name: item.moduleId,
-        rows: item.rows,
-        x: item.x,
-        y: item.y
-      }));
+    // Path B — non-empty saved layout. For each persisted LayoutItem,
+    // resolve its descriptor through the registry: missing descriptors
+    // (stale layouts referencing removed modules) yield an empty array
+    // and are dropped by `flatMap`; resolved descriptors yield a
+    // single-element array containing the projected GridItem with
+    // per-module `minItemCols` / `minItemRows` populated from
+    // `descriptor.minCols` / `descriptor.minRows` so gridster enforces
+    // the per-module Rule 6 floor (AAP § 0.8.1.6).
+    const items: GridItem[] = layout.items.flatMap<GridItem>((item) => {
+      const descriptor = this.moduleRegistry.getByName(item.moduleId);
+
+      if (!descriptor) {
+        // Stale layout — module no longer registered. Drop the item
+        // rather than render an empty `<gridster-item>` slot.
+        return [];
+      }
+
+      return [
+        {
+          cols: item.cols,
+          minItemCols: descriptor.minCols,
+          minItemRows: descriptor.minRows,
+          name: item.moduleId,
+          rows: item.rows,
+          x: item.x,
+          y: item.y
+        }
+      ];
+    });
 
     this.dashboard.set(items);
   }
