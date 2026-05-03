@@ -1,0 +1,49 @@
+@if (isLoading()) {
+  <mat-progress-bar
+    class="gf-canvas-loading"
+    color="primary"
+    mode="indeterminate"
+  />
+}
+
+<div class="gf-canvas-root">
+  @if (hasError()) {
+    <div
+      class="gf-canvas-error"
+      i18n="
+        Error banner shown when the layout failed to load|Inline alert shown
+        when GET /api/v1/user/layout fails with a non-404 error
+      "
+      role="alert"
+    >
+      Could not load your dashboard layout.
+    </div>
+  }
+
+  <gridster class="gf-canvas-gridster" [options]="options">
+    @for (item of dashboard(); track item) {
+      <gridster-item [item]="item">
+        <gf-module-wrapper
+          [iconName]="moduleRegistry.getByName(item.name)?.iconName ?? ''"
+          [title]="moduleRegistry.getByName(item.name)?.displayLabel ?? ''"
+          (remove)="removeItem(item)"
+        >
+          <ng-container [gfDashboardModuleHost]="item.name" />
+        </gf-module-wrapper>
+      </gridster-item>
+    }
+  </gridster>
+
+  <button
+    class="gf-canvas-fab"
+    color="primary"
+    extended
+    mat-fab
+    type="button"
+    [attr.aria-label]="addModuleLabel"
+    (click)="openCatalog()"
+  >
+    <mat-icon>add</mat-icon>
+    <span>{{ addModuleLabel }}</span>
+  </button>
+</div>
