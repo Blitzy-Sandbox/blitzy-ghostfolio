@@ -16,30 +16,36 @@ import { RebalancingService } from './rebalancing.service';
  * Mocks the `ai` module (Vercel AI SDK) at module-load time so the spec
  * NEVER initiates a real network call to any provider endpoint. The mock
  * factory replaces:
- *   - `generateText` — a `jest.fn()` spy that each `it(...)` block
+ *   - `generateObject` — a `jest.fn()` spy that each `it(...)` block
  *     stages with `mockResolvedValueOnce(...)` to drive different
- *     `result.toolCalls` shapes.
- *   - `tool` — an identity passthrough that returns its config object
- *     verbatim. This preserves the structure (`{description,
- *     parameters}`) so the spec can inspect both the description
- *     string AND the underlying Zod parameters schema directly via
- *     `tools[TOOL_NAME].parameters.parse(...)`.
+ *     `result.object` shapes (the Vercel SDK's portable equivalent of
+ *     Anthropic's `tool_use` content block, used here for JSON-mode
+ *     constrained generation).
+ *   - `NoObjectGeneratedError` — a stub class with the `isInstance`
+ *     static so tests can stage `generateObject` rejections that the
+ *     production `instanceof`-style guard recognizes as the
+ *     "model failed to produce valid JSON" path.
+ *   - `generateText` and `tool` — kept as `jest.fn()` no-ops for any
+ *     legacy reference; the production code post-migration uses
+ *     `generateObject` exclusively.
  *
- * The `__generateTextMock` and `__toolMock` test-only exports are
+ * The `__generateObjectMock`, `__noObjectGeneratedErrorMock`,
+ * `__generateTextMock`, and `__toolMock` test-only exports are
  * exposed through the conventional double-underscore prefix per the
  * sibling `snowflake-sync.service.spec.ts` and `ai-chat.service.spec.ts`
  * patterns.
  *
- * Per Refine PR Directive 3, this hoisted mock is the AUTHORITATIVE
- * Rule 4 verification fixture for the Vercel AI SDK migration:
- * Tests stage different `result.toolCalls` shapes (with or without
- * a matching tool name, with or without the required
- * `recommendations` / `summary` / `warnings` top-level fields, with
- * or without per-recommendation `goalReference`/`rationale`) so the
- * production `RebalancingService.recommend(...)` is exercised
- * against EVERY regression path Rule 4 prohibits.
+ * Per Refine PR Directive 3 (Vercel AI SDK migration), this hoisted
+ * mock is the AUTHORITATIVE Rule 4 verification fixture: tests stage
+ * different `generateObject` outcomes (resolved with `{ object: ... }`
+ * matching / partially-matching / mis-matching the
+ * `recommendations`/`summary`/`warnings` contract, or rejected with a
+ * `NoObjectGeneratedError`) so the production
+ * `RebalancingService.recommend(...)` is exercised against EVERY
+ * regression path Rule 4 prohibits.
  */
 jest.mock('ai', () => {
+  const generateObjectMock = jest.fn();
   const generateTextMock = jest.fn();
   // The `tool()` factory in the real Vercel AI SDK returns a
   // `Tool` object. For testing we use an identity passthrough so
@@ -47,10 +53,35 @@ jest.mock('ai', () => {
   // and Zod `parameters` schema fields directly.
   const toolMock = jest.fn((cfg: unknown) => cfg);
 
+  /**
+   * `NoObjectGeneratedError` stub. The production code calls
+   * `NoObjectGeneratedError.isInstance(genErr)` to identify the
+   * "model produced unparseable output" path. The stub mimics that
+   * static signature so tests can stage rejections that the guard
+   * recognizes — test code constructs an instance via
+   * `new NoObjectGeneratedErrorMock(...)` and the production guard's
+   * `isInstance(...)` call returns `true` for that instance.
+   */
+  class NoObjectGeneratedErrorMock extends Error {
+    public readonly text?: string;
+    constructor(opts?: { message?: string; text?: string }) {
+      super(opts?.message ?? 'No object generated');
+      this.name = 'NoObjectGeneratedError';
+      this.text = opts?.text;
+    }
+    public static isInstance(err: unknown): boolean {
+      return err instanceof NoObjectGeneratedErrorMock;
+    }
+  }
+
   return {
     __esModule: true,
+    __generateObjectMock: generateObjectMock,
     __generateTextMock: generateTextMock,
+    __noObjectGeneratedErrorMock: NoObjectGeneratedErrorMock,
     __toolMock: toolMock,
+    NoObjectGeneratedError: NoObjectGeneratedErrorMock,
+    generateObject: generateObjectMock,
     generateText: generateTextMock,
     tool: toolMock
   };
@@ -196,52 +227,41 @@ describe('RebalancingService', () => {
   }
 
   /**
-   * Shape of a single `tool_use`-equivalent toolCall returned by the
-   * Vercel AI SDK. Mirrors the relevant subset of the SDK's
-   * `ToolCall` type.
+   * Shape of a `generateObject` response. Post-migration (Refine PR
+   * Directive 3 + commit "minor fixes to model usage"), the
+   * production code uses `generateObject({ mode: 'json', schema, ...
+   * })` which returns a `{ object: T, ... }` envelope where `object`
+   * is the Zod-validated structured output. The spec stages
+   * `mockResolvedValueOnce({ object: <RebalancingResponse> })` to
+   * drive each test scenario.
    */
-  interface ToolCall {
-    args: unknown;
-    toolCallId: string;
-    toolName: string;
+  interface GenerateObjectResult {
+    object: unknown;
   }
 
   /**
-   * Shape of a `generateText` response. Mirrors the relevant subset
-   * of the SDK's `GenerateTextResult` type — only `toolCalls` is
-   * inspected by the production code (Rule 4: text content is NEVER
-   * parsed for structured output).
-   */
-  interface GenerateTextResult {
-    text?: string;
-    toolCalls: ToolCall[];
-  }
-
-  /**
-   * Shape of the single argument passed to `generateText(...)`.
+   * Shape of the single argument passed to `generateObject(...)`.
    * Mirrors the subset of the SDK's `CallSettings` & `Prompt` types
-   * exercised by `RebalancingService.recommend(...)`. The `tools`
-   * map is keyed by tool name (Vercel SDK convention) — different
-   * from Anthropic's flat `tools: Tool[]` array — and `toolChoice`
-   * is the literal string `'required'` (Vercel SDK syntax for
-   * forced tool use).
+   * exercised by `RebalancingService.recommend(...)` post-migration:
+   * `mode: 'json'` (constrained generation), `schema` (the Zod
+   * top-level schema), `prompt` (user message), `model` (from
+   * `AiProviderService.getModel()`), and `system` (system prompt).
    */
-  interface GenerateTextArg {
-    messages: { content: string; role: string }[];
+  interface GenerateObjectArg {
     model: unknown;
+    mode: string;
+    prompt: string;
+    schema: z.ZodTypeAny;
     system: string;
-    toolChoice: string;
-    tools: Record<
-      string,
-      {
-        description: string;
-        parameters: z.ZodTypeAny;
-      }
-    >;
   }
 
   let aiProviderService: AiProviderServiceMock;
+  let generateObjectMock: jest.Mock;
   let generateTextMock: jest.Mock;
+  let NoObjectGeneratedErrorMock: typeof Error & {
+    new (opts?: { message?: string; text?: string }): Error;
+    isInstance: (err: unknown) => boolean;
+  };
   let metricsService: MetricsServiceMock;
   let portfolioService: PortfolioServiceMock;
   let service: RebalancingService;
@@ -252,23 +272,33 @@ describe('RebalancingService', () => {
     /**
      * Reset every jest.fn() spy across all mocks so call history
      * never bleeds between `it(...)` blocks. This includes the SDK
-     * mock's `generateText` spy (re-acquired below from
-     * `__generateTextMock`).
+     * mocks (`generateObject`, `generateText`) re-acquired below
+     * from the hoisted `jest.mock('ai', ...)` factory.
      */
     jest.clearAllMocks();
 
     /**
-     * Re-acquire the SDK `generateText` mock from the
-     * `jest.mock('ai', ...)` factory at the top of the file. At
-     * runtime under Jest, `aiSdk` resolves to the mocked module —
-     * including the non-typed `__generateTextMock` helper exposed by
-     * the factory. The `unknown` cast is the conventional
-     * project-wide pattern for accessing a test-only export from a
-     * mocked module without triggering
-     * `@typescript-eslint/no-unsafe-member-access`.
+     * Re-acquire the SDK mocks from the `jest.mock('ai', ...)`
+     * factory at the top of the file. At runtime under Jest,
+     * `aiSdk` resolves to the mocked module — including the
+     * non-typed `__generateObjectMock`, `__generateTextMock`, and
+     * `__noObjectGeneratedErrorMock` helpers exposed by the factory.
+     * The `unknown` cast is the conventional project-wide pattern
+     * for accessing test-only exports from a mocked module without
+     * triggering `@typescript-eslint/no-unsafe-member-access`.
      */
-    generateTextMock = (aiSdk as unknown as { __generateTextMock: jest.Mock })
-      .__generateTextMock;
+    const sdkInternals = aiSdk as unknown as {
+      __generateObjectMock: jest.Mock;
+      __generateTextMock: jest.Mock;
+      __noObjectGeneratedErrorMock: typeof Error & {
+        new (opts?: { message?: string; text?: string }): Error;
+        isInstance: (err: unknown) => boolean;
+      };
+    };
+    generateObjectMock = sdkInternals.__generateObjectMock;
+    generateTextMock = sdkInternals.__generateTextMock;
+    NoObjectGeneratedErrorMock = sdkInternals.__noObjectGeneratedErrorMock;
+    generateObjectMock.mockReset();
     generateTextMock.mockReset();
 
     /**
@@ -468,18 +498,22 @@ describe('RebalancingService', () => {
 
   // -------------------------------------------------------------------------
   // Test 3 — Rule 4: structured RebalancingResponse sourced EXCLUSIVELY
-  //          from `result.toolCalls[0].args` (CENTRAL TO FEATURE C —
-  //          AAP § 0.7.1.4)
+  //          from `result.object` (CENTRAL TO FEATURE C — AAP § 0.7.1.4)
+  //
+  // Post-migration to `generateObject`, the Vercel SDK returns a
+  // `{ object: T }` envelope where `object` is the schema-validated
+  // structured output. Rule 4 (the original "tool_use content block"
+  // contract) maps to `result.object` in this code path — the
+  // service MUST source the structured output EXCLUSIVELY from
+  // `generatedObject.object`, never from any free-form text channel.
   // -------------------------------------------------------------------------
 
-  it('reads structured RebalancingResponse EXCLUSIVELY from result.toolCalls[0].args (Rule 4 — AAP § 0.7.1.4 CENTRAL TO FEATURE C)', async () => {
-    // Stage a Vercel SDK response containing BOTH a free-form text
-    // field (which the service MUST IGNORE per Rule 4) and a
-    // `toolCalls[0]` entry whose `args` is the canonical structured
-    // `RebalancingResponse`. The test then asserts the service's
-    // return value equals the toolCall args VERBATIM — proving
-    // that the text field was never parsed and that the service
-    // sourced its output exclusively from `toolCalls[0].args`.
+  it('reads structured RebalancingResponse EXCLUSIVELY from generateObject result.object (Rule 4 — AAP § 0.7.1.4 CENTRAL TO FEATURE C)', async () => {
+    // Stage a Vercel SDK `generateObject` response whose `object`
+    // is the canonical structured `RebalancingResponse`. The test
+    // then asserts the service's return value equals
+    // `generatedObject.object` VERBATIM — proving that the service
+    // sourced its output exclusively from the structured channel.
     const expectedResponse = {
       recommendations: [
         {
@@ -496,21 +530,11 @@ describe('RebalancingService', () => {
       warnings: []
     };
 
-    const stagedResponse: GenerateTextResult = {
-      // The text field is intentionally non-empty and intentionally
-      // contains a JSON-parseable rebalancing-like blob to catch
-      // any regression that falls back to text parsing.
-      text: '{"recommendations": "I will not be parsed"}',
-      toolCalls: [
-        {
-          args: expectedResponse,
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: expectedResponse
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     const result = await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -518,9 +542,9 @@ describe('RebalancingService', () => {
       userId: TEST_USER_ID
     });
 
-    // The result MUST equal the toolCalls[0].args verbatim. If the
-    // service ever falls back to parsing `result.text` (which would
-    // be a Rule 4 violation), the result would differ.
+    // The result MUST equal `generatedObject.object` verbatim. If
+    // the service ever falls back to parsing free-form text (which
+    // would be a Rule 4 violation), the result would differ.
     expect(result).toEqual(expectedResponse);
   });
 
@@ -530,19 +554,22 @@ describe('RebalancingService', () => {
   //          counter increment + provider name logged at ERROR level
   // -------------------------------------------------------------------------
 
-  it('throws BadGatewayException with no_tool_use outcome when result.toolCalls is empty (Refine PR Directive 3 pass/fail #2)', async () => {
-    // Stage a response where the configured provider did NOT honor
-    // `toolChoice: 'required'` (e.g., a local Ollama model that
-    // lacks tool-use training, or a misconfigured provider that
-    // emits text only). The service MUST throw BadGatewayException
-    // (HTTP 502) and MUST increment
+  it('throws BadGatewayException with no_tool_use outcome when generateObject rejects with NoObjectGeneratedError (Refine PR Directive 3 pass/fail #2)', async () => {
+    // Stage a `generateObject` rejection where the configured
+    // provider did NOT produce parseable structured JSON (e.g., a
+    // local Ollama model that lacks function-calling / JSON-mode
+    // training, or a misconfigured provider that emitted free
+    // text). The Vercel AI SDK signals this by throwing a
+    // `NoObjectGeneratedError`. The service MUST recognize this
+    // error via `NoObjectGeneratedError.isInstance(...)` and MUST
+    // throw BadGatewayException (HTTP 502) + increment
     // `rebalancing_requests_total{outcome="no_tool_use"}`.
-    const stagedResponse: GenerateTextResult = {
-      text: 'I cannot use tools.',
-      toolCalls: []
-    };
+    const noObjectError = new NoObjectGeneratedErrorMock({
+      message: 'No object generated by provider',
+      text: 'I cannot follow the JSON schema.'
+    });
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockRejectedValueOnce(noObjectError);
 
     // Spy on Logger.error to verify the provider name is logged at
     // ERROR level (Refine PR Directive 3 explicit requirement). The
@@ -575,7 +602,7 @@ describe('RebalancingService', () => {
     // setting.
     const errorCall = errorSpy.mock.calls.find((args) => {
       const message = typeof args[0] === 'string' ? args[0] : '';
-      return message.includes('no tool_use');
+      return message.includes('did not produce a valid');
     });
     expect(errorCall).toBeDefined();
     if (errorCall) {
@@ -587,30 +614,25 @@ describe('RebalancingService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5 — `generateText` is invoked with `toolChoice: 'required'`
-  //          (Vercel SDK equivalent of Anthropic's
-  //          `tool_choice: { type: 'tool', name }`)
+  // Test 5 — `generateObject` is invoked with `mode: 'json'`
+  //          (Vercel SDK constrained-generation equivalent of the
+  //          legacy `tool_choice: 'required'` request-boundary
+  //          enforcement; post-migration to JSON-mode)
   // -------------------------------------------------------------------------
 
-  it('forces tool invocation via toolChoice: "required" when calling generateText (Rule 4 request-boundary enforcement, Vercel SDK migration)', async () => {
+  it('forces JSON-mode constrained generation via mode: "json" when calling generateObject (Rule 4 request-boundary enforcement, Vercel SDK migration)', async () => {
     // Stage a minimal valid response so the service returns rather
     // than throws — the assertions below inspect the REQUEST shape
     // sent to the SDK, not the response handling.
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: {
-            recommendations: [],
-            summary: 'No changes needed.',
-            warnings: []
-          },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: {
+        recommendations: [],
+        summary: 'No changes needed.',
+        warnings: []
+      }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -618,39 +640,33 @@ describe('RebalancingService', () => {
       userId: TEST_USER_ID
     });
 
-    // The service MUST issue exactly ONE generateText call per
+    // The service MUST issue exactly ONE generateObject call per
     // `recommend(...)` invocation — multiple calls would suggest
     // unintended retry logic that could double-count metrics.
-    expect(generateTextMock).toHaveBeenCalledTimes(1);
+    expect(generateObjectMock).toHaveBeenCalledTimes(1);
 
-    const [callArg] = generateTextMock.mock.calls[0] as [GenerateTextArg];
+    const [callArg] = generateObjectMock.mock.calls[0] as [GenerateObjectArg];
 
-    // The Vercel AI SDK uses `toolChoice: 'required'` (a literal
-    // string) as the portable equivalent of Anthropic's
-    // `tool_choice: { type: 'tool', name: '...' }`. With only one
-    // tool registered, the SDK pins the model to that tool — Rule
-    // 4 verification at the request boundary.
-    expect(callArg.toolChoice).toBe('required');
+    // The Vercel AI SDK uses `mode: 'json'` to force JSON-mode
+    // constrained generation. This is the post-migration portable
+    // equivalent of the legacy `toolChoice: 'required'` mechanism —
+    // Rule 4 verification at the request boundary, ensuring the
+    // model output conforms to the registered Zod schema.
+    expect(callArg.mode).toBe('json');
   });
 
   // -------------------------------------------------------------------------
-  // Test 6 — `generateText` is invoked with the model from
+  // Test 6 — `generateObject` is invoked with the model from
   //          AiProviderService.getModel() (Refine PR Directive 1 + 3
   //          AI provider indirection)
   // -------------------------------------------------------------------------
 
-  it('passes the AiProviderService.getModel() return value verbatim to generateText (Refine PR Directive 1 + 3 indirection)', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: { recommendations: [], summary: '', warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+  it('passes the AiProviderService.getModel() return value verbatim to generateObject (Refine PR Directive 1 + 3 indirection)', async () => {
+    const stagedResponse: GenerateObjectResult = {
+      object: { recommendations: [], summary: '', warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -658,9 +674,9 @@ describe('RebalancingService', () => {
       userId: TEST_USER_ID
     });
 
-    const [callArg] = generateTextMock.mock.calls[0] as [GenerateTextArg];
+    const [callArg] = generateObjectMock.mock.calls[0] as [GenerateObjectArg];
 
-    // The model passed to generateText MUST be EXACTLY the object
+    // The model passed to generateObject MUST be EXACTLY the object
     // returned by AiProviderService.getModel() — the production
     // code MUST NOT construct its own model or call any other
     // provider SDK directly.
@@ -669,23 +685,20 @@ describe('RebalancingService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 7 — Tool description starts with `OUTPUT ONLY.` and
-  //          enumerates the three required output fields (Refine PR
-  //          Directive 3 explicit requirement)
+  // Test 7 — generateObject is called with system + prompt strings
+  //          that enumerate the three required output fields. Post-
+  //          migration to JSON-mode constrained generation, the
+  //          equivalent "OUTPUT ONLY." contract is enforced via the
+  //          Zod schema's `.describe(...)` field annotations rather
+  //          than a top-level tool description string.
   // -------------------------------------------------------------------------
 
-  it('registers a single rebalancing_recommendations tool whose description starts with "OUTPUT ONLY." and enumerates recommendations/summary/warnings (Refine PR Directive 3)', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: { recommendations: [], summary: '', warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+  it('passes system + user prompts to generateObject that enumerate recommendations/summary/warnings (Refine PR Directive 3)', async () => {
+    const stagedResponse: GenerateObjectResult = {
+      object: { recommendations: [], summary: '', warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -693,47 +706,37 @@ describe('RebalancingService', () => {
       userId: TEST_USER_ID
     });
 
-    const [callArg] = generateTextMock.mock.calls[0] as [GenerateTextArg];
+    const [callArg] = generateObjectMock.mock.calls[0] as [GenerateObjectArg];
 
-    // The Vercel SDK registers tools as a name-keyed map (not an
-    // array). Verify the canonical `rebalancing_recommendations`
-    // entry is present.
-    expect(callArg.tools).toBeDefined();
-    expect(callArg.tools.rebalancing_recommendations).toBeDefined();
+    // Verify the request sent to the SDK includes both system and
+    // prompt strings — these together encode the canonical output
+    // contract that Directive 3 originally framed as "OUTPUT ONLY."
+    expect(typeof callArg.system).toBe('string');
+    expect(typeof callArg.prompt).toBe('string');
+    expect(callArg.system.length).toBeGreaterThan(0);
+    expect(callArg.prompt.length).toBeGreaterThan(0);
 
-    const toolDef = callArg.tools.rebalancing_recommendations;
-
-    // Refine PR Directive 3 explicit requirement: the description
-    // MUST OPEN with the literal string "OUTPUT ONLY." so the
-    // model treats the description as the canonical output
-    // contract.
-    expect(toolDef.description.startsWith('OUTPUT ONLY.')).toBe(true);
-
-    // The description MUST enumerate the three required top-level
-    // fields by name.
-    expect(toolDef.description).toContain('recommendations');
-    expect(toolDef.description).toContain('summary');
-    expect(toolDef.description).toContain('warnings');
+    // The combined prompt + system content MUST enumerate the three
+    // required top-level fields by name so the model treats them
+    // as canonical.
+    const combined = `${callArg.system}\n${callArg.prompt}`;
+    expect(combined).toContain('recommendations');
+    expect(combined).toContain('summary');
+    expect(combined).toContain('warnings');
   });
 
   // -------------------------------------------------------------------------
-  // Test 8 — Tool parameters Zod schema requires the three top-level
-  //          fields (recommendations, summary, warnings) — Refine PR
-  //          Directive 3 + AAP § 0.1.2.4 contract
+  // Test 8 — Schema passed to generateObject requires the three
+  //          top-level fields (recommendations, summary, warnings)
+  //          — Refine PR Directive 3 + AAP § 0.1.2.4 contract
   // -------------------------------------------------------------------------
 
-  it('declares a Zod parameters schema with required recommendations, summary, and warnings fields (Refine PR Directive 3 + AAP § 0.1.2.4 contract)', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: { recommendations: [], summary: '', warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+  it('declares a Zod schema with required recommendations, summary, and warnings fields passed to generateObject (Refine PR Directive 3 + AAP § 0.1.2.4 contract)', async () => {
+    const stagedResponse: GenerateObjectResult = {
+      object: { recommendations: [], summary: '', warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -741,8 +744,8 @@ describe('RebalancingService', () => {
       userId: TEST_USER_ID
     });
 
-    const [callArg] = generateTextMock.mock.calls[0] as [GenerateTextArg];
-    const schema = callArg.tools.rebalancing_recommendations.parameters;
+    const [callArg] = generateObjectMock.mock.calls[0] as [GenerateObjectArg];
+    const schema = callArg.schema;
 
     // Verify the schema accepts a valid payload with all three
     // top-level fields populated.
@@ -792,17 +795,11 @@ describe('RebalancingService', () => {
   // -------------------------------------------------------------------------
 
   it('reads the user FinancialProfile via UserFinancialProfileService.findByUserId with the JWT-authoritative userId', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: { recommendations: [], summary: '', warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: { recommendations: [], summary: '', warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -823,17 +820,11 @@ describe('RebalancingService', () => {
   // -------------------------------------------------------------------------
 
   it('reads the current portfolio via PortfolioService.getDetails with the JWT-authoritative userId', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: { recommendations: [], summary: '', warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: { recommendations: [], summary: '', warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -858,17 +849,11 @@ describe('RebalancingService', () => {
   // -------------------------------------------------------------------------
 
   it('fetches allocation history via SnowflakeSyncService.queryHistory with the JWT-authoritative userId', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: { recommendations: [], summary: '', warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: { recommendations: [], summary: '', warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -924,17 +909,11 @@ describe('RebalancingService', () => {
       warnings: []
     };
 
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: responseInput,
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: responseInput
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     const result = await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -953,34 +932,28 @@ describe('RebalancingService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 13 — Rejects responses where toolCalls[0].args is missing
+  // Test 13 — Rejects responses where generateObject `object` is missing
   //           required top-level fields → BadGatewayException +
   //           shape_invalid outcome counter (Rule 4 shape-validation
   //           guard — AAP § 0.7.1.4)
   // -------------------------------------------------------------------------
 
-  it('throws BadGatewayException with shape_invalid outcome when toolCalls[0].args is missing required top-level fields (Rule 4 shape validation)', async () => {
-    // Stage a `toolCalls[0]` whose `args` is missing the required
-    // `recommendations` and `summary` fields (only `warnings` is
-    // present). This simulates the case where the SDK accepts the
-    // tool call (e.g., loose Zod parsing or a permissive provider)
-    // but the resulting structure is incomplete. The service's
-    // defensive `Array.isArray(...) && typeof ... === 'string'`
-    // shape-validation MUST reject this and increment the
-    // shape_invalid counter.
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          // Note: `recommendations` and `summary` deliberately
-          // missing; only `warnings` is present.
-          args: { warnings: [] },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+  it('throws BadGatewayException with shape_invalid outcome when generateObject result.object is missing required top-level fields (Rule 4 shape validation)', async () => {
+    // Stage a `generateObject` response whose `object` is missing
+    // the required `recommendations` and `summary` fields (only
+    // `warnings` is present). This simulates the case where the SDK
+    // accepts the model output (e.g., loose Zod parsing or a
+    // permissive provider mode) but the resulting structure is
+    // incomplete. The service's defensive `Array.isArray(...) &&
+    // typeof ... === 'string'` shape-validation MUST reject this
+    // and increment the shape_invalid counter.
+    const stagedResponse: GenerateObjectResult = {
+      // Note: `recommendations` and `summary` deliberately missing;
+      // only `warnings` is present.
+      object: { warnings: [] }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await expect(
       service.recommend({
@@ -1010,30 +983,24 @@ describe('RebalancingService', () => {
     // single space, which trim() reduces to empty). The defensive
     // per-recommendation validator MUST reject this and increment
     // the shape_invalid counter.
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: {
-            recommendations: [
-              {
-                action: 'BUY',
-                fromPct: 0.1,
-                goalReference: '   ', // trims to empty
-                rationale: 'Test rationale',
-                ticker: 'VTI',
-                toPct: 0.2
-              }
-            ],
-            summary: 'Test summary',
-            warnings: []
-          },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: {
+        recommendations: [
+          {
+            action: 'BUY',
+            fromPct: 0.1,
+            goalReference: '   ', // trims to empty
+            rationale: 'Test rationale',
+            ticker: 'VTI',
+            toPct: 0.2
+          }
+        ],
+        summary: 'Test summary',
+        warnings: []
+      }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await expect(
       service.recommend({
@@ -1057,31 +1024,24 @@ describe('RebalancingService', () => {
   // -------------------------------------------------------------------------
 
   it('on success: increments rebalancing_requests_total{outcome=success} and observes rebalancing_latency_seconds once', async () => {
-    const stagedResponse: GenerateTextResult = {
-      toolCalls: [
-        {
-          args: {
-            recommendations: [
-              {
-                action: 'HOLD',
-                fromPct: 0.5,
-                goalReference: 'riskTolerance',
-                rationale:
-                  'Maintain allocation aligned with HIGH risk tolerance.',
-                ticker: 'VTI',
-                toPct: 0.5
-              }
-            ],
-            summary: 'No changes needed.',
-            warnings: []
-          },
-          toolCallId: 'toolu_test',
-          toolName: 'rebalancing_recommendations'
-        }
-      ]
+    const stagedResponse: GenerateObjectResult = {
+      object: {
+        recommendations: [
+          {
+            action: 'HOLD',
+            fromPct: 0.5,
+            goalReference: 'riskTolerance',
+            rationale: 'Maintain allocation aligned with HIGH risk tolerance.',
+            ticker: 'VTI',
+            toPct: 0.5
+          }
+        ],
+        summary: 'No changes needed.',
+        warnings: []
+      }
     };
 
-    generateTextMock.mockResolvedValueOnce(stagedResponse);
+    generateObjectMock.mockResolvedValueOnce(stagedResponse);
 
     await service.recommend({
       correlationId: TEST_CORRELATION_ID,
@@ -1109,17 +1069,19 @@ describe('RebalancingService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 16 — Generic error path: when generateText throws an
-  //           unexpected error, the service maps it to
-  //           BadGatewayException + outcome="error"
+  // Test 16 — Generic error path: when generateObject throws an
+  //           unexpected error (NON-NoObjectGeneratedError), the
+  //           service maps it to BadGatewayException + outcome="error"
   // -------------------------------------------------------------------------
 
   it('on unexpected upstream failure: throws BadGatewayException + increments rebalancing_requests_total{outcome=error}', async () => {
-    // Stage a generateText rejection (network error, SDK runtime
-    // failure, or any non-BadGatewayException). The service's
-    // outer try/catch MUST map this to a generic
-    // BadGatewayException and increment the error outcome counter.
-    generateTextMock.mockRejectedValueOnce(new Error('upstream timeout'));
+    // Stage a generateObject rejection that is NOT a
+    // NoObjectGeneratedError (network error, SDK runtime failure,
+    // or any other non-BadGatewayException). The service's outer
+    // try/catch MUST map this to a generic BadGatewayException and
+    // increment the `error` outcome counter (NOT `no_tool_use`,
+    // which is reserved for NoObjectGeneratedError specifically).
+    generateObjectMock.mockRejectedValueOnce(new Error('upstream timeout'));
 
     await expect(
       service.recommend({
