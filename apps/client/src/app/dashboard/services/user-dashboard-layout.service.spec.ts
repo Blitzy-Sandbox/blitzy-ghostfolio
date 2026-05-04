@@ -4,6 +4,7 @@ import {
   provideHttpClientTesting
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { UserDashboardLayout } from '@prisma/client';
 
 import { LayoutData } from '../interfaces/layout-data.interface';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
@@ -137,6 +138,64 @@ const EMPTY_LAYOUT: LayoutData = {
   version: 1
 };
 
+/**
+ * Wire-format fixture representing the full `UserDashboardLayout`
+ * Prisma row that the server returns on the GET success path AND the
+ * PATCH success path. The fixture exists because the server controller
+ * (`apps/api/src/app/user/user-dashboard-layout.controller.ts`)
+ * returns the full row, NOT the unwrapped `LayoutData` — and the SUT's
+ * `map(row => row.layoutData)` operator unwraps it before subscribers
+ * see it. The QA contract-alignment finding (Issue #2) reported that
+ * the SUT previously typed the GET response as `LayoutData` directly,
+ * which produced a runtime "items is undefined" failure when the
+ * canvas tried to read `layout.items`. Pinning the wire-format fixture
+ * here ensures the spec asserts on the BRIDGING contract (server
+ * returns row → client unwraps → canvas sees `LayoutData`), not just
+ * the canvas-facing emission, so a regression that drops the unwrap
+ * surfaces immediately.
+ *
+ * The fixture's `userId` / `createdAt` / `updatedAt` fields are
+ * deliberately set to deterministic values so the equality assertions
+ * remain stable under `httpMock.flush(...)`'s structural deep-equal.
+ * The exact values of these metadata fields are NOT part of the
+ * canvas's contract — only `layoutData` is — so the assertions in
+ * tests 3.2 / 3.6 / 3.7 verify that the metadata is DISCARDED by the
+ * unwrap (received MUST equal the unwrapped layout, not the wire
+ * row).
+ */
+const SAMPLE_PERSISTED_ROW: UserDashboardLayout = {
+  userId: '11111111-1111-1111-1111-111111111111',
+  // The Prisma JSONB column is typed as `Prisma.JsonValue` at the
+  // generator level, but the runtime contract is "exactly a
+  // LayoutData document" (validated by `update-dashboard-layout.dto.ts`
+  // class-validator decorators per AAP § 0.6.1.7). The cast bridges
+  // the static-type widening to the runtime-narrowed shape — the SUT
+  // applies the same cast in `map(row => row.layoutData as unknown
+  // as LayoutData)`. Both casts together represent the runtime
+  // contract pinned by this spec.
+  layoutData: SAMPLE_LAYOUT as unknown as UserDashboardLayout['layoutData'],
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-01-02T00:00:00.000Z')
+};
+
+/**
+ * Wire-format fixture for the "delete every module on the canvas"
+ * scenario — the empty-array sibling of {@link SAMPLE_PERSISTED_ROW}.
+ * Used by test 3.7 (the empty-layout PATCH path) so that the server-
+ * returned row is structurally distinct from `EMPTY_LAYOUT` (the
+ * canvas-facing payload), proving the SUT's unwrap operator runs on
+ * the empty path too — not only on the populated path. A regression
+ * that conditionally skipped the unwrap (e.g., `if
+ * (row.layoutData.items.length === 0) return null`) would be
+ * invisible against `SAMPLE_PERSISTED_ROW` alone.
+ */
+const EMPTY_PERSISTED_ROW: UserDashboardLayout = {
+  userId: '11111111-1111-1111-1111-111111111111',
+  layoutData: EMPTY_LAYOUT as unknown as UserDashboardLayout['layoutData'],
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-01-02T00:00:00.000Z')
+};
+
 describe('UserDashboardLayoutService', () => {
   let service: UserDashboardLayoutService;
   let httpMock: HttpTestingController;
@@ -191,9 +250,11 @@ describe('UserDashboardLayoutService', () => {
   });
 
   // ===========================================================
-  // Test 3.2 — `get()` happy path: HTTP 200 OK emits LayoutData.
+  // Test 3.2 — `get()` happy path: HTTP 200 OK emits unwrapped
+  //            LayoutData (extracted from the wire UserDashboardLayout
+  //            row by the SUT's `map(row => row.layoutData)` operator).
   // ===========================================================
-  it('should issue GET /api/v1/user/layout and emit the response body', () => {
+  it('should issue GET /api/v1/user/layout and emit the unwrapped layoutData from the server row', () => {
     // The `received` declaration is `LayoutData | null | undefined`
     // because (a) `null` is a valid SUT emission (404 path), (b)
     // `undefined` represents the pre-emission state, and (c)
@@ -217,16 +278,27 @@ describe('UserDashboardLayoutService', () => {
     // `@Get()` decorator on `UserDashboardLayoutController`.
     expect(req.request.method).toBe('GET');
 
-    // Resolve the request with HTTP 200 and the SAMPLE_LAYOUT body.
-    // `flush()` synchronously delivers the body to the subscriber
-    // (under jest-preset-angular's zone setup), so the `received`
-    // variable is populated by the time control returns.
-    req.flush(SAMPLE_LAYOUT);
+    // Resolve the request with HTTP 200 and the FULL UserDashboardLayout
+    // Prisma row (the wire format the server actually sends — see
+    // SAMPLE_PERSISTED_ROW JSDoc and QA Issue #2 contract-alignment
+    // finding). `flush()` synchronously delivers the body to the
+    // subscriber (under jest-preset-angular's zone setup), so the
+    // `received` variable is populated by the time control returns.
+    req.flush(SAMPLE_PERSISTED_ROW);
 
-    // The SUT MUST pass the body through unmodified. `toEqual` is a
-    // structural deep-equality check (NOT reference equality) —
-    // appropriate because `flush()` clones the body during JSON
-    // serialization-deserialization.
+    // The SUT MUST unwrap the row's `layoutData` field and emit ONLY
+    // the unwrapped LayoutData — discarding the row metadata
+    // (`userId`, `createdAt`, `updatedAt`). This is the bridging
+    // contract documented in the SUT's `get()` JSDoc: the server's
+    // wire format is the full row, but the canvas-facing public
+    // emission is the unwrapped layout. A regression that drops the
+    // `map(row => row.layoutData)` operator would emit the full row
+    // here, and `received` would NOT equal SAMPLE_LAYOUT (it would
+    // equal SAMPLE_PERSISTED_ROW), failing the assertion.
+    //
+    // `toEqual` is a structural deep-equality check (NOT reference
+    // equality) — appropriate because `flush()` clones the body
+    // during JSON serialization-deserialization.
     expect(received).toEqual(SAMPLE_LAYOUT);
   });
 
@@ -367,9 +439,11 @@ describe('UserDashboardLayoutService', () => {
   });
 
   // ===========================================================
-  // Test 3.6 — `update()` happy path: PATCH issues correct request.
+  // Test 3.6 — `update()` happy path: PATCH wraps the body as
+  //            `{ layoutData }` (per UpdateDashboardLayoutDto) and
+  //            unwraps the returned wire row to emit LayoutData.
   // ===========================================================
-  it('should issue PATCH /api/v1/user/layout with the supplied LayoutData body', () => {
+  it('should issue PATCH /api/v1/user/layout with the body wrapped as { layoutData } and emit the unwrapped row', () => {
     // `update()` returns `Observable<LayoutData>` (NOT
     // `LayoutData | null`) because there is no 404→null translation
     // on the PATCH path. Therefore `received` is typed as
@@ -389,19 +463,34 @@ describe('UserDashboardLayoutService', () => {
     // every PATCH.
     expect(req.request.method).toBe('PATCH');
 
-    // Body-level assertion: the SUT MUST forward the supplied
-    // payload verbatim. A SUT bug that mutated, filtered, or
-    // re-shaped the body before sending would surface here as a
-    // structural inequality.
-    expect(req.request.body).toEqual(SAMPLE_LAYOUT);
+    // Body-level assertion: the SUT MUST wrap the supplied
+    // `LayoutData` in `{ layoutData }` to match
+    // `UpdateDashboardLayoutDto`'s `{ layoutData: LayoutDataPayload }`
+    // shape (see `apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts`).
+    // A SUT regression that sent the unwrapped LayoutData
+    // (the QA Issue #1 contract-alignment failure) would surface
+    // here as a structural inequality — the request body would be
+    // `{ items: [...], version: 1 }` rather than
+    // `{ layoutData: { items: [...], version: 1 } }`, and the
+    // server's class-validator would respond with HTTP 400
+    // ("layoutData must be an object") in production.
+    expect(req.request.body).toEqual({ layoutData: SAMPLE_LAYOUT });
 
-    // Resolve the PATCH with HTTP 200 and the (unchanged) body —
-    // the server confirms the upserted document by echoing it back.
-    req.flush(SAMPLE_LAYOUT);
+    // Resolve the PATCH with HTTP 200 and the FULL UserDashboardLayout
+    // Prisma row (the wire format the server actually sends —
+    // mirroring the GET success path). The SUT's `map(row =>
+    // row.layoutData)` operator MUST unwrap this to the
+    // canvas-facing LayoutData shape.
+    req.flush(SAMPLE_PERSISTED_ROW);
 
-    // Round-trip check: the SUT MUST emit the server's response
-    // body. The server's contract is "PATCH returns the upserted
-    // document on 200 OK" (AAP § 0.6.2.1).
+    // Round-trip check: the SUT MUST emit ONLY the unwrapped
+    // `layoutData` field of the server's row response — discarding
+    // the row metadata (`userId`, `createdAt`, `updatedAt`). The
+    // server's contract is "PATCH returns the upserted row on 200
+    // OK" (AAP § 0.6.2.1), and the SUT's bridging contract is
+    // "emit only the unwrapped layout" (see `update()` JSDoc). A
+    // regression that drops the unwrap operator would emit the
+    // full row here, and `received` would NOT equal SAMPLE_LAYOUT.
     expect(received).toEqual(SAMPLE_LAYOUT);
   });
 
@@ -416,7 +505,7 @@ describe('UserDashboardLayoutService', () => {
   // short-circuits the PATCH on an empty array (e.g., a
   // "skip if empty" optimization) would silently break the
   // "delete all modules" UX.
-  it('should issue PATCH with an empty layout (items array length 0)', () => {
+  it('should issue PATCH with an empty layout (items array length 0) wrapped as { layoutData } and unwrap the empty row', () => {
     let received: LayoutData | undefined;
 
     service.update(EMPTY_LAYOUT).subscribe((value) => {
@@ -427,13 +516,19 @@ describe('UserDashboardLayoutService', () => {
 
     expect(req.request.method).toBe('PATCH');
 
-    // The body MUST contain the exact `EMPTY_LAYOUT` — most
-    // importantly, an empty `items` array (length 0). A SUT bug
-    // that sent `null`, `undefined`, or omitted the `items` field
-    // entirely would surface here.
-    expect(req.request.body).toEqual(EMPTY_LAYOUT);
+    // The body MUST be the empty layout WRAPPED as `{ layoutData }`
+    // (matching `UpdateDashboardLayoutDto`). Most importantly the
+    // wrapped layout MUST contain an empty `items` array (length 0)
+    // — a SUT bug that short-circuited the empty path (e.g., a
+    // "skip if empty" optimization) would surface here as the
+    // outer pipeline issuing zero requests, failing `expectOne`.
+    expect(req.request.body).toEqual({ layoutData: EMPTY_LAYOUT });
 
-    req.flush(EMPTY_LAYOUT);
+    // Flush the FULL empty UserDashboardLayout row. The SUT's
+    // unwrap operator MUST extract `layoutData` regardless of
+    // whether the layout is populated or empty — pinning that the
+    // unwrap is unconditional.
+    req.flush(EMPTY_PERSISTED_ROW);
 
     expect(received).toEqual(EMPTY_LAYOUT);
   });

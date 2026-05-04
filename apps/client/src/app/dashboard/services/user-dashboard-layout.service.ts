@@ -1,7 +1,8 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
+import { UserDashboardLayout } from '@prisma/client';
 import { Observable, of, throwError } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { catchError, map } from 'rxjs/operators';
 
 import { LayoutData } from '../interfaces/layout-data.interface';
 
@@ -25,18 +26,60 @@ const LAYOUT_ENDPOINT = '/api/v1/user/layout';
  * (`apps/api/src/app/user/user-dashboard-layout.controller.ts`).
  *
  * The service is the **sole entry point** for dashboard layout HTTP
- * communication on the client. It is deliberately thin — a typed
- * wrapper around `HttpClient.get<LayoutData>(...)` and
- * `HttpClient.patch<LayoutData>(...)` — and adds exactly one piece of
- * dashboard-specific behavior: the `404 Not Found` → `null` translation
- * on the GET path that supports the canvas's auto-open-catalog flow on
- * first visit (Rule 10, AAP § 0.8.1.10).
+ * communication on the client. It is a typed wrapper around
+ * `HttpClient.get<UserDashboardLayout>(...)` and
+ * `HttpClient.patch<UserDashboardLayout>(...)` that performs two
+ * coordinated bridging duties between the wire format and the
+ * canvas-facing public contract, plus the dashboard-specific
+ * `404 Not Found` → `null` translation on the GET path that supports
+ * the canvas's auto-open-catalog flow on first visit (Rule 10, AAP
+ * § 0.8.1.10).
+ *
+ * **Wire format vs. public contract — bridging duties**:
+ *
+ * The server-side `UserDashboardLayoutController`
+ * (`apps/api/src/app/user/user-dashboard-layout.controller.ts`)
+ * exchanges the full `UserDashboardLayout` Prisma row on the wire (i.e.,
+ * `{ userId, layoutData, createdAt, updatedAt }`) for both the GET
+ * response and the PATCH response, and the `UpdateDashboardLayoutDto`
+ * (`apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts`)
+ * requires the request body to be wrapped as `{ layoutData: ... }` so
+ * the wrapper can be extended with future top-level PATCH-able fields
+ * without breaking the persisted `layoutData` shape (defense-in-depth
+ * per AAP § 0.7.1.5 / Decision D-012). The canvas, in contrast, has
+ * always operated against the unwrapped {@link LayoutData} shape — its
+ * `hydrateFromLayout(layout: LayoutData | null)` and `serializeLayout():
+ * LayoutData` methods (in `dashboard-canvas.component.ts`) know nothing
+ * about the row metadata. To keep the canvas's public surface stable
+ * while honoring the server's wire format, this service:
+ *
+ *   - Types the inbound HTTP body as the full `UserDashboardLayout`
+ *     row, then `map(...)`s it to `row.layoutData` BEFORE catchError —
+ *     so subscribers (the canvas) see only the unwrapped {@link
+ *     LayoutData}, never the row metadata.
+ *   - On `update(...)`, accepts the unwrapped {@link LayoutData} from
+ *     the caller (the persistence service), wraps it as
+ *     `{ layoutData }` for the request body, and `map(...)`s the
+ *     returned row back to its `layoutData` field — symmetrical
+ *     unwrap.
+ *
+ * This bridging is internal to the service. The PUBLIC method
+ * signatures `get(): Observable<LayoutData | null>` and
+ * `update(layoutData: LayoutData): Observable<LayoutData>` remain
+ * exactly what AAP § 0.6.1.4 mandates, so the canvas and persistence
+ * code do NOT need to know about the wire format. A regression that
+ * leaks the wire row to the canvas (e.g., dropping the `map(...)`)
+ * would silently break Rule 10's returning-user hydration path
+ * because `hydrateFromLayout` checks `layout?.items?.length` — and
+ * the wire row does not have a top-level `items` field.
  *
  * **Structural template**: this service mirrors the shape of
  * `apps/client/src/app/services/financial-profile.service.ts` (the
- * explicit AAP-cited reference at § 0.6.1.4). The 404→null translation
- * pattern is identical, and the constant-based endpoint URL pattern
- * mirrors `apps/client/src/app/services/rebalancing.service.ts`.
+ * explicit AAP-cited reference at § 0.6.1.4) for the 404→null
+ * translation pattern, with the additional `map(row => row.layoutData)`
+ * transform stage required by the dashboard endpoint's wire-format
+ * contract. The constant-based endpoint URL pattern mirrors
+ * `apps/client/src/app/services/rebalancing.service.ts`.
  *
  * **DI scope**: declared with `providedIn: 'root'` so the service is a
  * singleton across the entire application (root-injector scope). It is
@@ -108,11 +151,29 @@ export class UserDashboardLayoutService {
    * Retrieves the authenticated user's saved dashboard layout from
    * `GET /api/v1/user/layout`.
    *
+   * **Wire format vs. emitted shape**: the server-side controller
+   * (`apps/api/src/app/user/user-dashboard-layout.controller.ts`)
+   * returns the full `UserDashboardLayout` Prisma row
+   * (`{ userId, layoutData, createdAt, updatedAt }`) on `200 OK`.
+   * This method unwraps the row's `layoutData` field via a `map(...)`
+   * operator BEFORE the `catchError` operator, so subscribers
+   * (specifically `GfDashboardCanvasComponent.hydrateFromLayout`) see
+   * only the unwrapped {@link LayoutData} document. The row metadata
+   * (`userId`, `createdAt`, `updatedAt`) is intentionally discarded:
+   * the canvas does not consume any of those fields, and the JWT
+   * already authoritatively identifies the user. A regression that
+   * leaks the row to the canvas would silently break Rule 10's
+   * returning-user hydration path because `hydrateFromLayout` checks
+   * `layout?.items?.length` — the row does not have a top-level
+   * `items` field, so the canvas would always enter the empty-canvas
+   * branch and re-open the catalog despite a populated DB row.
+   *
    * **Return semantics**:
    *
-   * - On HTTP `200 OK`: emits the persisted {@link LayoutData}
-   *   document. The canvas hydrates `gridster.dashboard` from
-   *   `LayoutData.items` and renders the saved layout.
+   * - On HTTP `200 OK`: emits the unwrapped {@link LayoutData}
+   *   document (the row's `layoutData` field). The canvas hydrates
+   *   `gridster.dashboard` from `LayoutData.items` and renders the
+   *   saved layout.
    * - On HTTP `404 Not Found`: emits `null` (NOT a thrown error).
    *   This is the "no record exists for this user" condition — i.e.,
    *   the user is visiting the dashboard for the first time. The
@@ -125,6 +186,15 @@ export class UserDashboardLayoutService {
    *   Global error handling (e.g., snackbar notifications) is owned
    *   by `HttpResponseInterceptor` and is unaffected by this method's
    *   contract.
+   *
+   * **Operator ordering matters**: `map(row => row.layoutData)` MUST
+   * appear BEFORE `catchError` in the pipe chain. If `catchError`
+   * preceded `map`, a 200-with-malformed-body response would feed
+   * `undefined` into `catchError` (which only inspects
+   * `HttpErrorResponse`), bypassing the safety net entirely. Placing
+   * `map` first guarantees the unwrap is part of the success path
+   * only — error paths (404 → null, others → throw) operate on the
+   * raw `HttpErrorResponse` exactly as before.
    *
    * **Why 404 → `null` (not thrown)**: collapsing the "happy path"
    * (saved layout present) and the "first visit" (no row yet) into a
@@ -143,14 +213,29 @@ export class UserDashboardLayoutService {
    *
    * @returns Cold Observable that, when subscribed, issues a single
    *   GET request to `/api/v1/user/layout` and emits exactly one of:
-   *   the persisted {@link LayoutData}, or `null` (on 404), or an
-   *   error (on any other failure).
+   *   the unwrapped {@link LayoutData} (extracted from the row's
+   *   `layoutData` field on 200), or `null` (on 404), or an error
+   *   (on any other failure).
    *
    * @see AAP § 0.8.1.10 — Rule 10 (the 404→null translation is the
    *   mechanism that supports the auto-open-catalog behavior).
    */
   public get(): Observable<LayoutData | null> {
-    return this.httpClient.get<LayoutData>(LAYOUT_ENDPOINT).pipe(
+    return this.httpClient.get<UserDashboardLayout>(LAYOUT_ENDPOINT).pipe(
+      // The server returns the full UserDashboardLayout Prisma row;
+      // unwrap to the canvas-facing LayoutData shape BEFORE catchError
+      // so the success path emits only `LayoutData` and the error path
+      // (404 → null, others → throw) is unaffected by the unwrap.
+      // The cast `row.layoutData as LayoutData` reflects the runtime
+      // contract: the server-side `UserDashboardLayoutService.upsertForUser`
+      // persists exactly the `LayoutData` shape (validated by
+      // `update-dashboard-layout.dto.ts` class-validator decorators), so
+      // every persisted row's `layoutData` field IS a `LayoutData`
+      // document. The `Prisma.JsonValue` static type is widened by the
+      // JSON-column generator and cannot be narrowed at compile time
+      // without a runtime guard — runtime validation is the server's
+      // responsibility per AAP § 0.8.4 (defense-in-depth).
+      map((row) => row.layoutData as unknown as LayoutData),
       catchError((error: HttpErrorResponse) => {
         if (error.status === 404) {
           // First-visit semantics per AAP § 0.6.3.1: no row exists
@@ -170,6 +255,45 @@ export class UserDashboardLayoutService {
 
   /**
    * Persists the supplied dashboard layout via `PATCH /api/v1/user/layout`.
+   *
+   * **Wire format vs. accepted/emitted shape**: the server-side
+   * `UpdateDashboardLayoutDto`
+   * (`apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts`)
+   * requires the request body to be wrapped as `{ layoutData: ... }`
+   * — NOT the unwrapped {@link LayoutData}. The wrapper exists for
+   * forward-compatibility (future PATCH-able layout fields can be
+   * added at the top level without breaking the persisted `layoutData`
+   * shape) and for security defense-in-depth per AAP § 0.7.1.5 /
+   * Decision D-012 (the wrapper prevents auto-mapping of unintended
+   * top-level fields like a forged `userId` from a malicious request
+   * body — though NestJS's `whitelist: true, forbidNonWhitelisted:
+   * true` ValidationPipe configuration would also reject such fields
+   * with HTTP 400). On the response side, the server returns the
+   * upserted full `UserDashboardLayout` Prisma row
+   * (`{ userId, layoutData, createdAt, updatedAt }`).
+   *
+   * This method bridges the wire format and the canvas-facing
+   * contract symmetrically with {@link UserDashboardLayoutService.get}:
+   *
+   *   - The caller (`LayoutPersistenceService` per Rule 4) supplies
+   *     the unwrapped {@link LayoutData}; this method wraps it as
+   *     `{ layoutData }` for the request body.
+   *   - The HTTP response is typed as the full `UserDashboardLayout`
+   *     row; this method `map(...)`s it to its `layoutData` field
+   *     and emits only the unwrapped {@link LayoutData} so the
+   *     public emission shape matches the input shape.
+   *
+   * Wrapping vs. unwrapping is internal to this method — neither the
+   * persistence service nor any other caller observes the wire row.
+   * A regression that drops the `{ layoutData }` wrap would produce
+   * HTTP 400 on every save (the DTO's `@IsObject() layoutData` field
+   * would be missing), and would be silently swallowed by
+   * `LayoutPersistenceService`'s `catchError(() => EMPTY)` operator —
+   * the canvas would appear to work in-session but no data would
+   * persist. The unit tests in `user-dashboard-layout.service.spec.ts`
+   * pin BOTH the wrap-on-send and the unwrap-on-receive contracts so
+   * a future refactor cannot regress without surfacing as a test
+   * failure.
    *
    * **Idempotency contract** (Decision D-019, AAP § 0.6.2.1): the
    * server-side handler invokes `prisma.userDashboardLayout.upsert(...)`
@@ -214,9 +338,10 @@ export class UserDashboardLayoutService {
    *   column", NOT "merge the supplied fields"; callers are expected
    *   to send the full {@link LayoutData} document on every save.
    * @returns Cold Observable that, when subscribed, issues a single
-   *   PATCH request to `/api/v1/user/layout` and emits the upserted
-   *   {@link LayoutData} document on `200 OK`, or an error on any
-   *   failure.
+   *   PATCH request to `/api/v1/user/layout` (with the body wrapped
+   *   as `{ layoutData }`) and emits the unwrapped upserted
+   *   {@link LayoutData} document on `200 OK` (extracted from the
+   *   server's row response), or an error on any failure.
    *
    * @see AAP § 0.6.1.7 — Persistence payload shape (server-side
    *   validation rules).
@@ -226,6 +351,12 @@ export class UserDashboardLayoutService {
    *   semantics).
    */
   public update(layoutData: LayoutData): Observable<LayoutData> {
-    return this.httpClient.patch<LayoutData>(LAYOUT_ENDPOINT, layoutData);
+    // Wrap the payload to match `UpdateDashboardLayoutDto`'s
+    // `{ layoutData: LayoutDataPayload }` shape, then unwrap the
+    // returned UserDashboardLayout row to the canvas-facing
+    // LayoutData shape — symmetrical bridging with `get()` above.
+    return this.httpClient
+      .patch<UserDashboardLayout>(LAYOUT_ENDPOINT, { layoutData })
+      .pipe(map((row) => row.layoutData as unknown as LayoutData));
   }
 }

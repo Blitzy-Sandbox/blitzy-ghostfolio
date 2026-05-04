@@ -71,15 +71,33 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * controller boundary via `node:crypto.randomUUID()` (RFC 4122 v4) and
  * surface it as the `X-Correlation-ID` HTTP response header. The header
  * is set BEFORE the service call so it is emitted on BOTH the success
- * path (HTTP 200) AND the error paths (HTTP 404 `NotFoundException`,
- * HTTP 400 `BadRequestException`, HTTP 500 service errors) — Express
- * preserves headers set before a thrown exception. The same correlation
- * id is forwarded to the service so structured logs and Prometheus
- * metrics emitted by `UserDashboardLayoutService` share it for
- * end-to-end traceability across the controller / service / Prisma
- * boundary. `@Res({ passthrough: true })` keeps NestJS in charge of
- * body serialization while still allowing the controller to write
- * the header.
+ * path (HTTP 200) AND the error paths reachable via the controller
+ * method body (HTTP 404 `NotFoundException`, HTTP 500 service errors)
+ * — Express preserves headers set before a thrown exception. The same
+ * correlation id is forwarded to the service so structured logs and
+ * Prometheus metrics emitted by `UserDashboardLayoutService` share it
+ * for end-to-end traceability across the controller / service /
+ * Prisma boundary. `@Res({ passthrough: true })` keeps NestJS in
+ * charge of body serialization while still allowing the controller
+ * to write the header.
+ *
+ * **Known limitation — HTTP 400 (DTO validation errors)**: NestJS's
+ * global `ValidationPipe` runs BEFORE the controller method body
+ * executes — when an incoming PATCH body fails class-validator (e.g.,
+ * missing `layoutData`, `cols < 2`, `x + cols > 12`), the framework
+ * short-circuits the request with HTTP 400 `BadRequestException`
+ * before `randomUUID()` and `response.setHeader('X-Correlation-ID',
+ * ...)` ever run. Therefore the X-Correlation-ID header is NOT
+ * emitted on validation-error 400 responses. Requests rejected by
+ * the upstream `AuthGuard('jwt')` (HTTP 401) and `HasPermissionGuard`
+ * (HTTP 403) likewise short-circuit before the controller body and
+ * therefore also do not carry the header. Operators troubleshooting
+ * 400/401/403 responses MUST correlate via the global request
+ * logger's request-id (e.g., the access log's per-request id) rather
+ * than via this header. Promoting the correlation-id generation to a
+ * NestJS interceptor that runs ahead of `ValidationPipe` would close
+ * this gap; that is recorded as a future enhancement (out of scope
+ * for the v1 dashboard refactor).
  *
  * IDEMPOTENCY (AAP § 0.8.1.4 — Decision D-019): The service method
  * `upsertForUser(...)` uses `prisma.userDashboardLayout.upsert(...)`
@@ -195,11 +213,16 @@ export class UserDashboardLayoutController {
    *
    * Observability (AAP § 0.6.1.10): a fresh per-request correlation id
    * is emitted as the `X-Correlation-ID` response header BEFORE the
-   * service call, so the header is emitted on both the 200 success
-   * path AND the 400 / 500 error paths (Express preserves headers set
-   * before a thrown exception). The same id is forwarded to the
-   * service so structured logs and Prometheus metrics emitted during
-   * the upsert share it.
+   * service call, so the header is emitted on the 200 success path
+   * AND on HTTP 500 service errors thrown after `setHeader` runs
+   * (Express preserves headers set before a thrown exception). The
+   * header is NOT emitted on HTTP 400 validation errors because
+   * NestJS's global `ValidationPipe` short-circuits the request
+   * before this method body executes (see the class-level JSDoc's
+   * "Known limitation" section for the full propagation matrix and
+   * the operator-facing remediation guidance). The same id is
+   * forwarded to the service so structured logs and Prometheus
+   * metrics emitted during the upsert share it.
    *
    * @param dto      Validated request body containing the
    *                 `LayoutDataPayload` payload.

@@ -1,15 +1,30 @@
 /**
  * Persisted dashboard layout payload contract — the canonical TypeScript
- * shape exchanged between the client `UserDashboardLayoutService`
- * (`HttpClient.get<LayoutData>(...)` / `HttpClient.patch<LayoutData>(...)`)
- * and the API `UserDashboardLayoutController` at `GET` and `PATCH
+ * shape exchanged between the client `UserDashboardLayoutService` and
+ * the API `UserDashboardLayoutController` at `GET` and `PATCH
  * /api/v1/user/layout`.
+ *
+ * **Wire format vs. canvas-facing shape — important distinction**: the
+ * server's HTTP body on the wire is the FULL `UserDashboardLayout`
+ * Prisma row (`{ userId, layoutData, createdAt, updatedAt }`) on both
+ * the GET success path and the PATCH success path; the PATCH request
+ * body is wrapped as `{ layoutData: ... }` to match
+ * `UpdateDashboardLayoutDto`. {@link LayoutData} is NOT the wire shape
+ * — it is the unwrapped, canvas-facing shape that
+ * `UserDashboardLayoutService` emits to subscribers AFTER its
+ * `map(row => row.layoutData)` operator runs (and that the canvas
+ * supplies when calling `update(...)`). The bridging between the two
+ * shapes is a contained internal detail of the service. All callers
+ * outside the service (the canvas, the persistence service, every
+ * consumer of `LayoutData`) see only this unwrapped shape — they
+ * never observe the row metadata.
  *
  * This file is the bottom of the dashboard dependency stack: it declares
  * pure structural types only — no runtime code, no Angular decorators,
  * no classes, and no imports. The same shape is mirrored on the server
  * by `apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts` (which
- * adds `class-validator` runtime checks); any drift between the two
+ * adds `class-validator` runtime checks and wraps it as
+ * `UpdateDashboardLayoutDto.layoutData`); any drift between the two
  * surfaces would cause TypeScript-OK / runtime-fail bugs and is
  * forbidden.
  *

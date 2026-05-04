@@ -380,9 +380,13 @@ describe('UserDashboardLayoutController', () => {
     // Same Observability requirement as Test 5 but for the `update`
     // endpoint. Verify the PATCH endpoint also emits an X-Correlation-ID
     // header carrying a fresh UUID per request. The header is set BEFORE
-    // the service call so it is emitted regardless of whether the upsert
-    // succeeds (200) or the service throws (e.g., HTTP 500 on Prisma
-    // failure or HTTP 400 propagated from class-validator).
+    // the service call so it is emitted on the 200 success path AND on
+    // HTTP 500 service errors thrown AFTER setHeader runs (Express
+    // preserves headers set before a thrown exception). The header is
+    // NOT emitted on HTTP 400 validation errors because NestJS's global
+    // ValidationPipe short-circuits the request before the controller
+    // method body executes — see the controller class-level JSDoc's
+    // "Known limitation" section for the propagation matrix.
     userDashboardLayoutService.upsertForUser.mockResolvedValueOnce({
       userId: USER_1_ID,
       layoutData: VALID_DTO.layoutData as any,
