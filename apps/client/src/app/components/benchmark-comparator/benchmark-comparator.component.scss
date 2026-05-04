@@ -3,6 +3,28 @@
 
   .chart-container {
     aspect-ratio: 16 / 9;
+    // Constrain the container's width to its parent so Chart.js's
+    // computed canvas dimensions cannot exceed the layout width — a
+    // 63-px horizontal overflow was observed when the analysis
+    // module was sized at 8 × 4 cells (~668-px wide) inside the
+    // dashboard (QA Checkpoint 8 Issue #8). The combination of
+    // `max-width: 100%` on the container PLUS
+    // `maintainAspectRatio: false` on the Chart.js options
+    // (configured in the .ts companion file) ensures the chart
+    // renders within the parent's layout box without forcing
+    // horizontal scroll inside the module.
+    max-width: 100%;
+
+    // Ensure the canvas itself respects its parent's width. The
+    // `[ngStyle]` binding on `<canvas #chartCanvas class="h-100">`
+    // sets `display: block` after the chart is rendered; the
+    // explicit width: 100% here ensures the canvas element matches
+    // the container's exact width before Chart.js applies its own
+    // sizing logic.
+    canvas {
+      max-width: 100%;
+      width: 100%;
+    }
 
     ngx-skeleton-loader {
       height: 100%;

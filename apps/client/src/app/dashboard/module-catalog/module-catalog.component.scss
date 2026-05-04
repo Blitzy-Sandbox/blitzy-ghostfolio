@@ -1,0 +1,75 @@
+// Module catalog overlay stylesheet — see
+// apps/client/src/app/dashboard/module-catalog/module-catalog.component.ts
+// and AAP § 0.5.3 (Material 3 design-token catalog) and AAP § 0.8.1.7
+// (Rule 7: var/fallback pattern is mandatory).
+//
+// Every Material 3 token reference uses
+//   var(--mat-sys-<token>, <hardcoded-fallback>)
+// per Decision D-020. The fallback values mirror Angular Material 21's
+// default Material 3 light-theme values from AAP § 0.5.3.1 and are
+// rendered when the global theme has not yet evaluated.
+//
+// Layout sizing notes:
+//   - The dialog's preferred width (720px per AAP § 0.5.2) is set by
+//     `MatDialogConfig` at the canvas's `dialog.open(...)` call site,
+//     NOT here. The `min-width: 480px` below is a defensive floor that
+//     keeps the dialog readable on smaller screens.
+//   - `max-height: 70vh` on the content wrapper plus `max-height: 50vh`
+//     on the list keep the title + search field + list + actions all
+//     within a usable viewport-relative envelope (see AAP § 0.6.3.1
+//     for the empty-canvas-first-visit interaction).
+//
+// Selector contract (single-class selectors — no compound or
+// over-specific selectors; matches the SCSS contract in AAP § 0.6.1.4):
+//   :host                          — `<gf-module-catalog>` host element
+//   .gf-module-catalog-content     — `<mat-dialog-content>` wrapper
+//   .gf-module-catalog-search      — search `<mat-form-field>`
+//   .gf-module-catalog-empty       — empty-state hint `<div>`
+//   .gf-module-catalog-list        — `<mat-list>` container
+//   .gf-module-catalog-row         — each `<mat-list-item>` row
+//   .gf-module-catalog-row-meta    — secondary `<span matListItemLine>`
+
+:host {
+  display: block;
+}
+
+.gf-module-catalog-content {
+  background-color: var(--mat-sys-surface-container-highest, #e6e0e9);
+  border-radius: var(--mat-sys-corner-medium, 12px);
+  max-height: 70vh;
+  min-width: 480px;
+  padding: 1rem;
+}
+
+.gf-module-catalog-search {
+  width: 100%;
+}
+
+.gf-module-catalog-empty {
+  color: var(--mat-sys-on-surface-variant, #49454f);
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.gf-module-catalog-list {
+  margin-top: 0.5rem;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.gf-module-catalog-row {
+  border-bottom: 1px solid var(--mat-sys-outline-variant, #cac4d0);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &:hover {
+    background-color: var(--mat-sys-surface-container, #f3edf7);
+  }
+}
+
+.gf-module-catalog-row-meta {
+  color: var(--mat-sys-on-surface-variant, #49454f);
+  font-size: 0.875rem;
+}

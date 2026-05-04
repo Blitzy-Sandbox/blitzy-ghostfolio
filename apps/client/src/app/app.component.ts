@@ -33,8 +33,6 @@ import { openOutline } from 'ionicons/icons';
 import { DeviceDetectorService } from 'ngx-device-detector';
 import { filter } from 'rxjs/operators';
 
-import { GfFooterComponent } from './components/footer/footer.component';
-import { GfHeaderComponent } from './components/header/header.component';
 import { GfHoldingDetailDialogComponent } from './components/holding-detail-dialog/holding-detail-dialog.component';
 import { GfAppQueryParams } from './interfaces/interfaces';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
@@ -42,7 +40,7 @@ import { UserService } from './services/user/user.service';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [GfFooterComponent, GfHeaderComponent, RouterLink, RouterOutlet],
+  imports: [RouterLink, RouterOutlet],
   selector: 'gf-root',
   styleUrls: ['./app.component.scss'],
   templateUrl: './app.component.html'
@@ -119,6 +117,30 @@ export class GfAppComponent implements OnInit {
       .subscribe(() => {
         const urlTree = this.router.parseUrl(this.router.url);
         const urlSegmentGroup = urlTree.root.children[PRIMARY_OUTLET];
+
+        // Defensive guard: after the dashboard refactor (AAP § 0.6.1.5)
+        // collapsed the application route table to a single root route
+        // (`path: ''`) plus a `**` wildcard, the URL's primary outlet has
+        // NO segment children when the user is on the canvas at `/`
+        // (`urlTree.root.children[PRIMARY_OUTLET]` is `undefined` for the
+        // empty path). Reading `.segments` on undefined would throw at
+        // runtime ("Cannot read properties of undefined (reading
+        // 'segments')") and pollute the console (QA Checkpoint 3
+        // post-fix observation). The chrome-aware logic below was
+        // designed for the legacy multi-route topology (`/home`,
+        // `/portfolio/activities`, `/admin/users`, etc.) and supports
+        // header/footer chrome elements that were removed by the
+        // refactor; it has no observable effect at the canvas root
+        // because the public fields it sets (`hasTabs`, `showFooter`,
+        // `currentRoute`, `currentSubRoute`,
+        // `hasPermissionToChangeDateRange`,
+        // `hasPermissionToChangeFilters`, `pageTitle`) are not bound
+        // by `app.component.html`. The early return is therefore
+        // safe and avoids the runtime exception.
+        if (!urlSegmentGroup) {
+          return;
+        }
+
         const urlSegments = urlSegmentGroup.segments;
         this.currentRoute = urlSegments[0].path;
         this.currentSubRoute = urlSegments[1]?.path;

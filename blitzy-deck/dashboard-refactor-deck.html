@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Executive briefing for the Modular Dashboard Refactor work item: single-canvas drag-and-drop module composition for Ghostfolio." />
+  <title>Modular Dashboard Refactor &mdash; Executive Presentation</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Fira+Code:wght@400;500&display=swap" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css" id="theme" />
+
+  <style>
+    :root {
+      --blitzy-primary: #5B39F3;
+      --blitzy-mint: #94FAD5;
+      --blitzy-dark: #1A105F;
+      --blitzy-accent: #2D1C77;
+      --blitzy-light: #F2F0FE;
+      --blitzy-off-white: #F4EFF6;
+      --blitzy-warning: #FFB547;
+      --blitzy-danger: #FF5C7A;
+      --blitzy-text: #FFFFFF;
+      --blitzy-muted: rgba(255, 255, 255, 0.72);
+      --font-sans: 'Inter', 'Helvetica Neue', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      --font-display: 'Space Grotesk', 'Inter', 'Helvetica Neue', system-ui, sans-serif;
+      --font-mono: 'Fira Code', 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+    }
+
+    html, body { background: var(--blitzy-dark); }
+
+    .reveal {
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(91, 57, 243, 0.35) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 100%, rgba(148, 250, 213, 0.18) 0%, transparent 55%),
+        linear-gradient(135deg, var(--blitzy-dark) 0%, var(--blitzy-accent) 100%);
+      font-family: var(--font-sans);
+      color: var(--blitzy-text);
+      letter-spacing: -0.005em;
+    }
+
+    .reveal h1, .reveal h2, .reveal h3, .reveal h4 {
+      color: var(--blitzy-text);
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      text-transform: none;
+      text-shadow: 0 2px 24px rgba(0, 0, 0, 0.25);
+    }
+    .reveal h1 { font-size: 3.4em; line-height: 1.05; }
+    .reveal h2 { font-size: 2.0em; line-height: 1.15; }
+    .reveal h3 { font-size: 1.25em; color: var(--blitzy-mint); }
+    .reveal p, .reveal li {
+      font-family: var(--font-sans);
+      font-size: 0.92em;
+      line-height: 1.55;
+      color: var(--blitzy-text);
+    }
+    .reveal a { color: var(--blitzy-mint); }
+    .reveal code {
+      background: rgba(244, 239, 246, 0.10);
+      color: var(--blitzy-mint);
+      padding: 0.06em 0.42em;
+      border-radius: 4px;
+      font-size: 0.86em;
+      font-family: var(--font-mono);
+      border: 1px solid rgba(148, 250, 213, 0.20);
+    }
+
+    .reveal i[data-lucide],
+    .reveal svg.lucide {
+      display: inline-block;
+      vertical-align: -0.18em;
+      width: 0.95em;
+      height: 0.95em;
+      stroke-width: 2;
+      color: var(--blitzy-mint);
+    }
+    .reveal h1 i[data-lucide], .reveal h1 svg.lucide,
+    .reveal h2 i[data-lucide], .reveal h2 svg.lucide {
+      width: 0.92em; height: 0.92em; margin-right: 0.18em;
+    }
+    .reveal li i[data-lucide], .reveal li svg.lucide {
+      width: 1.05em; height: 1.05em; margin-right: 0.45em;
+    }
+
+    .reveal .slides section.slide-title,
+    .reveal .slides section.slide-divider,
+    .reveal .slides section.slide-content,
+    .reveal .slides section.slide-closing {
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .reveal .slide-title { text-align: center; padding: 0 6%; }
+    .reveal .slide-title .lucide-icon-large { display: inline-block; margin-bottom: 0.35em; }
+    .reveal .slide-title .lucide-icon-large svg.lucide,
+    .reveal .slide-title .lucide-icon-large i[data-lucide] {
+      width: 96px; height: 96px; color: var(--blitzy-mint);
+      filter: drop-shadow(0 0 24px rgba(148, 250, 213, 0.45));
+    }
+    .reveal .slide-title h1 {
+      font-size: 4.0em;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.1em 0 0.3em 0;
+    }
+    .reveal .slide-title h3 { font-size: 1.4em; color: var(--blitzy-light); font-weight: 500; margin-bottom: 0.5em; }
+    .reveal .slide-title .subtitle {
+      font-size: 1.05em; color: var(--blitzy-muted);
+      max-width: 60%; margin: 0.6em auto 1.2em; font-weight: 400;
+    }
+    .reveal .slide-title .footer-note {
+      font-size: 0.65em; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--blitzy-mint);
+      margin-top: 1.6em; opacity: 0.85;
+    }
+
+    .reveal .slide-divider { text-align: left; padding: 0 8%; position: relative; }
+    .reveal .slide-divider .chapter-number {
+      display: block; font-family: var(--font-display);
+      font-size: 9em; font-weight: 800; line-height: 0.9;
+      color: rgba(91, 57, 243, 0.55);
+      background: linear-gradient(135deg, var(--blitzy-primary) 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.04em; margin-bottom: -0.05em;
+    }
+    .reveal .slide-divider .chapter-icon { display: inline-block; margin: 0.2em 0; }
+    .reveal .slide-divider .chapter-icon svg.lucide,
+    .reveal .slide-divider .chapter-icon[data-lucide] {
+      width: 72px; height: 72px;
+      color: var(--blitzy-mint); stroke-width: 1.6;
+    }
+    .reveal .slide-divider h1 { font-size: 3.2em; margin: 0.1em 0 0; color: var(--blitzy-text); }
+    .reveal .slide-divider h2 { font-size: 1.8em; margin: 0.1em 0 0.3em 0; color: var(--blitzy-mint); font-weight: 500; }
+    .reveal .slide-divider .chapter-tagline { font-size: 1.0em; color: var(--blitzy-muted); max-width: 70%; margin-top: 0.6em; font-weight: 400; }
+
+    .reveal .slide-content { text-align: left; padding: 0 6%; }
+    .reveal .slide-content h2 {
+      color: var(--blitzy-text);
+      border-bottom: 2px solid var(--blitzy-primary);
+      padding-bottom: 0.28em; margin-bottom: 0.5em;
+      display: inline-block; font-size: 1.7em; line-height: 1.12;
+    }
+    .reveal .slide-content h2 i[data-lucide],
+    .reveal .slide-content h2 svg.lucide { color: var(--blitzy-mint); }
+    .reveal .slide-content h3 {
+      font-size: 0.85em; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--blitzy-mint);
+      margin-bottom: 0.35em;
+    }
+
+    .reveal .feature-list { list-style: none; margin: 0; padding: 0; }
+    .reveal .feature-list li {
+      margin: 0.30em 0; padding: 0.42em 0.85em;
+      background: rgba(244, 239, 246, 0.05);
+      border-left: 3px solid var(--blitzy-mint);
+      border-radius: 6px;
+      font-size: 0.78em; line-height: 1.42;
+      transition: background 0.2s ease;
+    }
+    .reveal .feature-list li:hover { background: rgba(244, 239, 246, 0.12); }
+    .reveal .feature-list li i[data-lucide],
+    .reveal .feature-list li svg.lucide {
+      color: var(--blitzy-mint);
+      width: 1em; height: 1em; vertical-align: -0.12em;
+    }
+    .reveal .two-col .feature-list li,
+    .reveal .three-col .feature-list li {
+      font-size: 0.72em; padding: 0.36em 0.75em; margin: 0.24em 0;
+    }
+
+    .reveal .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2em; margin: 0.45em 0; }
+    .reveal .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.9em; margin: 0.45em 0; }
+    .reveal .col {
+      background: rgba(91, 57, 243, 0.08);
+      border: 1px solid rgba(148, 250, 213, 0.18);
+      border-radius: 12px; padding: 0.75em 0.9em;
+    }
+
+    .reveal .callout {
+      margin-top: 0.55em; padding: 0.6em 0.95em;
+      background: rgba(148, 250, 213, 0.08);
+      border: 1px solid rgba(148, 250, 213, 0.30);
+      border-radius: 10px; font-size: 0.68em; line-height: 1.45;
+      color: var(--blitzy-light);
+    }
+    .reveal .callout i[data-lucide],
+    .reveal .callout svg.lucide { color: var(--blitzy-mint); margin-right: 0.3em; }
+    .reveal .callout.warning {
+      background: rgba(255, 181, 71, 0.10);
+      border-color: rgba(255, 181, 71, 0.32);
+    }
+    .reveal .callout.warning i[data-lucide],
+    .reveal .callout.warning svg.lucide { color: var(--blitzy-warning); }
+
+    .reveal .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1.0em; margin: 0.7em 0; }
+    .reveal .kpi-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+    .reveal .kpi-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .reveal .kpi-grid.second-row { margin-top: 0.6em; }
+    .reveal .kpi-card {
+      background: linear-gradient(160deg, rgba(91, 57, 243, 0.55) 0%, rgba(45, 28, 119, 0.35) 100%);
+      border: 1px solid rgba(148, 250, 213, 0.30);
+      border-radius: 14px; padding: 1.0em 0.45em 0.85em;
+      text-align: center; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      position: relative; overflow: hidden;
+      min-width: 0;
+    }
+    .reveal .kpi-card.secondary {
+      background: linear-gradient(160deg, rgba(45, 28, 119, 0.55) 0%, rgba(26, 16, 95, 0.55) 100%);
+      border-color: rgba(148, 250, 213, 0.20);
+    }
+    .reveal .kpi-card .kpi-icon { display: inline-block; margin-bottom: 0.35em; }
+    .reveal .kpi-card .kpi-icon svg.lucide,
+    .reveal .kpi-card .kpi-icon[data-lucide] {
+      width: 32px; height: 32px; color: var(--blitzy-mint);
+    }
+    .reveal .kpi-card .kpi-value {
+      font-family: var(--font-display);
+      font-size: 2.0em; font-weight: 800; line-height: 1.05;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.05em 0 0.15em; letter-spacing: -0.03em;
+      overflow-wrap: anywhere; hyphens: auto; white-space: normal;
+    }
+    .reveal .kpi-card .kpi-value.small {
+      font-size: 0.95em; line-height: 1.15;
+    }
+    .reveal .kpi-card .kpi-label {
+      font-size: 0.62em; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--blitzy-muted); font-weight: 500;
+      overflow-wrap: anywhere; hyphens: auto; white-space: normal;
+    }
+    .reveal .kpi-card .kpi-label code {
+      font-size: 0.92em; letter-spacing: 0;
+      overflow-wrap: anywhere; word-break: break-all;
+    }
+    .reveal .kpi-card .kpi-sub {
+      font-size: 0.58em; letter-spacing: 0.02em;
+      color: var(--blitzy-light); margin-top: 0.25em; font-style: italic;
+      overflow-wrap: anywhere;
+    }
+
+    .reveal table.risk-table,
+    .reveal table.scope-table {
+      width: 100%; border-collapse: separate; border-spacing: 0;
+      margin-top: 0.25em;
+      background: rgba(244, 239, 246, 0.06);
+      border-radius: 12px; overflow: hidden;
+      font-size: 0.62em; line-height: 1.32;
+    }
+    .reveal table.risk-table thead,
+    .reveal table.scope-table thead { background: rgba(91, 57, 243, 0.55); }
+    .reveal table.risk-table thead th,
+    .reveal table.scope-table thead th {
+      padding: 0.55em 0.9em; text-align: left;
+      font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; font-size: 0.88em;
+      color: var(--blitzy-text);
+      border-bottom: 2px solid var(--blitzy-mint);
+    }
+    .reveal table.risk-table tbody td,
+    .reveal table.scope-table tbody td {
+      padding: 0.42em 0.9em;
+      border-bottom: 1px solid rgba(148, 250, 213, 0.10);
+      vertical-align: top;
+    }
+    .reveal table.risk-table tbody tr:last-child td,
+    .reveal table.scope-table tbody tr:last-child td { border-bottom: none; }
+    .reveal table.risk-table tbody tr:nth-child(even),
+    .reveal table.scope-table tbody tr:nth-child(even) { background: rgba(244, 239, 246, 0.04); }
+    .reveal table.risk-table tbody tr:hover,
+    .reveal table.scope-table tbody tr:hover { background: rgba(148, 250, 213, 0.08); }
+    .reveal table.risk-table td i[data-lucide],
+    .reveal table.risk-table td svg.lucide,
+    .reveal table.scope-table td i[data-lucide],
+    .reveal table.scope-table td svg.lucide {
+      color: var(--blitzy-mint); margin-right: 0.35em;
+      width: 14px; height: 14px;
+    }
+
+    .reveal .pill {
+      display: inline-block; padding: 0.18em 0.6em;
+      border-radius: 999px; font-size: 0.80em; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.2;
+    }
+    .reveal .pill.low {
+      background: rgba(148, 250, 213, 0.18);
+      color: var(--blitzy-mint);
+      border: 1px solid rgba(148, 250, 213, 0.40);
+    }
+    .reveal .pill.medium {
+      background: rgba(255, 181, 71, 0.18);
+      color: var(--blitzy-warning);
+      border: 1px solid rgba(255, 181, 71, 0.40);
+    }
+    .reveal .pill.high {
+      background: rgba(255, 92, 122, 0.18);
+      color: var(--blitzy-danger);
+      border: 1px solid rgba(255, 92, 122, 0.40);
+    }
+
+    .reveal .checklist { list-style: none; margin: 0; padding: 0; }
+    .reveal .checklist li {
+      position: relative; padding: 0.32em 0.5em 0.32em 1.7em;
+      font-size: 0.70em; line-height: 1.35; margin-bottom: 0.1em;
+    }
+    .reveal .checklist li::before {
+      content: ""; position: absolute; left: 0.25em; top: 0.55em;
+      width: 0.95em; height: 0.95em; border-radius: 4px;
+      background: rgba(148, 250, 213, 0.18);
+      border: 1.5px solid var(--blitzy-mint);
+    }
+    .reveal .checklist li::after {
+      content: ""; position: absolute; left: 0.5em; top: 0.62em;
+      width: 0.45em; height: 0.22em;
+      border-left: 2px solid var(--blitzy-mint);
+      border-bottom: 2px solid var(--blitzy-mint);
+      transform: rotate(-45deg);
+    }
+
+    .reveal .slide-closing { text-align: left; padding: 0 8%; }
+    .reveal .slide-closing h2 {
+      font-family: var(--font-display);
+      font-size: 1.9em; margin-bottom: 0.3em;
+      padding-bottom: 0.22em; line-height: 1.12;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      border-bottom: 3px solid var(--blitzy-mint);
+    }
+    .reveal .next-steps {
+      list-style: none; counter-reset: step-counter;
+      padding: 0; margin: 0.35em 0 0.5em;
+    }
+    .reveal .next-steps li {
+      counter-increment: step-counter; position: relative;
+      padding: 0.42em 0.95em 0.42em 3.0em; margin-bottom: 0.32em;
+      background: rgba(244, 239, 246, 0.06);
+      border-left: 3px solid var(--blitzy-primary);
+      border-radius: 8px; font-size: 0.66em; line-height: 1.45;
+    }
+    .reveal .next-steps li::before {
+      content: counter(step-counter); position: absolute;
+      left: 0.65em; top: 50%; transform: translateY(-50%);
+      width: 1.7em; height: 1.7em; line-height: 1.7em; text-align: center;
+      background: var(--blitzy-primary); color: var(--blitzy-text);
+      font-weight: 700; border-radius: 50%; font-size: 0.95em;
+      font-family: var(--font-display);
+    }
+    .reveal .next-steps li i[data-lucide],
+    .reveal .next-steps li svg.lucide {
+      color: var(--blitzy-mint); margin-right: 0.3em;
+      width: 14px; height: 14px;
+    }
+    .reveal .closing-footer {
+      margin-top: 0.6em; padding-top: 0.55em;
+      border-top: 1px solid rgba(148, 250, 213, 0.20);
+    }
+    .reveal .closing-footer .links-line,
+    .reveal .closing-footer .thanks-line {
+      font-size: 0.68em; margin: 0.18em 0;
+      color: var(--blitzy-light); line-height: 1.45;
+    }
+    .reveal .closing-footer .thanks-line { color: var(--blitzy-mint); font-weight: 500; }
+    .reveal .closing-footer a {
+      color: var(--blitzy-mint); font-family: var(--font-mono);
+      font-size: 0.95em; margin-right: 0.6em;
+    }
+
+    .reveal .mermaid {
+      display: flex; justify-content: center; align-items: center;
+      background: rgba(244, 239, 246, 0.04);
+      border: 1px solid rgba(148, 250, 213, 0.18);
+      border-radius: 12px; padding: 0.6em; margin: 0.4em 0;
+      min-height: 720px; max-height: 880px; overflow: hidden;
+    }
+    .reveal .mermaid svg { width: 100%; max-width: 100%; height: auto; max-height: 860px; }
+    .reveal .mermaid svg foreignObject *,
+    .reveal .mermaid svg foreignObject {
+      font-family: Arial, Helvetica, sans-serif !important;
+    }
+    .reveal .mermaid svg foreignObject { overflow: visible !important; }
+    .reveal .mermaid svg foreignObject > div,
+    .reveal .mermaid svg foreignObject > span {
+      overflow: visible !important; white-space: nowrap !important;
+    }
+    .reveal .mermaid .nodeLabel,
+    .reveal .mermaid .edgeLabel,
+    .reveal .mermaid .cluster-label {
+      color: #FFFFFF; fill: #FFFFFF;
+      font-family: Arial, Helvetica, sans-serif !important;
+    }
+    .reveal .mermaid .nodeLabel p,
+    .reveal .mermaid .edgeLabel p,
+    .reveal .mermaid .cluster-label p {
+      font-family: Arial, Helvetica, sans-serif !important;
+      white-space: nowrap !important;
+    }
+    .reveal .architecture-slide h2 { margin-bottom: 0.3em; }
+
+    .reveal .progress { color: var(--blitzy-mint); height: 4px; }
+    .reveal .controls { color: var(--blitzy-mint); }
+    .reveal .slide-number {
+      background: rgba(91, 57, 243, 0.55); color: var(--blitzy-text);
+      padding: 0.25em 0.55em; border-radius: 6px;
+      font-family: var(--font-mono); font-size: 0.55em;
+      font-weight: 600; letter-spacing: 0.04em;
+    }
+
+    @media print {
+      html, body, .reveal {
+        background: var(--blitzy-dark) !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .reveal .progress, .reveal .controls, .reveal .slide-number { display: none !important; }
+      .reveal .slides section { page-break-after: always; }
+      .reveal a { color: var(--blitzy-mint) !important; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <section class="slide-title">
+        <div class="lucide-icon-large"><i data-lucide="layout-grid"></i></div>
+        <h1>Modular Dashboard Refactor</h1>
+        <h3>Ghostfolio &mdash; Single-Canvas, Drag-and-Drop Composition</h3>
+        <p class="subtitle">Replace the route-driven shell with a registry-backed grid where every existing feature becomes a placeable, resizable, persistable module.</p>
+        <p class="footer-note">Executive Action Plan &middot; Blitzy &middot; AAP &sect; 0.6.1.9</p>
+      </section>
+
+      <section class="slide-divider">
+        <span class="chapter-number">01</span>
+        <div class="chapter-icon"><i data-lucide="lightbulb"></i></div>
+        <h1>Why</h1>
+        <h2>From Routes to Composition</h2>
+        <p class="chapter-tagline">A persistent, user-shaped workspace replaces twenty-two lazy-loaded screens.</p>
+      </section>
+
+      <section class="slide-content">
+        <h2><i data-lucide="lightbulb"></i> Why a Modular Dashboard</h2>
+        <div class="two-col">
+          <div class="col">
+            <h3><i data-lucide="alert-octagon"></i> Pain Today</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="route"></i> Twenty-two lazy routes plus tab shells fragment the user journey.</li>
+              <li><i data-lucide="message-square-off"></i> AI chat lives buried beneath the portfolio tab navigation.</li>
+              <li><i data-lucide="layout-template"></i> Every user sees the same layout, regardless of role or focus.</li>
+              <li><i data-lucide="navigation-off"></i> Header and footer chrome consume vertical space without payoff.</li>
+              <li><i data-lucide="save-off"></i> No mechanism exists to remember a user&rsquo;s preferred view.</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3><i data-lucide="sparkles"></i> Outcome After Refactor</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="grid-2x2"></i> One root route, one canvas, infinite user-shaped layouts.</li>
+              <li><i data-lucide="message-square"></i> AI chat is a co-equal grid module, on by default for new users.</li>
+              <li><i data-lucide="user-cog"></i> Per-user layouts persist server-side keyed on JWT-derived identity.</li>
+              <li><i data-lucide="maximize"></i> Full viewport for content; chrome reduces to <code>&lt;router-outlet /&gt;</code>.</li>
+              <li><i data-lucide="rocket"></i> First-visit auto-opens the catalog; nothing to configure to start.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="callout">
+          <i data-lucide="info"></i>
+          The refactor is additive to the data layer: every existing service (Portfolio, Symbol, AI Chat, Rebalancing, FinancialProfile) is consumed unchanged. Module wrappers are thin shells around presentation components that already render today.
+        </p>
+      </section>
+
+      <section class="slide-divider">
+        <span class="chapter-number">02</span>
+        <div class="chapter-icon"><i data-lucide="package"></i></div>
+        <h1>What</h1>
+        <h2>Scope, Modules, Boundaries</h2>
+        <p class="chapter-tagline">Forty-six new files. Twelve targeted modifications. One new external dependency.</p>
+      </section>
+
+      <section class="slide-content">
+        <h2><i data-lucide="target"></i> Scope at a Glance</h2>
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="file-plus-2"></i></div>
+            <div class="kpi-value">46</div>
+            <div class="kpi-label">New Files</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="file-edit"></i></div>
+            <div class="kpi-value">12</div>
+            <div class="kpi-label">Modified Files</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="folder-minus"></i></div>
+            <div class="kpi-value">3</div>
+            <div class="kpi-label">Removed Folder Patterns</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="server"></i></div>
+            <div class="kpi-value">2</div>
+            <div class="kpi-label">New API Endpoints</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="package-plus"></i></div>
+            <div class="kpi-value">1</div>
+            <div class="kpi-label">New npm Dependency</div>
+          </div>
+        </div>
+        <ul class="feature-list">
+          <li><i data-lucide="boxes"></i> <b>New Angular components.</b> Six standalone surfaces &mdash; canvas, registry, catalog, wrapper, plus five module wrappers.</li>
+          <li><i data-lucide="key-round"></i> <b>New auth path.</b> <code>GET</code> and <code>PATCH /api/v1/user/layout</code> behind <code>AuthGuard('jwt')</code> + <code>HasPermissionGuard</code>.</li>
+          <li><i data-lucide="database"></i> <b>New Prisma model.</b> <code>UserDashboardLayout</code> with cascade-delete back-relation on <code>User</code>.</li>
+          <li><i data-lucide="shield-check"></i> <b>Routing infrastructure preserved.</b> <code>RouterModule.forRoot</code>, <code>ServiceWorkerModule</code>, <code>PageTitleStrategy</code>, <code>ModulePreloadService</code> remain verbatim.</li>
+        </ul>
+      </section>
+
+
+      <section class="slide-content">
+        <h2><i data-lucide="grid-2x2-plus"></i> Five Required Modules</h2>
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="pie-chart"></i></div>
+            <div class="kpi-value small">Portfolio<br />Overview</div>
+            <div class="kpi-label">GfHomeOverviewComponent</div>
+            <div class="kpi-sub">2x2 minimum</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="wallet"></i></div>
+            <div class="kpi-value small">Holdings</div>
+            <div class="kpi-label">GfHomeHoldingsComponent</div>
+            <div class="kpi-sub">2x2 minimum</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="arrow-right-left"></i></div>
+            <div class="kpi-value small">Transactions</div>
+            <div class="kpi-label">Activities Component</div>
+            <div class="kpi-sub">2x2 minimum</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="bar-chart-3"></i></div>
+            <div class="kpi-value small">Analysis</div>
+            <div class="kpi-label">Analysis Component</div>
+            <div class="kpi-sub">2x2 minimum</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="message-circle"></i></div>
+            <div class="kpi-value small">AI Chat</div>
+            <div class="kpi-label">ChatPanelComponent</div>
+            <div class="kpi-sub">deviation point</div>
+          </div>
+        </div>
+        <p class="callout warning">
+          <i data-lucide="git-branch"></i>
+          <b>Intentional deviation (Decision D-026).</b>
+          The chat panel ships today embedded at <code>portfolio-page.html:32</code>. This refactor promotes it to a co-equal grid module on the same footing as every other module &mdash; recorded as Decision D-026 in <code>docs/decisions/agent-action-plan-decisions.md</code> with a verbatim quote of the user prompt mandate and the alternatives considered, satisfying the Explainability project rule.
+        </p>
+      </section>
+
+      <section class="slide-content">
+        <h2><i data-lucide="ban"></i> Explicitly Out of Scope</h2>
+        <table class="scope-table">
+          <thead>
+            <tr>
+              <th style="width: 36%;">Out-of-Scope Item</th>
+              <th style="width: 64%;">Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><i data-lucide="smartphone"></i> Mobile / responsive layouts</td><td>Spec EXCLUDE clause in AAP &sect; 0.7.3; desktop canvas only for this work item.</td></tr>
+            <tr><td><i data-lucide="users"></i> Shared layouts across users</td><td>Spec EXCLUDE; layouts are scoped to JWT-derived identity exclusively.</td></tr>
+            <tr><td><i data-lucide="user-cog"></i> Admin-defined default layouts</td><td>Spec EXCLUDE; new users always see the empty canvas with the catalog auto-opened.</td></tr>
+            <tr><td><i data-lucide="users-round"></i> Multi-user collaboration on a canvas</td><td>Spec EXCLUDE; no realtime co-editing primitive is introduced.</td></tr>
+            <tr><td><i data-lucide="route"></i> Routes beyond <code>/</code></td><td>Spec PRESERVE; only the wildcard fallback is allowed alongside the single root route.</td></tr>
+            <tr><td><i data-lucide="shield"></i> Removal of routing infrastructure</td><td>Spec PRESERVE; <code>RouterModule.forRoot</code>, <code>ServiceWorkerModule</code>, <code>PageTitleStrategy</code>, <code>ModulePreloadService</code> remain verbatim.</td></tr>
+            <tr><td><i data-lucide="zap-off"></i> Migration to zoneless change detection</td><td>angular-gridster2 v21 retains <code>NgZone.run</code> calls for performance; <code>provideZoneChangeDetection()</code> stays.</td></tr>
+            <tr><td><i data-lucide="package-x"></i> New external dependencies beyond gridster</td><td>Material + CDK + gridster compose to cover one hundred percent of dashboard chrome.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="slide-divider">
+        <span class="chapter-number">03</span>
+        <div class="chapter-icon"><i data-lucide="network"></i></div>
+        <h1>How</h1>
+        <h2>Architecture and Data Flow</h2>
+        <p class="chapter-tagline">Single canvas, registry-driven modules, JSONB-persisted layout.</p>
+      </section>
+
+      <section class="slide-content architecture-slide">
+        <h2><i data-lucide="network"></i> System Topology</h2>
+        <div class="mermaid">
+flowchart LR
+  subgraph Client["Angular Client (21.2.7)"]
+    Shell["GfAppComponent (gf-root)"]:::existingNode
+    Router["RouterModule.forRoot"]:::existingNode
+    Routes["app.routes.ts (single root)"]:::newNode
+    Canvas["GfDashboardCanvasComponent"]:::newNode
+    Registry["ModuleRegistryService"]:::newNode
+    Catalog["GfModuleCatalogComponent"]:::newNode
+    Wrappers["Module Wrappers (5)"]:::newNode
+    ChatPanel["ChatPanelComponent"]:::existingNode
+    Overview["GfHomeOverviewComponent"]:::existingNode
+    LayoutSvc["UserDashboardLayoutService (client)"]:::newNode
+    PersistSvc["LayoutPersistenceService (debounce)"]:::newNode
+  end
+  subgraph API["NestJS API (11.1.19)"]
+    AppMod["app.module.ts"]:::existingNode
+    LayoutCtrl["UserDashboardLayoutController"]:::newNode
+    LayoutApiSvc["UserDashboardLayoutService"]:::newNode
+    Guards["AuthGuard jwt + HasPermissionGuard"]:::existingNode
+    Prisma["PrismaService"]:::existingNode
+  end
+  subgraph Data["Persistence"]
+    DB[("PostgreSQL UserDashboardLayout")]:::externalNode
+  end
+  Shell --> Routes
+  Router -. "preserved" .-> Routes
+  Routes --> Canvas
+  Canvas --> Registry
+  Canvas --> Catalog
+  Canvas --> Wrappers
+  Wrappers --> ChatPanel
+  Wrappers --> Overview
+  Canvas --> PersistSvc
+  PersistSvc -- "debounce 500 ms" --> LayoutSvc
+  LayoutSvc -- "GET / PATCH api v1 user layout" --> LayoutCtrl
+  LayoutCtrl --> Guards
+  LayoutCtrl --> LayoutApiSvc
+  LayoutApiSvc --> Prisma
+  Prisma --> DB
+  AppMod --> LayoutCtrl
+  classDef newNode fill:#5B39F3,stroke:#94FAD5,stroke-width:2px,color:#FFFFFF;
+  classDef existingNode fill:#2D1C77,stroke:#F2F0FE,stroke-width:1px,color:#F2F0FE;
+  classDef externalNode fill:#1A105F,stroke:#94FAD5,stroke-width:2px,color:#94FAD5;
+        </div>
+      </section>
+
+      <section class="slide-content architecture-slide">
+        <h2><i data-lucide="database"></i> Persistence Model</h2>
+        <div class="mermaid">
+erDiagram
+  USER ||--o| USER_DASHBOARD_LAYOUT : "owns (cascade delete)"
+  USER {
+    string id PK "uuid"
+    string email
+    string role
+    string accessToken
+    json Settings
+  }
+  USER_DASHBOARD_LAYOUT {
+    string userId PK,FK "uuid - references User.id"
+    json layoutData "version, items"
+    datetime createdAt "default now"
+    datetime updatedAt "auto on write"
+  }
+        </div>
+        <p class="callout">
+          <i data-lucide="git-branch"></i>
+          <b>Decision D-013.</b>
+          Prisma 7.x requires the back-relation field <code>userDashboardLayout UserDashboardLayout?</code> on <code>User</code>; the forward relation on the new model uses <code>onDelete: Cascade</code> mirroring the <code>FinancialProfile</code> precedent at <code>schema.prisma:374</code>. Prisma maps <code>Json</code> to PostgreSQL <code>jsonb</code> automatically.
+        </p>
+      </section>
+
+      <section class="slide-content">
+        <h2><i data-lucide="server"></i> API Contract</h2>
+        <div class="two-col">
+          <div class="col">
+            <h3><i data-lucide="download"></i> GET /api/v1/user/layout</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="key-round"></i> <code>AuthGuard('jwt')</code> + <code>HasPermissionGuard</code></li>
+              <li><i data-lucide="user-check"></i> <code>@HasPermission(readUserDashboardLayout)</code></li>
+              <li><i data-lucide="check-circle-2"></i> 200 with persisted JSON; 404 when no row exists</li>
+              <li><i data-lucide="lock"></i> 401 unauthenticated; 403 unpermitted role</li>
+              <li><i data-lucide="timer"></i> p95 SLO &le; 300 ms</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3><i data-lucide="upload"></i> PATCH /api/v1/user/layout</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="key-round"></i> <code>AuthGuard('jwt')</code> + <code>HasPermissionGuard</code></li>
+              <li><i data-lucide="user-check"></i> <code>@HasPermission(updateUserDashboardLayout)</code></li>
+              <li><i data-lucide="repeat"></i> Idempotent <code>upsert</code> per Decision D-019</li>
+              <li><i data-lucide="shield-alert"></i> class-validator caps items at fifty</li>
+              <li><i data-lucide="timer"></i> p95 SLO &le; 500 ms</li>
+            </ul>
+          </div>
+        </div>
+        <div class="kpi-grid cols-4" style="margin-top: 0.55em;">
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="fingerprint"></i></div>
+            <div class="kpi-value small">JWT</div>
+            <div class="kpi-label">User identity from <code>request.user.id</code></div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="git-merge"></i></div>
+            <div class="kpi-value small">Upsert</div>
+            <div class="kpi-label">Single round-trip primary-key write</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="hash"></i></div>
+            <div class="kpi-value small">X-Correlation-ID</div>
+            <div class="kpi-label">Set before service call</div>
+          </div>
+          <div class="kpi-card secondary">
+            <div class="kpi-icon"><i data-lucide="ban"></i></div>
+            <div class="kpi-value small">No DEMO</div>
+            <div class="kpi-label">Permissions denied for DEMO and INACTIVE</div>
+          </div>
+        </div>
+      </section>
+
+
+      <section class="slide-content">
+        <h2><i data-lucide="grid-3x3"></i> Frontend Grid Configuration</h2>
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="columns-3"></i></div>
+            <div class="kpi-value">12</div>
+            <div class="kpi-label">Columns</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="square"></i></div>
+            <div class="kpi-value">2x2</div>
+            <div class="kpi-label">Min Module Size</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="ruler"></i></div>
+            <div class="kpi-value">64px</div>
+            <div class="kpi-label">Fixed Row Height</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="zap"></i></div>
+            <div class="kpi-value">100ms</div>
+            <div class="kpi-label">Drag/Resize Visual SLO</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon"><i data-lucide="hourglass"></i></div>
+            <div class="kpi-value">500ms</div>
+            <div class="kpi-label">Persist Debounce</div>
+          </div>
+        </div>
+        <div class="two-col" style="margin-top: 0.55em;">
+          <div class="col">
+            <h3><i data-lucide="package"></i> Engine</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="boxes"></i> <code>angular-gridster2 21.0.1</code> &mdash; standalone-only API</li>
+              <li><i data-lucide="component"></i> Imports: <code>Gridster</code> and <code>GridsterItemComponent</code></li>
+              <li><i data-lucide="settings"></i> <code>gridType: 'fixed'</code>, <code>pushItems: true</code>, <code>swap: true</code></li>
+              <li><i data-lucide="zap"></i> Per-frame layout math runs <code>NgZone.runOutsideAngular</code></li>
+              <li><i data-lucide="file-x"></i> CSS embedded via <code>ViewEncapsulation.None</code>; no <code>styles.scss</code> import (Decision D-024)</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3><i data-lucide="paintbrush"></i> Chrome</h3>
+            <ul class="feature-list">
+              <li><i data-lucide="palette"></i> Material 3 tokens via <code>var(--mat-sys-*, fallback)</code> (Decision D-020)</li>
+              <li><i data-lucide="layout-dashboard"></i> <code>MatToolbar</code>, <code>MatIconButton</code>, <code>MatDialog</code>, <code>MatFab</code>, <code>MatList</code></li>
+              <li><i data-lucide="ban"></i> Zero hardcoded color literals; allow-list spacing constants only</li>
+              <li><i data-lucide="link"></i> Catalog drag handed off to gridster's drop API</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide-content architecture-slide">
+        <h2><i data-lucide="git-merge"></i> Migration Approach</h2>
+        <div class="mermaid">
+sequenceDiagram
+  participant Dev as Engineer
+  participant CLI as npm + nx CLI
+  participant Schema as prisma schema.prisma
+  participant Migrate as Prisma Migrate
+  participant DB as PostgreSQL
+  participant Routes as app.routes.ts
+  participant Build as nx build
+  Dev->>CLI: npm install angular-gridster2 21.0.1
+  CLI-->>Dev: package.json + lock updated
+  Dev->>Schema: append model UserDashboardLayout + back-relation on User
+  Dev->>Migrate: npx prisma migrate dev --name add-user-dashboard-layout
+  Migrate->>DB: CREATE TABLE UserDashboardLayout (PK + FK CASCADE + jsonb)
+  DB-->>Migrate: ok (no conflicts vs existing schema)
+  Migrate-->>Dev: migration sql + regenerated client
+  Dev->>Routes: collapse 22 routes into single root + wildcard
+  Dev->>Build: npx nx build client && npx nx build api
+  Build-->>Dev: zero errors / zero warnings
+  Note over Dev,Build: RouterModule.forRoot, ServiceWorkerModule, PageTitleStrategy, ModulePreloadService preserved verbatim
+        </div>
+      </section>
+
+      <section class="slide-divider">
+        <span class="chapter-number">04</span>
+        <div class="chapter-icon"><i data-lucide="shield-check"></i></div>
+        <h1>Risk &amp; Validation</h1>
+        <h2>What We Watch and How We Verify</h2>
+        <p class="chapter-tagline">Anticipated failure modes, the controls that contain them, and the gates that prove the work.</p>
+      </section>
+
+      <section class="slide-content">
+        <h2><i data-lucide="alert-triangle"></i> Risk Register and Mitigations</h2>
+        <table class="risk-table">
+          <thead>
+            <tr>
+              <th style="width: 30%;">Risk</th>
+              <th style="width: 14%;">Severity</th>
+              <th style="width: 56%;">Mitigation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><i data-lucide="user-x"></i> Cross-user layout read or write</td><td><span class="pill low">Low</span></td><td><code>userId</code> always sourced from <code>request.user.id</code> (Engineering Rule 5); Prisma <code>upsert.where.userId</code> never echoes the request body.</td></tr>
+            <tr><td><i data-lucide="lock"></i> Unauthenticated layout access</td><td><span class="pill low">Low</span></td><td><code>AuthGuard('jwt')</code> rejects pre-permission with 401; <code>HasPermissionGuard</code> denies DEMO and INACTIVE roles with 403.</td></tr>
+            <tr><td><i data-lucide="bug"></i> Malicious payload via PATCH</td><td><span class="pill low">Low</span></td><td>class-validator DTO bounds <code>items</code> to fifty entries, integer-bounds on <code>cols</code>/<code>rows</code>/<code>x</code>/<code>y</code>, and <code>moduleId</code> length cap.</td></tr>
+            <tr><td><i data-lucide="git-merge"></i> Migration conflict with existing schema</td><td><span class="pill low">Low</span></td><td>Schema located at <code>prisma/schema.prisma</code> (verified); model appended after <code>FinancialProfile</code>; Prisma 7.x explicit back-relation per Decision D-013.</td></tr>
+            <tr><td><i data-lucide="gauge"></i> Drag/resize jank under zone-based CD</td><td><span class="pill medium">Medium</span></td><td>Per-frame layout math runs <code>NgZone.runOutsideAngular</code>; canvas is OnPush; re-enters zone at drag-stop boundary; 100 ms SLO measured per AAP &sect; 0.6.3.3.</td></tr>
+            <tr><td><i data-lucide="repeat"></i> Save storms under rapid drag/resize</td><td><span class="pill medium">Medium</span></td><td>rxjs <code>debounceTime(500)</code> in <code>LayoutPersistenceService</code> collapses bursts into a single <code>PATCH</code>; module wrappers MUST NOT call save APIs (Rule 4).</td></tr>
+            <tr><td><i data-lucide="layers-2"></i> Module ad-hoc insertion bypassing registry</td><td><span class="pill low">Low</span></td><td>Canvas resolves components only via <code>ModuleRegistryService.getByName(...)</code> (Rule 3); static grep verifies no hard-coded component imports inside the canvas.</td></tr>
+            <tr><td><i data-lucide="trash-2"></i> Orphaned layout rows on user deletion</td><td><span class="pill low">Low</span></td><td><code>onDelete: Cascade</code> on the <code>userId</code> FK mirrors the <code>FinancialProfile</code> precedent at <code>schema.prisma:374</code>.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="slide-content">
+        <h2><i data-lucide="check-check"></i> Validation Framework and Observability</h2>
+        <div class="two-col">
+          <div class="col">
+            <h3><i data-lucide="list-checks"></i> Acceptance Gates (AAP &sect; 0.8.6)</h3>
+            <ul class="checklist">
+              <li>All five required modules selectable in the catalog (chat included).</li>
+              <li>Adding a module places it at the next available cell.</li>
+              <li>Drag/resize visual completes in under 100 ms.</li>
+              <li>Layout saves within the 500 ms debounce window.</li>
+              <li><code>GET /api/v1/user/layout</code> p95 &le; 300 ms; unauthenticated returns 401.</li>
+              <li><code>PATCH /api/v1/user/layout</code> returns 200; unauthenticated returns 401.</li>
+              <li>New user: blank canvas plus auto-opened catalog.</li>
+              <li>Returning user: saved layout renders on init.</li>
+              <li>Routing infrastructure remains operational.</li>
+              <li><code>npx nx build client &amp;&amp; npx nx build api</code> exits zero.</li>
+              <li>Prisma migration applies without conflicts.</li>
+            </ul>
+          </div>
+          <div class="col">
+            <h3><i data-lucide="activity"></i> Observability Surface</h3>
+            <div class="kpi-grid" style="grid-template-columns: 1fr 1fr; gap: 0.5em;">
+              <div class="kpi-card secondary">
+                <div class="kpi-icon"><i data-lucide="bar-chart-2"></i></div>
+                <div class="kpi-value small">GET</div>
+                <div class="kpi-label"><code>dashboard_layout_get_total</code></div>
+              </div>
+              <div class="kpi-card secondary">
+                <div class="kpi-icon"><i data-lucide="bar-chart-2"></i></div>
+                <div class="kpi-value small">PATCH</div>
+                <div class="kpi-label"><code>dashboard_layout_patch_total</code></div>
+              </div>
+              <div class="kpi-card secondary">
+                <div class="kpi-icon"><i data-lucide="alert-octagon"></i></div>
+                <div class="kpi-value small">FAIL</div>
+                <div class="kpi-label"><code>dashboard_layout_save_failures_total</code></div>
+              </div>
+              <div class="kpi-card secondary">
+                <div class="kpi-icon"><i data-lucide="timer"></i></div>
+                <div class="kpi-value small">p95</div>
+                <div class="kpi-label"><code>dashboard_layout_request_duration_seconds</code></div>
+              </div>
+            </div>
+            <p class="callout">
+              <i data-lucide="file-text"></i>
+              Structured logs include <code>correlationId</code>, <code>userId</code>, <code>route</code>, and <code>duration</code>. The runbook lives at <code>docs/observability/dashboard-layout.md</code>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide-divider">
+        <span class="chapter-number">05</span>
+        <div class="chapter-icon"><i data-lucide="trophy"></i></div>
+        <h1>Outcome</h1>
+        <h2>Ship It</h2>
+        <p class="chapter-tagline">A modular workspace your users will shape, with auditable provenance for every change.</p>
+      </section>
+
+      <section class="slide-closing">
+        <h2><i data-lucide="rocket"></i> Get Started in Five Steps</h2>
+        <ol class="next-steps">
+          <li><i data-lucide="folder-open"></i> <b>Read the Agent Action Plan.</b> Sections 0.1 through 0.9 capture intent, scope, integration map, design-system compliance, and execution plan.</li>
+          <li><i data-lucide="package-plus"></i> <b>Install the grid engine.</b> <code>npm install angular-gridster2@21.0.1</code>. The package ships its CSS via <code>ViewEncapsulation.None</code> in <code>fesm2022/angular-gridster2.mjs</code>; no <code>@import</code> from <code>styles.scss</code> is required (Decision D-024).</li>
+          <li><i data-lucide="database"></i> <b>Run the migration.</b> <code>npx prisma migrate dev --name add-user-dashboard-layout</code> creates the table, FK with cascade, and regenerates the typed client.</li>
+          <li><i data-lucide="hammer"></i> <b>Verify the build.</b> <code>npx nx build client &amp;&amp; npx nx build api</code> must complete with zero errors and zero warnings.</li>
+          <li><i data-lucide="search"></i> <b>Walk the gates.</b> Eleven acceptance gates in AAP &sect; 0.8.6; ten engineering rules in &sect; 0.8.1; segmented PR review per <code>CODE_REVIEW.md</code>.</li>
+        </ol>
+        <div class="closing-footer">
+          <p class="links-line">
+            <i data-lucide="link"></i>
+            <b>Reference documents.</b>
+            <a href="../docs/decisions/agent-action-plan-decisions.md">decisions/agent-action-plan-decisions.md</a>
+            <a href="../docs/observability/dashboard-layout.md">observability/dashboard-layout.md</a>
+            <a href="../docs/migrations/dashboard-traceability-matrix.md">migrations/dashboard-traceability-matrix.md</a>
+          </p>
+          <p class="thanks-line">
+            <i data-lucide="heart"></i>
+            One canvas. Five modules. Infinite layouts. Let&rsquo;s build it.
+          </p>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.esm.min.mjs';
+    window.mermaid = mermaid;
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      fontFamily: 'Arial, Helvetica, sans-serif',
+      themeVariables: {
+        primaryColor: '#5B39F3',
+        primaryTextColor: '#FFFFFF',
+        primaryBorderColor: '#94FAD5',
+        lineColor: '#F2F0FE',
+        secondaryColor: '#2D1C77',
+        tertiaryColor: '#1A105F',
+        background: '#1A105F',
+        mainBkg: '#5B39F3',
+        secondBkg: '#94FAD5',
+        tertiaryBkg: '#F2F0FE',
+        clusterBkg: 'rgba(45, 28, 119, 0.55)',
+        clusterBorder: '#94FAD5',
+        edgeLabelBackground: '#1A105F',
+        nodeTextColor: '#FFFFFF',
+        textColor: '#FFFFFF',
+        fontFamily: 'Arial, Helvetica, sans-serif'
+      },
+      flowchart: {
+        curve: 'basis',
+        nodeSpacing: 36,
+        rankSpacing: 56,
+        padding: 22,
+        htmlLabels: true,
+        useMaxWidth: true,
+        diagramPadding: 18,
+        wrappingWidth: 200
+      },
+      sequence: {
+        actorMargin: 60,
+        boxMargin: 16,
+        messageMargin: 28,
+        diagramMarginX: 24,
+        diagramMarginY: 16,
+        useMaxWidth: true
+      },
+      er: {
+        useMaxWidth: true,
+        diagramPadding: 20
+      },
+      fontSize: 14,
+      securityLevel: 'loose'
+    });
+
+    window.Reveal.initialize({
+      width: 1920,
+      height: 1080,
+      margin: 0.04,
+      minScale: 0.2,
+      maxScale: 2.0,
+      controls: true,
+      progress: true,
+      history: true,
+      center: true,
+      transition: 'slide',
+      backgroundTransition: 'fade',
+      hash: true,
+      slideNumber: 'c/t',
+      hashOneBasedIndex: false
+    });
+
+    function renderIcons() {
+      try {
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons();
+        }
+      } catch (err) {
+        console.warn('[lucide] createIcons failed:', err);
+      }
+    }
+
+    function renderMermaid() {
+      // Render only diagrams in the currently visible slide that have not yet been processed.
+      // Mermaid's dagre layout engine requires the host element to have non-zero dimensions
+      // when the diagram is rendered; rendering all .mermaid nodes at once (including those
+      // in hidden Reveal.js slides) causes layout NaN errors and produces broken/empty SVGs.
+      // By scoping to `section.present`, each diagram is rendered the first time its slide
+      // becomes visible, ensuring proper container sizing and avoiding race conditions.
+      try {
+        var nodes = document.querySelectorAll('.reveal .slides section.present .mermaid:not([data-processed="true"])');
+        if (nodes && nodes.length > 0) {
+          mermaid.run({ nodes: Array.prototype.slice.call(nodes) }).catch(function (err) {
+            console.warn('[mermaid] run rejected:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('[mermaid] run threw:', err);
+      }
+    }
+
+    window.Reveal.on('ready', function () {
+      renderIcons();
+      renderMermaid();
+    });
+
+    window.Reveal.on('slidechanged', function () {
+      renderIcons();
+      renderMermaid();
+    });
+
+    renderIcons();
+  </script>
+</body>
+</html>
+

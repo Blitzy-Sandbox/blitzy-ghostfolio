@@ -1,0 +1,70 @@
+<div class="gf-canvas-root">
+  @if (isLoading()) {
+    <mat-progress-bar class="gf-canvas-loading" mode="indeterminate" />
+  }
+
+  @if (hasError()) {
+    <div
+      class="gf-canvas-error"
+      i18n="
+        Error banner shown when the layout fails to load|Inline error message
+        displayed at the top of the canvas when GET /api/v1/user/layout returns
+        a non-success response
+      "
+      role="alert"
+    >
+      Could not load your dashboard layout.
+    </div>
+  }
+
+  <gridster class="gf-canvas-gridster" [options]="options">
+    @for (item of dashboard(); track item.name + '|' + item.x + '|' + item.y) {
+      <gridster-item [item]="item">
+        <gf-module-wrapper
+          [iconName]="resolveIconName(item.name)"
+          [title]="resolveTitle(item.name)"
+          (remove)="removeItem(item)"
+        >
+          <ng-container [gfDashboardModuleHost]="item.name" />
+        </gf-module-wrapper>
+      </gridster-item>
+    }
+  </gridster>
+
+  <button
+    class="gf-canvas-fab"
+    color="primary"
+    extended
+    mat-fab
+    type="button"
+    [attr.aria-label]="addModuleLabel"
+    (click)="openCatalog()"
+  >
+    <!--
+      Use `<ion-icon>` (Ionicons) rather than `<mat-icon>` for the FAB
+      glyph. The Ghostfolio app does NOT load the Material Icons font
+      (the `<link href="...family=Material+Icons" rel="stylesheet">`
+      tag is intentionally absent from the global stylesheet), so a
+      `<mat-icon>add</mat-icon>` element renders the literal text
+      "add" instead of the "+" glyph (QA Checkpoint 8 Issue #2). Every
+      other icon in the dashboard chrome (module-wrapper drag handle,
+      remove button, module title icon, catalog list rows) already
+      uses `<ion-icon>` for consistency, so the FAB is now aligned
+      with that established convention. `aria-hidden="true"` on the
+      icon ensures screen readers do not announce a redundant icon
+      label — the visible "Add module" `<span>` carries the accessible
+      name via `[attr.aria-label]="addModuleLabel"` on the parent
+      button. The `add-outline` variant matches the visual weight of
+      the wrapper's `reorder-three-outline` and `close-outline`
+      glyphs.
+    -->
+    <ion-icon aria-hidden="true" name="add-outline" />
+    <span
+      i18n="
+        Visible label for the Add module FAB|Visible label on the floating
+        action button that opens the module catalog dialog
+      "
+      >Add module</span
+    >
+  </button>
+</div>

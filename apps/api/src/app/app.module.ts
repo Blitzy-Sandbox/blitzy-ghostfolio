@@ -64,6 +64,7 @@ import { SnowflakeSyncModule } from './snowflake-sync/snowflake-sync.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { SymbolModule } from './symbol/symbol.module';
 import { UserFinancialProfileModule } from './user-financial-profile/user-financial-profile.module';
+import { UserDashboardLayoutModule } from './user/user-dashboard-layout.module';
 import { UserModule } from './user/user.module';
 
 @Module({
@@ -179,6 +180,7 @@ import { UserModule } from './user/user.module';
     SubscriptionModule,
     SymbolModule,
     TagsModule,
+    UserDashboardLayoutModule,
     UserFinancialProfileModule,
     UserModule,
     WatchlistModule

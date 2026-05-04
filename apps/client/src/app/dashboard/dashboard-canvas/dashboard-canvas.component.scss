@@ -1,0 +1,231 @@
+// Dashboard canvas stylesheet — see
+// apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.ts
+// and AAP § 0.5.3 (Material 3 design-token catalog) and AAP § 0.8.1.7
+// (Rule 7: var/fallback pattern is mandatory).
+//
+// Every Material 3 token reference uses
+//   var(--mat-sys-<token>, <hardcoded-fallback>)
+// per Decision D-020. The fallback values mirror Angular Material 21's
+// default Material 3 light-theme values from AAP § 0.5.3.1 (color),
+// AAP § 0.5.3.3 (shape/radius), and AAP § 0.5.3.5 (typography), and are
+// rendered when the global theme has not yet evaluated.
+//
+// Layout constants (1rem = 16px, 1.25rem = 20px, 1.5rem = 24px) are
+// permitted spacing values per AAP § 0.5.3.2 (M3 4/8/16/24 px scale).
+//
+// Rule 2 (AAP § 0.8.1.2): the canvas is the single source of truth for
+// module positions and sizes — gridster's `dashboard` array owns layout
+// state. This stylesheet styles the canvas chrome (root, loading bar,
+// error banner, gridster host, drop preview, FAB) only; sibling-component
+// chrome (module-wrapper, module-catalog) is owned by the respective
+// component's own SCSS.
+
+// Component host element (`<gf-dashboard-canvas>`). `display: block` is
+// required so the host fills its parent (the app shell's `<router-outlet>`
+// projects components inline; without `display: block` the canvas would
+// shrink to its content). The full viewport height is appropriate because
+// the app shell is reduced to `<router-outlet />` per AAP § 0.6.1.5 (no
+// header/footer offset). `position: relative` establishes a positioning
+// context for the loading bar's absolute positioning.
+:host {
+  background-color: var(--mat-sys-surface, #fffbfe);
+  display: block;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+// Single root wrapper inside the host. Inherits the host's full viewport
+// dimensions and provides a clean positioning context separate from `:host`
+// for any future absolutely-positioned children. Kept simple — no
+// background or borders here so the host's `--mat-sys-surface` shows
+// through unchanged.
+.gf-canvas-root {
+  height: 100%;
+  position: relative;
+  width: 100%;
+}
+
+// Indeterminate progress bar pinned to the top of the canvas during the
+// initial GET /api/v1/user/layout request. `z-index: 10` keeps it above
+// the gridster surface but below the FAB (z-index 1000) and any open
+// Material dialog (CDK overlay container z-index ≥ 1000). The bar's
+// color is owned by Material's `MatProgressBar` component theme, which
+// already consumes `--mat-sys-primary` internally — no override here.
+.gf-canvas-loading {
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 10;
+}
+
+// Error banner shown when the layout GET or PATCH fails. Uses the M3
+// error-container surface (red-tinted background) with the matching
+// on-error-container text token so contrast is theme-correct. The
+// `font:` shorthand consumes the M3 `body-medium` typography token;
+// the fallback `400 14px / 20px Roboto` mirrors Material's default
+// body-medium spec (font-weight: 400; font-size: 14px; line-height:
+// 20px; font-family: Roboto) per AAP § 0.5.3.5.
+.gf-canvas-error {
+  background-color: var(--mat-sys-error-container, #f9dedc);
+  border-radius: var(--mat-sys-corner-small, 8px);
+  color: var(--mat-sys-on-error-container, #410e0b);
+  font: var(--mat-sys-body-medium, 400 14px / 20px Roboto);
+  margin: 1rem;
+  padding: 1rem 1.25rem;
+  position: relative;
+  z-index: 5;
+}
+
+// `<gridster>` is the angular-gridster2 v21.0.1 standalone component.
+// Its internal CSS is bundled INSIDE the component decorators via
+// `@Component({ styles: [...], encapsulation: ViewEncapsulation.None })`
+// in the package's fesm2022 ES module — there is NO standalone
+// `gridster.css` file shipped with v21.0.1, and no global stylesheet
+// import is required. Per Decision D-024 (see
+// docs/decisions/agent-action-plan-decisions.md), the AAP § 0.6.1.8
+// directive to add `@import 'angular-gridster2/css/gridster.css';` to
+// `apps/client/src/styles.scss` is intentionally not implemented
+// because the referenced file does not exist in the package and
+// adding the import would cause `npx nx build client` to fail with
+// `Module not found`. The styles for the `gridster`, `gridster-item`,
+// and `gridster-preview` selectors load automatically the first time
+// the component renders, courtesy of `ViewEncapsulation.None`.
+//
+// The explicit `display: block`, `height: 100%`, and `width: 100%`
+// declarations ensure the gridster host fills the canvas — without
+// them, gridster's intrinsic sizing can collapse to zero in some
+// flex/grid contexts.
+//
+// Gridster drag/resize visuals (`<gridster-preview>` element) are
+// styled via `::ng-deep` because they are created by gridster as a
+// child component and component-scoped styles do not penetrate the
+// gridster sub-tree. This matches the documented escape-hatch pattern
+// for third-party child components used elsewhere in the repository.
+// The placeholder uses the M3 surface-variant (neutral container)
+// background with a dashed outline border to clearly signal "this is
+// where the item will land" without overpowering the canvas.
+.gf-canvas-gridster {
+  display: block;
+  height: 100%;
+  width: 100%;
+
+  ::ng-deep gridster-preview {
+    background-color: var(--mat-sys-surface-variant, #e7e0ec);
+    border: 2px dashed var(--mat-sys-outline, #79747e);
+    border-radius: var(--mat-sys-corner-extra-small, 4px);
+    opacity: 0.65;
+  }
+}
+
+// Floating Action Button anchored to the viewport bottom-right. `position:
+// fixed` (not `absolute`) is intentional — the FAB stays in place when
+// the canvas scrolls, matching M3's bottom-right FAB placement spec for
+// desktop layouts (AAP § 0.7.3 excludes mobile/responsive support, so
+// the desktop 24-px / 1.5rem offset is the only applicable value).
+// `z-index: 1000` puts the FAB above gridster, the loading bar, and the
+// error banner. Material's `MatDialog` uses z-index 1000+ via the CDK
+// overlay container, so an open catalog dialog correctly obscures the
+// FAB while it is open.
+//
+// **WCAG 1.4.3 contrast override** (QA Checkpoint 8 Issue #1): the
+// Ghostfolio theme overrides Material's default `--mat-sys-primary`
+// (M3 default `#6750a4` purple) to the brand cyan `#36cfcc`
+// (`apps/client/src/styles/theme.scss:438`). White text on that cyan
+// produces a contrast ratio of only 1.92:1 — well below the WCAG 2.1
+// AA minimum of 4.5:1 for normal-weight 14-px text. To satisfy WCAG
+// AA for the dashboard FAB regardless of which primary value the
+// theme defines, we override the FAB foreground color to use the
+// on-surface dark text color (`#1d1b20`), which yields a 10.5:1
+// contrast ratio against the cyan background — well above the AA
+// threshold.
+//
+// **Specificity battle**: the Ghostfolio global theme declares
+//   `.mat-mdc-fab.mat-primary { color: rgba(var(--light-primary-text)); }`
+// at specificity (0,2,0), which overrides any single-class selector
+// like `.gf-canvas-fab`. To deterministically beat the legacy theme
+// rule we compound the `.mat-primary` class onto our scoped selector
+// (specificity 0,2,0) AND use direct `color: ...` declarations rather
+// than CSS variable overrides. The variable overrides remain as a
+// belt-and-suspenders fallback for Material's M3-token-aware
+// rendering paths (e.g., `mat-fab-icon-color` is consumed by the
+// underlying icon-color resolution chain even when the host `color`
+// is overridden).
+//
+// **Why `&.mat-primary` (compound) over `&` (single)**: the legacy
+// `light-primary-text` rule targets the FAB only when it has
+// `color="primary"` (which sets the `.mat-primary` class). Our
+// dashboard FAB intentionally uses `color="primary"` to inherit the
+// brand-primary background; the `.mat-primary` class is therefore
+// always present, so the compound selector reliably matches AND
+// matches the legacy rule's specificity. The `color: ...` direct
+// rule on the compound selector then wins via source-order
+// (component styles load AFTER the global theme).
+//
+// The background remains the theme's primary token so the FAB stays
+// visually consistent with other primary-colored surfaces (e.g.,
+// chat-panel buttons). The fallback values mirror the AAP § 0.5.3.1
+// catalog (on-surface `#1d1b20`).
+.gf-canvas-fab {
+  --mat-fab-extended-foreground-color: var(--mat-sys-on-surface, #1d1b20);
+  --mat-fab-foreground-color: var(--mat-sys-on-surface, #1d1b20);
+  --mat-fab-icon-color: var(--mat-sys-on-surface, #1d1b20);
+  --mdc-extended-fab-label-text-color: var(--mat-sys-on-surface, #1d1b20);
+  --mdc-fab-icon-color: var(--mat-sys-on-surface, #1d1b20);
+
+  bottom: 1.5rem;
+  position: fixed;
+  right: 1.5rem;
+  z-index: 1000;
+
+  // Compound `.mat-primary` selector to match the legacy theme's
+  // `(0,2,0)` specificity for `.mat-mdc-fab.mat-primary` AND `!important`
+  // on the legacy rule, which forces us to also use `!important` here.
+  //
+  // The legacy global theme declares (with `!important`):
+  //   `.mat-mdc-fab.mat-primary, .mat-mdc-unelevated-button.mat-primary {
+  //      color: rgba(var(--light-primary-text)) !important;
+  //    }`
+  // — `!important` defeats any non-`!important` declaration regardless
+  // of specificity, so a plain `color: var(...)` rule on the same
+  // compound selector still loses to it. Using `!important` on our
+  // scoped override deterministically wins via source-order
+  // (component styles load AFTER the global theme; both are
+  // `!important`, so the later one wins).
+  //
+  // **Justified !important**: Material's MDC architecture and the
+  // Ghostfolio legacy theme's `light-primary-text` token are
+  // designed for the global "primary buttons render with white
+  // text" rule. The dashboard FAB is the ONLY place we deviate from
+  // that rule (because the brand cyan + white combo fails WCAG AA);
+  // this is the textbook case for `!important` — a localized,
+  // accessibility-driven override of a global theme decision.
+  // Linters generally allow `!important` for accessibility fixes;
+  // no other place in the dashboard chrome uses `!important`.
+  //
+  // The direct `color` declaration cascades into the inner
+  // `.mdc-button__label` span automatically via standard `color`
+  // inheritance — no separate rule needed for the label.
+  // (The cascade-into-label was attempted with `color: inherit !important`
+  // on `.mdc-button__label` in an earlier iteration, but the inner
+  // selector failed to match at all because Angular's view-encapsulation
+  // attribute selector `[_ngcontent-ng-cXXX]` couldn't pierce
+  // Material's component subtree. The simpler approach — overriding
+  // the host `color` and relying on inheritance — works because the
+  // label has NO explicit color rule of its own.)
+  &.mat-primary {
+    color: var(--mat-sys-on-surface, #1d1b20) !important;
+  }
+
+  // Ion-icon color override — the icon inherits the FAB foreground
+  // via `currentColor` so the same WCAG-AA-compliant on-surface dark
+  // text color applies. Without this, the ion-icon would render in
+  // its own default color (typically inherited from the document
+  // root) instead of the FAB's foreground color, producing a visual
+  // contrast mismatch within the same button.
+  ion-icon {
+    color: var(--mat-sys-on-surface, #1d1b20);
+  }
+}

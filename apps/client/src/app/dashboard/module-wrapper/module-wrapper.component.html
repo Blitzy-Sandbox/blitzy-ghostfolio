@@ -1,0 +1,34 @@
+<div class="gf-module-wrapper">
+  <header class="gf-module-header">
+    <button
+      class="gf-module-drag-handle"
+      mat-icon-button
+      type="button"
+      [attr.aria-label]="dragAriaLabel"
+      [matTooltip]="dragTooltip"
+    >
+      <ion-icon aria-hidden="true" name="reorder-three-outline" />
+    </button>
+
+    <span aria-hidden="true" class="gf-module-title-icon">
+      <ion-icon [name]="iconName()" />
+    </span>
+
+    <h2 class="gf-module-title">{{ title() }}</h2>
+
+    <button
+      class="gf-module-remove"
+      mat-icon-button
+      type="button"
+      [attr.aria-label]="removeAriaLabel"
+      [matTooltip]="removeTooltip"
+      (click)="onRemove()"
+    >
+      <ion-icon aria-hidden="true" name="close-outline" />
+    </button>
+  </header>
+
+  <div class="gf-module-content">
+    <ng-content />
+  </div>
+</div>

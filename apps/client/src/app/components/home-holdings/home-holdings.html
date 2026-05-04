@@ -1,9 +1,22 @@
 <div class="container">
-  <div class="row">
-    <div class="col">
-      <h1 class="d-none d-sm-block h3 mb-3 text-center" i18n>Holdings</h1>
-    </div>
-  </div>
+  <!--
+    Heading hierarchy fix (QA Checkpoint 8 Issue #6, WCAG 1.3.1
+    Info and Relationships): the previous `<h1 class="d-none d-sm-block
+    h3 mb-3 text-center">Holdings</h1>` element was nested INSIDE the
+    `<gf-module-wrapper>`'s `<h2>Holdings</h2>` title bar (when this
+    component is rendered as a dashboard module). That broke the
+    document heading hierarchy by introducing an h1 deep within the
+    page structure, confusing screen readers about page organization.
+
+    The h1 is removed entirely — the module wrapper's h2 is the only
+    heading needed to identify this section of the canvas, and the
+    visually-hidden duplicate provided no additional information to
+    sighted or assistive-tech users. Removing the element also
+    eliminates the `d-none d-sm-block` Bootstrap utility classes that
+    were rendering the heading only on screens >= 576 px wide
+    (mobile/responsive behavior is out of scope per AAP § 0.7.3, so
+    the conditional visibility was already vestigial).
+  -->
   <div class="row">
     <div class="col-lg">
       <div class="d-flex">
