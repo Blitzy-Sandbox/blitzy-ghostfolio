@@ -2,7 +2,7 @@ import { HasPermissionGuard } from '@ghostfolio/api/guards/has-permission.guard'
 import { permissions } from '@ghostfolio/common/permissions';
 import type { RequestWithUser } from '@ghostfolio/common/types';
 
-import { HttpStatus, NotFoundException } from '@nestjs/common';
+import { HttpStatus, Logger, NotFoundException } from '@nestjs/common';
 import { HTTP_CODE_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Reflector } from '@nestjs/core';
@@ -268,9 +268,13 @@ describe('UserDashboardLayoutController', () => {
     // Per QA Checkpoint 9 finding 1.5.3 (INFO — "404 response includes own
     // userId"), the 404 RESPONSE BODY must NOT include the user identifier.
     // Operator traceability is preserved through (a) the X-Correlation-ID
-    // response header (set BEFORE the throw — verified by Tests 5–7), and
-    // (b) the service-layer structured log that DOES include the userId at
-    // WARN level for support diagnostics.
+    // response header (set BEFORE the throw — verified by Tests 5–7),
+    // (b) the controller-level structured request-completion log line at
+    // INFO level (verified by Test 7d), and (c) the service-layer free-
+    // text annotation that DOES include the userId at INFO level for
+    // support diagnostics. The userId is an opaque internal UUID (not
+    // external PII), so emission at INFO level is permitted per the
+    // privacy policy documented in the runbook (§ Structured-Log Fields).
     //
     // Even though `userId` is the JWT-derived caller's own id (not another
     // user's), excluding it from the response body is a defensive minimization
@@ -507,6 +511,320 @@ describe('UserDashboardLayoutController', () => {
       'X-Correlation-ID',
       middlewareSuppliedId
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7c — Structured request-completion log on GET 200 success path
+  //           (QA Checkpoint 12 Issue 2 (MAJOR) — Structured Logging)
+  //           (AAP § 0.6.1.10 + § 0.8.2.1 — Observability rule)
+  //
+  // The runbook contract (`docs/observability/dashboard-layout.md`
+  // § Structured-Log Fields) requires every request log line to carry
+  // the following fields: correlationId, userId, route, method,
+  // statusCode, durationMs, level, timestamp. The controller emits
+  // exactly one such line per request via NestJS's `Logger.log(...)`
+  // (INFO) or `Logger.error(...)` (ERROR), serialized as a single
+  // JSON-encoded string so log aggregators can parse the structured
+  // fields uniformly. A regression that drops the log emission OR
+  // drops a required field would fail this test immediately.
+  //
+  // The `LOG_CONTEXT` is the second positional argument to
+  // `Logger.log/error(...)`; verifying it pins the log line to the
+  // controller-context grep pattern documented in the runbook.
+  //
+  // The `Logger` static methods are spied (not mocked) so the real
+  // formatter still produces the visible test-output lines —
+  // operators reading CI logs see the structured payload exactly as
+  // it would appear in production.
+  // -------------------------------------------------------------------------
+
+  it('emits structured request-completion log on GET 200 success path (Issue 2 MAJOR)', async () => {
+    const persistedRecord: UserDashboardLayout = {
+      userId: USER_1_ID,
+      layoutData: VALID_DTO.layoutData as any,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    userDashboardLayoutService.findByUserId.mockResolvedValueOnce(
+      persistedRecord
+    );
+    const httpResponse = buildMockResponse();
+    // Spy on the static Logger.log method to capture the structured
+    // payload emitted by the controller. The first call is what we
+    // assert; subsequent test cases get fresh spies via beforeEach's
+    // `jest.clearAllMocks()` (which also clears static spies).
+    const loggerLogSpy = jest.spyOn(Logger, 'log').mockImplementation();
+
+    try {
+      await controller.findOne(httpResponse);
+
+      // Exactly one structured log line is emitted per request — runs
+      // in the controller's `finally` block, so the call count is
+      // deterministic regardless of throw paths.
+      expect(loggerLogSpy).toHaveBeenCalledTimes(1);
+      const [serializedPayload, contextTag] = loggerLogSpy.mock.calls[0];
+      expect(contextTag).toBe('UserDashboardLayoutController');
+      expect(typeof serializedPayload).toBe('string');
+
+      const payload = JSON.parse(serializedPayload as string);
+      // Required fields per runbook § Structured-Log Fields:
+      expect(payload).toMatchObject({
+        userId: USER_1_ID,
+        route: '/user/layout',
+        method: 'GET',
+        statusCode: HttpStatus.OK,
+        level: 'INFO'
+      });
+      // correlationId is a UUID v4 (matches X-Correlation-ID header).
+      expect(payload.correlationId).toEqual(expect.any(String));
+      const v4Pattern =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+      expect(payload.correlationId).toMatch(v4Pattern);
+      // The log's correlationId matches the value emitted in the
+      // X-Correlation-ID response header — proves the SAME canonical
+      // id is used end-to-end (header → log → service).
+      expect(payload.correlationId).toBe(
+        httpResponse.setHeader.mock.calls[0][1]
+      );
+      // durationMs is a non-negative number (Date.now() delta).
+      expect(typeof payload.durationMs).toBe('number');
+      expect(payload.durationMs).toBeGreaterThanOrEqual(0);
+      // timestamp is an ISO 8601 UTC string.
+      expect(typeof payload.timestamp).toBe('string');
+      expect(() => new Date(payload.timestamp).toISOString()).not.toThrow();
+      expect(payload.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
+      // No errorMessage on success path.
+      expect(payload.errorMessage).toBeUndefined();
+    } finally {
+      loggerLogSpy.mockRestore();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7d — Structured request-completion log on GET 404 not_found path
+  //           (QA Checkpoint 12 Issue 2 (MAJOR))
+  //
+  // The 404 path is part of AAP § 0.8.1.10 (Rule 10) "blank canvas"
+  // first-visit semantics — it is a NORMAL outcome, not an error.
+  // Therefore the structured log line is emitted at INFO level (NOT
+  // ERROR) with statusCode=404. This matches the existing service-
+  // level log convention (`Logger.log` for missing-record, not
+  // `Logger.error`).
+  // -------------------------------------------------------------------------
+
+  it('emits structured request-completion log on GET 404 not_found path (Issue 2 MAJOR)', async () => {
+    userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
+    const httpResponse = buildMockResponse();
+    const loggerLogSpy = jest.spyOn(Logger, 'log').mockImplementation();
+    const loggerErrorSpy = jest.spyOn(Logger, 'error').mockImplementation();
+
+    try {
+      await expect(controller.findOne(httpResponse)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+
+      // INFO-level log emitted (not ERROR) — 404 is a normal first-
+      // visit outcome.
+      expect(loggerLogSpy).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).not.toHaveBeenCalled();
+      const [serializedPayload, contextTag] = loggerLogSpy.mock.calls[0];
+      expect(contextTag).toBe('UserDashboardLayoutController');
+
+      const payload = JSON.parse(serializedPayload as string);
+      expect(payload).toMatchObject({
+        userId: USER_1_ID,
+        route: '/user/layout',
+        method: 'GET',
+        statusCode: HttpStatus.NOT_FOUND,
+        level: 'INFO'
+      });
+      expect(payload.correlationId).toEqual(expect.any(String));
+      expect(typeof payload.durationMs).toBe('number');
+      expect(payload.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      loggerLogSpy.mockRestore();
+      loggerErrorSpy.mockRestore();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7e — Structured request-completion log on GET error path
+  //           (QA Checkpoint 12 Issue 2 (MAJOR))
+  //
+  // Uncaught service errors (database failures, connection drops)
+  // are mapped to HTTP 500 by NestJS's global exception filter. The
+  // controller's structured log line for this path uses level=ERROR
+  // and statusCode=500, includes an `errorMessage` field with the
+  // sanitized error message (NO stack trace, NO PII), and is emitted
+  // via `Logger.error(...)` so log aggregators can route it to the
+  // ERROR severity tier for alerting.
+  // -------------------------------------------------------------------------
+
+  it('emits structured request-completion log on GET error path (Issue 2 MAJOR)', async () => {
+    const dbError = new Error('database connection refused');
+    userDashboardLayoutService.findByUserId.mockRejectedValueOnce(dbError);
+    const httpResponse = buildMockResponse();
+    const loggerLogSpy = jest.spyOn(Logger, 'log').mockImplementation();
+    const loggerErrorSpy = jest.spyOn(Logger, 'error').mockImplementation();
+
+    try {
+      await expect(controller.findOne(httpResponse)).rejects.toBe(dbError);
+
+      // ERROR-level log emitted (not INFO).
+      expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
+      expect(loggerLogSpy).not.toHaveBeenCalled();
+      const [serializedPayload, contextTag] = loggerErrorSpy.mock.calls[0];
+      expect(contextTag).toBe('UserDashboardLayoutController');
+
+      const payload = JSON.parse(serializedPayload as string);
+      expect(payload).toMatchObject({
+        userId: USER_1_ID,
+        route: '/user/layout',
+        method: 'GET',
+        statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+        level: 'ERROR',
+        errorMessage: 'database connection refused'
+      });
+      expect(payload.correlationId).toEqual(expect.any(String));
+    } finally {
+      loggerLogSpy.mockRestore();
+      loggerErrorSpy.mockRestore();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7f — Structured request-completion log on PATCH 200 success path
+  //           (QA Checkpoint 12 Issue 2 (MAJOR))
+  //
+  // Same contract as Test 7c but for the PATCH endpoint. The
+  // `method` field MUST be `PATCH` (not `GET`) — a regression that
+  // hardcoded `GET` in the PATCH handler's log payload would fail
+  // here.
+  // -------------------------------------------------------------------------
+
+  it('emits structured request-completion log on PATCH 200 success path (Issue 2 MAJOR)', async () => {
+    userDashboardLayoutService.upsertForUser.mockResolvedValueOnce({
+      userId: USER_1_ID,
+      layoutData: VALID_DTO.layoutData as any,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    const httpResponse = buildMockResponse();
+    const loggerLogSpy = jest.spyOn(Logger, 'log').mockImplementation();
+
+    try {
+      await controller.update(VALID_DTO, httpResponse);
+
+      expect(loggerLogSpy).toHaveBeenCalledTimes(1);
+      const [serializedPayload, contextTag] = loggerLogSpy.mock.calls[0];
+      expect(contextTag).toBe('UserDashboardLayoutController');
+
+      const payload = JSON.parse(serializedPayload as string);
+      expect(payload).toMatchObject({
+        userId: USER_1_ID,
+        route: '/user/layout',
+        method: 'PATCH',
+        statusCode: HttpStatus.OK,
+        level: 'INFO'
+      });
+      // The structured log's correlationId matches the X-Correlation-ID
+      // header value — same id end-to-end.
+      expect(payload.correlationId).toBe(
+        httpResponse.setHeader.mock.calls[0][1]
+      );
+    } finally {
+      loggerLogSpy.mockRestore();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7g — Structured request-completion log on PATCH error path
+  //           (QA Checkpoint 12 Issue 2 (MAJOR))
+  // -------------------------------------------------------------------------
+
+  it('emits structured request-completion log on PATCH error path (Issue 2 MAJOR)', async () => {
+    const dbError = new Error('upsert failed: connection refused');
+    userDashboardLayoutService.upsertForUser.mockRejectedValueOnce(dbError);
+    const httpResponse = buildMockResponse();
+    const loggerLogSpy = jest.spyOn(Logger, 'log').mockImplementation();
+    const loggerErrorSpy = jest.spyOn(Logger, 'error').mockImplementation();
+
+    try {
+      await expect(controller.update(VALID_DTO, httpResponse)).rejects.toBe(
+        dbError
+      );
+
+      expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
+      expect(loggerLogSpy).not.toHaveBeenCalled();
+      const [serializedPayload, contextTag] = loggerErrorSpy.mock.calls[0];
+      expect(contextTag).toBe('UserDashboardLayoutController');
+
+      const payload = JSON.parse(serializedPayload as string);
+      expect(payload).toMatchObject({
+        userId: USER_1_ID,
+        route: '/user/layout',
+        method: 'PATCH',
+        statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+        level: 'ERROR',
+        errorMessage: 'upsert failed: connection refused'
+      });
+    } finally {
+      loggerLogSpy.mockRestore();
+      loggerErrorSpy.mockRestore();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7h — Structured log payload does NOT include layoutData body
+  //           (QA Checkpoint 12 Sensitive Data Exclusion)
+  //
+  // The body content can carry user UI preferences (module identifiers,
+  // positions) that constitute personally-identifiable behavioral data.
+  // The structured log line MUST NOT echo any layoutData fields — only
+  // identifiers (userId, correlationId), route metadata (route, method,
+  // statusCode, durationMs), and severity/timestamp fields appear.
+  // -------------------------------------------------------------------------
+
+  it('structured log payload excludes layoutData body content (sensitive data exclusion)', async () => {
+    // Inject a distinctive marker into the DTO so we can prove the log
+    // line never echoes back the body.
+    const distinctiveMarkerDto: UpdateDashboardLayoutDto = {
+      layoutData: {
+        version: 1,
+        items: [
+          {
+            moduleId: 'DISTINCTIVE_LAYOUT_BODY_MARKER_MUST_NOT_APPEAR_IN_LOGS',
+            cols: 4,
+            rows: 4,
+            x: 0,
+            y: 0
+          }
+        ]
+      } as UpdateDashboardLayoutDto['layoutData']
+    };
+    userDashboardLayoutService.upsertForUser.mockResolvedValueOnce({
+      userId: USER_1_ID,
+      layoutData: distinctiveMarkerDto.layoutData as any,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    const httpResponse = buildMockResponse();
+    const loggerLogSpy = jest.spyOn(Logger, 'log').mockImplementation();
+
+    try {
+      await controller.update(distinctiveMarkerDto, httpResponse);
+
+      const [serializedPayload] = loggerLogSpy.mock.calls[0];
+      // The serialized log payload (string) does NOT contain the
+      // marker — proves layoutData is NEVER echoed into the log line.
+      expect(serializedPayload).not.toContain(
+        'DISTINCTIVE_LAYOUT_BODY_MARKER_MUST_NOT_APPEAR_IN_LOGS'
+      );
+    } finally {
+      loggerLogSpy.mockRestore();
+    }
   });
 
   // -------------------------------------------------------------------------

@@ -72,6 +72,19 @@ import { Prisma, UserDashboardLayout } from '@prisma/client';
  * preferences (module identifiers, positions) that constitute personally-
  * identifiable behavioral data. Only metadata (counts, sizes via implicit
  * latency) and identifiers (userId, correlationId) appear in log lines.
+ *
+ * userId emission policy (per `docs/observability/dashboard-layout.md`
+ * § Structured-Log Fields): the `userId` field IS included on both
+ * INFO-level and ERROR-level log lines emitted by this service. The
+ * userId is an opaque internal UUID (e.g.,
+ * `5f71e4f0-a2c3-4f6e-89ab-1234567890ab`) — it is NOT external PII like
+ * an email or name, and the Ghostfolio data model does not permit
+ * external PII to be derived from the userId without a privileged
+ * database lookup. Inclusion at INFO level is therefore permitted and
+ * REQUIRED for support diagnostics: a customer-reported "blank canvas
+ * on returning visit" issue is resolved by filtering server logs by
+ * the customer's userId, and the not_found INFO log line is the
+ * primary signal for that diagnostic flow.
  */
 @Injectable()
 export class UserDashboardLayoutService {

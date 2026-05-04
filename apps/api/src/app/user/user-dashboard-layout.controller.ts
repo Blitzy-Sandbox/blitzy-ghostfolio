@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   Inject,
+  Logger,
   NotFoundException,
   Patch,
   Res,
@@ -23,6 +24,115 @@ import { randomUUID } from 'node:crypto';
 
 import { UpdateDashboardLayoutDto } from './dtos/update-dashboard-layout.dto';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
+
+/**
+ * Canonical HTTP route prefix surfaced to operators in structured request-
+ * completion log lines emitted by this controller. The literal `/user/layout`
+ * path matches the `@Controller('user/layout')` decorator below; the
+ * runtime `/api/v1` global URI version (`apps/api/src/main.ts`) is omitted
+ * from the log field for parity with the existing runbook contract
+ * (`docs/observability/dashboard-layout.md` § Structured-Log Fields:
+ * `route — /user/layout`).
+ */
+const LAYOUT_ROUTE = '/user/layout';
+
+/**
+ * Logger context tag used by every controller-level structured log line.
+ * Centralized so that the runbook's `grep -F '[UserDashboardLayoutController]'`
+ * filter is stable against future log-tag drift.
+ */
+const LOGGER_CONTEXT = 'UserDashboardLayoutController';
+
+/**
+ * Severity levels recognised by the controller-level request logger.
+ * Mirrors the PR-aligned subset of the standard Pino/RFC-5424 levels:
+ *   - INFO  — normal request completion (HTTP 2xx, HTTP 4xx including
+ *             404 first-visit and 401/403 short-circuits).
+ *   - ERROR — uncaught throw inside the handler body (HTTP 5xx).
+ * The logger prints WARN-level lines via the same JSON payload using
+ * `Logger.warn(...)` when an explicit warn-level event is observed; no
+ * such path exists today on this controller.
+ */
+type RequestLogLevel = 'INFO' | 'ERROR';
+
+/**
+ * Structured request-completion log payload shape.
+ *
+ * Emitted at the END of every request that reaches this controller's
+ * handler body — including the HTTP 200 success path, the HTTP 404
+ * NotFoundException path, and the HTTP 5xx uncaught-error path.
+ *
+ * The set of required fields satisfies the project-level Observability
+ * rule (AAP § 0.8.2.1) and the runbook contract at
+ * `docs/observability/dashboard-layout.md` § Structured-Log Fields:
+ *   - `correlationId` — UUID v4 propagated from the Express middleware
+ *                       in `apps/api/src/main.ts` (or, in unit tests,
+ *                       a fresh `randomUUID()`).
+ *   - `userId`        — JWT-derived caller id; opaque internal UUID
+ *                       (NOT external PII like email/SSN/etc.). Required
+ *                       for support diagnostics and Rule-5 audit trails.
+ *   - `route`         — HTTP route path (`/user/layout`).
+ *   - `method`        — HTTP verb (`GET` or `PATCH`).
+ *   - `statusCode`    — HTTP status (200, 404, 500, etc.).
+ *   - `durationMs`    — Wall-clock duration of the handler body in
+ *                       milliseconds (number, not string).
+ *   - `level`         — Symbolic severity (`INFO` or `ERROR`).
+ *   - `timestamp`     — ISO 8601 UTC timestamp at log emission.
+ *
+ * The `errorMessage` field is OPTIONAL and present only on the
+ * uncaught-error path; it intentionally carries `error.message` only
+ * (no stack trace, no PII, no payload contents) — the full stack
+ * appears on a separate `Logger.error(...)` line emitted by NestJS's
+ * default exception filter.
+ *
+ * Every value in this payload is JSON-serializable so
+ * `JSON.stringify(payload)` produces a single greppable log line.
+ */
+interface RequestLogPayload {
+  readonly correlationId: string;
+  readonly userId: string;
+  readonly route: string;
+  readonly method: 'GET' | 'PATCH';
+  readonly statusCode: number;
+  readonly durationMs: number;
+  readonly level: RequestLogLevel;
+  readonly timestamp: string;
+  readonly errorMessage?: string;
+}
+
+/**
+ * Emits the `RequestLogPayload` at the appropriate severity.
+ *
+ * INFO entries use `Logger.log(...)`, ERROR entries use
+ * `Logger.error(...)`. Both serialize the payload as a SINGLE JSON
+ * object string so log aggregators (Loki, Datadog, CloudWatch) can
+ * parse the structured fields uniformly. The `LOGGER_CONTEXT` tag
+ * `'UserDashboardLayoutController'` is supplied as the second
+ * argument so NestJS's framework formatter prepends `[<tag>]` to the
+ * line — this preserves compatibility with the existing log-grep
+ * conventions used by the runbook.
+ *
+ * No PII redaction is performed on the payload because (a) the
+ * controller has already minimized the payload to identifiers only
+ * (no email, no name, no body content), and (b) the field
+ * documentation at `docs/observability/dashboard-layout.md`
+ * explicitly enumerates `userId` as an opaque internal identifier
+ * permitted at INFO level for support traceability.
+ *
+ * Resolves QA Checkpoint 12 finding Issue 2 (MAJOR — Structured
+ * Logging): every successful and unsuccessful controller invocation
+ * now emits a single structured log line with every field promised
+ * by the runbook contract, on every code path.
+ */
+function emitRequestLog(payload: RequestLogPayload): void {
+  const serialized = JSON.stringify(payload);
+
+  if (payload.level === 'ERROR') {
+    Logger.error(serialized, LOGGER_CONTEXT);
+  } else {
+    Logger.log(serialized, LOGGER_CONTEXT);
+  }
+}
 
 /**
  * `UserDashboardLayoutController` exposes the two HTTP endpoints that gate
@@ -147,8 +257,10 @@ export class UserDashboardLayoutController {
    *
    * 404 message contract (QA Checkpoint 9 finding 1.5.3): the user-facing
    * 404 BODY carries a generic message ("No layout found"); the userId
-   * appears only in server-side structured logs at WARN level for
-   * support diagnostics, never in the response body.
+   * appears only in server-side structured logs (controller-level
+   * request-completion JSON line at INFO level + service-layer free-text
+   * annotation at INFO level — both for support diagnostics), never in
+   * the response body.
    *
    * @param response Express response, passthrough-injected for header
    *                 decoration only.
@@ -179,24 +291,78 @@ export class UserDashboardLayoutController {
     response.setHeader('X-Correlation-ID', correlationId);
 
     const userId = this.request.user.id;
-    const layout = await this.userDashboardLayoutService.findByUserId(
-      userId,
-      correlationId
-    );
+    // Capture wall-clock start time for the per-request structured log
+    // line emitted on every code path. The duration spans the handler
+    // body — service call + controller-side error mapping — so the value
+    // approximates the metric-side histogram observation while remaining
+    // independent of it (a log emission is guaranteed even if the
+    // metrics service is misconfigured or unreachable).
+    const startTime = Date.now();
+    // Default the structured-log status code to HTTP 200 (success path).
+    // The 404 NotFoundException branch and the 5xx uncaught-error branch
+    // override `statusCode` BEFORE the `finally` block emits the log
+    // line, keeping the status field accurate on every path.
+    let statusCode: number = HttpStatus.OK;
+    let level: RequestLogLevel = 'INFO';
+    let errorMessage: string | undefined;
 
-    if (!layout) {
-      // Resolves QA Checkpoint 9 finding 1.5.3 (INFO) — "404 response
-      // includes own userId". The 404 BODY now carries a generic message
-      // ("No layout found"); operator traceability is preserved through
-      // (a) the `X-Correlation-ID` response header (set BEFORE this
-      // throw), and (b) the service-layer structured log that does
-      // include the userId at WARN level for support diagnostics. This
-      // keeps the user-facing response free of any per-user identifier
-      // while leaving full operator-side observability intact.
-      throw new NotFoundException('No layout found');
+    try {
+      const layout = await this.userDashboardLayoutService.findByUserId(
+        userId,
+        correlationId
+      );
+
+      if (!layout) {
+        // Resolves QA Checkpoint 9 finding 1.5.3 (INFO) — "404 response
+        // includes own userId". The 404 BODY carries a generic message
+        // ("No layout found"); operator traceability is preserved through
+        // (a) the `X-Correlation-ID` response header (set BEFORE this
+        // throw), (b) the service-layer free-text annotation that
+        // includes the userId at INFO level for support diagnostics, and
+        // (c) the controller-level structured request-completion log
+        // line below (emitted from the `finally` block at INFO level
+        // with statusCode 404 — the 404 path is a normal first-visit
+        // outcome per Rule 10's "blank canvas" semantics, not an error
+        // condition).
+        statusCode = HttpStatus.NOT_FOUND;
+        throw new NotFoundException('No layout found');
+      }
+
+      return layout;
+    } catch (error) {
+      // NotFoundException is part of the AAP § 0.8.1.10 first-visit
+      // semantics (not a server error) — re-throw as-is and let the
+      // `finally` block emit an INFO-level structured log line with
+      // statusCode=404. All other errors (database failures, unexpected
+      // exceptions) bubble up to NestJS's global exception filter as
+      // HTTP 500 with an ERROR-level log line.
+      if (error instanceof NotFoundException) {
+        // statusCode already set to 404 above; level remains INFO.
+        throw error;
+      }
+
+      statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
+      level = 'ERROR';
+      errorMessage = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      // Emit the per-request structured log line — runs on every code
+      // path (success, 404, error) per the project-level Observability
+      // rule (AAP § 0.8.2.1) and the runbook contract at
+      // `docs/observability/dashboard-layout.md` § Structured-Log Fields.
+      // Resolves QA Checkpoint 12 finding Issue 2 (MAJOR).
+      emitRequestLog({
+        correlationId,
+        userId,
+        route: LAYOUT_ROUTE,
+        method: 'GET',
+        statusCode,
+        durationMs: Date.now() - startTime,
+        level,
+        timestamp: new Date().toISOString(),
+        ...(errorMessage !== undefined ? { errorMessage } : {})
+      });
     }
-
-    return layout;
   }
 
   /**
@@ -281,12 +447,50 @@ export class UserDashboardLayoutController {
     // service's persistence-layer JSON input without leaking the `Prisma`
     // namespace into this controller (Rule 8 — Controller Thinness).
     const userId = this.request.user.id;
-    return this.userDashboardLayoutService.upsertForUser(
-      userId,
-      dto.layoutData as unknown as Parameters<
-        UserDashboardLayoutService['upsertForUser']
-      >[1],
-      correlationId
-    );
+    // Capture wall-clock start time for the per-request structured log
+    // line emitted on every code path. See the GET handler for the full
+    // rationale — the same pattern is replicated here so the PATCH
+    // endpoint also emits a complete structured log line on success and
+    // error paths per the project-level Observability rule (AAP § 0.8.2.1).
+    const startTime = Date.now();
+    let statusCode: number = HttpStatus.OK;
+    let level: RequestLogLevel = 'INFO';
+    let errorMessage: string | undefined;
+
+    try {
+      return await this.userDashboardLayoutService.upsertForUser(
+        userId,
+        dto.layoutData as unknown as Parameters<
+          UserDashboardLayoutService['upsertForUser']
+        >[1],
+        correlationId
+      );
+    } catch (error) {
+      // PATCH does not have the AAP § 0.8.1.10 first-visit semantics that
+      // GET enjoys — every uncaught error here is a server-side failure
+      // surfaced to the operator at ERROR level with statusCode=500.
+      // NestJS's global exception filter renders the HTTP 500 response.
+      statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
+      level = 'ERROR';
+      errorMessage = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      // Emit the per-request structured log line — runs on every code
+      // path (success, error) per the project-level Observability rule
+      // (AAP § 0.8.2.1) and the runbook contract at
+      // `docs/observability/dashboard-layout.md` § Structured-Log Fields.
+      // Resolves QA Checkpoint 12 finding Issue 2 (MAJOR).
+      emitRequestLog({
+        correlationId,
+        userId,
+        route: LAYOUT_ROUTE,
+        method: 'PATCH',
+        statusCode,
+        durationMs: Date.now() - startTime,
+        level,
+        timestamp: new Date().toISOString(),
+        ...(errorMessage !== undefined ? { errorMessage } : {})
+      });
+    }
   }
 }

@@ -177,80 +177,219 @@ queries must use these label values verbatim.
 
 The single histogram
 `dashboard_layout_request_duration_seconds{method}` is observed
-exactly once per request in a `try/finally` block, which guarantees
-the histogram is recorded for every outcome including 401, 403,
-404, and 500 responses. The `method` label is one of `GET` or
-`PATCH`. There is no `route` label; the metric scopes to the layout
-endpoints implicitly via its name and the `UserDashboardLayoutService`
+exactly once per service-method invocation in a `try/finally`
+block in `UserDashboardLayoutService`, which guarantees the
+histogram is recorded for every outcome that reaches the service
+layer — namely `found`, `not_found`, and `error` for GET, and
+`success` and `error` for PATCH. The histogram is NOT incremented
+on the upstream HTTP 401 / 403 / 400 short-circuit paths because
+those requests never reach the service-layer emission site —
+`AuthGuard('jwt')`, `HasPermissionGuard`, and the global
+`ValidationPipe` reject the request before any service method is
+invoked. The histogram `_count` therefore equals the sum of the
+corresponding per-outcome counter increments — the
+`dashboard_layout_get_total{outcome=...}` series for GET, and the
+`dashboard_layout_patch_total{outcome=...}` series for PATCH —
+and operators can use this consistency property as an internal
+audit. The `method` label is one of `GET` or `PATCH`. There is no
+`route` label; the metric scopes to the layout endpoints
+implicitly via its name and the `UserDashboardLayoutService`
 emission site. PromQL queries that filter only by `method` are
 sufficient to disambiguate the two endpoints.
 
 ## Structured-Log Fields
 
-Every request to the two layout endpoints emits structured log
-lines via NestJS's `Logger`. The controller emits at the
-`UserDashboardLayoutController` context tag and the service emits
-with each line prefixed by `[<correlationId>]` per the
-`formatLogMessage(message, correlationId)` helper at
-`apps/api/src/app/user-financial-profile/user-financial-profile.service.ts:288–293`
-(the new service replicates this helper verbatim). The fields
-below appear on the request log lines emitted by the controller
-and service.
+Every request that reaches `UserDashboardLayoutController` emits
+exactly ONE structured request-completion log line at the END of
+the handler body — runs in a `finally` block so the line is
+emitted on EVERY code path (HTTP 200 success, HTTP 404 first-visit,
+HTTP 5xx uncaught error). The line is a single JSON-encoded string
+serialized via `JSON.stringify(...)` and passed to
+`Logger.log(...)` (INFO) or `Logger.error(...)` (ERROR) along with
+the context tag `'UserDashboardLayoutController'`. NestJS's
+framework formatter wraps the line with the context tag in
+brackets — for example:
 
-Required fields (present on every request log line):
+```
+[Nest] 12345  - 05/04/2026, 8:00:00 AM     LOG [UserDashboardLayoutController] {"correlationId":"...","userId":"...","route":"/user/layout","method":"GET","statusCode":200,"durationMs":3,"level":"INFO","timestamp":"2026-05-04T08:00:00.123Z"}
+```
 
-- `correlationId` — UUID v4 generated per request via
-  `randomUUID()` from `node:crypto`.
-- `userId` — JWT-derived user identifier (`request.user.id`);
-  included on ERROR-level logs only (PII consideration; does NOT
-  appear on INFO logs).
-- `route` — `/api/v1/user/layout`.
+The service layer (`UserDashboardLayoutService`) ADDITIONALLY
+emits diagnostic log lines on the not_found path (`Logger.log`)
+and the error path (`Logger.error`) with the message format
+`[<correlationId>] <human-readable message>` — these provide
+operator-friendly free-text annotations alongside the
+machine-parseable structured request-completion line.
+
+### Required fields (present on every controller request-completion log line)
+
+The fields below MUST appear in the JSON payload of EVERY log
+line emitted by `UserDashboardLayoutController` for both INFO
+(success / first-visit) and ERROR (uncaught exception) paths:
+
+- `correlationId` — UUID v4 (RFC 4122) propagated from the Express
+  middleware in `apps/api/src/main.ts` (lines 199–213) for
+  `/api/v1/user/layout*` routes. Falls back to a fresh
+  `randomUUID()` only in unit tests where the synthetic request
+  does not traverse the middleware. The `correlationId` value in
+  the log line MATCHES the `X-Correlation-ID` response header
+  byte-for-byte — proving the same canonical id is used end-to-
+  end (header → log → service).
+- `userId` — JWT-derived user identifier (`request.user.id`).
+  Present on ALL controller log lines (INFO and ERROR) for
+  support diagnostics. The userId is an OPAQUE INTERNAL UUID
+  (e.g., `5f71e4f0-a2c3-4f6e-89ab-1234567890ab`) — it is NOT
+  external PII. The Ghostfolio data model does NOT permit a
+  user's email, name, or other identifying attributes to be
+  derived from the userId without a privileged database lookup,
+  so emission at INFO level is acceptable per the project's
+  privacy policy. The userId is REQUIRED for support engineers
+  to correlate a customer-reported issue ("my dashboard layout
+  did not save") to specific server-side requests via metrics
+  scoping and log filtering.
+- `route` — `/user/layout` (the controller's `@Controller(...)`
+  prefix; the global `/api/v1` URI version is omitted from the
+  log field for stability across version bumps).
 - `method` — `GET` or `PATCH`.
-- `statusCode` — HTTP status (200, 401, 403, 404, 500).
-- `durationMs` — Request duration in milliseconds (logged as a
-  structured field at request completion).
-- `level` — `INFO`, `WARN`, or `ERROR`.
-- `timestamp` — ISO 8601 UTC timestamp.
+- `statusCode` — HTTP status as a number (200 success, 404
+  first-visit, 500 uncaught error). The 401 / 403 / 400
+  short-circuit paths do NOT emit a controller-level log line
+  because the request never reaches the handler body — see the
+  "Upstream short-circuits" sub-section below.
+- `durationMs` — Wall-clock duration of the handler body in
+  milliseconds (number, computed as `Date.now() - startTime`).
+  Approximates the
+  `dashboard_layout_request_duration_seconds{method=...}`
+  histogram observation but is computed independently in the
+  controller so a metrics misconfiguration would not silently
+  drop the duration field from logs.
+- `level` — Symbolic severity (`INFO` for HTTP 2xx and 4xx,
+  `ERROR` for HTTP 5xx). Used by log aggregators (Loki, Datadog,
+  CloudWatch) to route entries to the correct alerting tier.
+- `timestamp` — ISO 8601 UTC timestamp (e.g.,
+  `2026-05-04T08:00:00.123Z`).
 
-Optional fields (present only on error paths):
+### Optional fields (present only on the ERROR-level controller log line)
 
-- `errorCode` — symbolic error name (for example, `P2025`).
-- `errorMessage` — human-readable error message; intentionally
-  short and free of stack-trace detail (the full stack appears
-  on a separate `ERROR`-level Pino log line, redacted of any PII).
-- `prismaCode` — Prisma's `code` field on
-  `PrismaClientKnownRequestError` (for example, `P2002` for a
-  unique constraint violation, `P2025` for "record not found").
+- `errorMessage` — Sanitized human-readable error message
+  (`error.message` only — NO stack trace, NO request body, NO
+  layoutData fields). The full stack trace appears on a SEPARATE
+  log line emitted by NestJS's default exception filter at ERROR
+  level; operators correlate the two via the matching timestamp
+  and the immediately-preceding controller log line.
 
-The controller emits via NestJS's `Logger`, calling
-`Logger.error('message', 'UserDashboardLayoutController')` — the
-second positional argument is the context tag for log filtering.
-Service log lines are prefixed with `[<correlationId>]` per the
-`formatLogMessage(...)` helper, so the canonical filter for "all
-log lines associated with a single request" is the literal
-substring `[<correlationId>]` (for example,
-`grep -F '[ab8d3e1f-2c43-4f9a-8e5b-9f4c6d8a1b2c]' api.log`).
+### Service-layer log lines (additive, not replacement)
+
+`UserDashboardLayoutService` emits its own log lines for the
+not_found and error paths via the
+`formatLogMessage(message, correlationId)` helper (lines 306–311
+of `user-dashboard-layout.service.ts`). These are operator-
+friendly free-text annotations:
+
+- `not_found` path (`Logger.log` at INFO level):
+  `[<correlationId>] No dashboard layout found for user <userId>`.
+  The userId is included for support diagnostics — same rationale
+  as the controller log line above (opaque internal UUID, not
+  external PII; required to scope a reported "blank canvas on
+  return visit" issue to specific server-side requests).
+- `error` path (`Logger.error` at ERROR level):
+  `[<correlationId>] Failed to read UserDashboardLayout for user <userId>: <error.message>`
+  (or `Failed to upsert ...` for the PATCH endpoint).
+
+Service-layer log lines are NOT JSON-serialized — they are
+plain-text annotations with the canonical `[<correlationId>]`
+prefix. This keeps the high-frequency successful-request hot path
+free of additional JSON serialization (the controller emits the
+structured JSON line; the service only adds free-text annotations
+when something noteworthy happened).
+
+### Sensitive data exclusion
+
+The structured request-completion log line and the service-layer
+annotations NEVER include:
+
+- The `Authorization` request header value (Bearer JWT).
+- Any field of `dto.layoutData` (module identifiers, positions —
+  while not high-sensitivity, they constitute personally-
+  identifiable behavioral data; excluded for defense-in-depth).
+- Database passwords, JWT secrets, or any environment variable
+  starting with `_PASSWORD`, `_SECRET`, `_KEY`, or `_TOKEN`.
+- User email addresses, names, or any external PII.
+
+The exclusion is enforced STRUCTURALLY: the log payload schema
+above lists the ONLY fields that ever appear in the JSON, and a
+test in `user-dashboard-layout.controller.spec.ts`
+("structured log payload excludes layoutData body content")
+asserts the log payload does not contain a distinctive marker
+injected into the request body.
+
+### Upstream short-circuits (HTTP 401 / 403 / 400)
+
+Requests rejected BEFORE the controller handler body runs do NOT
+emit a controller-level structured log line — by definition, the
+log emitter lives inside the handler's `finally` block, which
+never executes when an upstream guard or pipe short-circuits the
+request. This is correct behavior:
+
+- HTTP 401 (Unauthorized) — `AuthGuard('jwt')` rejects the
+  request before any application code runs. NestJS's framework
+  emits an `[ExceptionsHandler]` log line; operators correlate
+  the missing Bearer token to the access log via the
+  `X-Correlation-ID` response header (which IS still emitted by
+  the Express middleware — see § Correlation-ID Propagation).
+- HTTP 403 (Forbidden) — `HasPermissionGuard` rejects the request
+  after `AuthGuard('jwt')` succeeds but before the handler body.
+  Same propagation pattern as 401.
+- HTTP 400 (Bad Request) — NestJS's global `ValidationPipe`
+  rejects a malformed request body before the handler body. Same
+  propagation pattern as 401.
+
+Operators investigating a 401 / 403 / 400 incident MUST use the
+`X-Correlation-ID` response header value (which the Express
+middleware sets on EVERY response, including the upstream
+short-circuits) to correlate the missing controller log entry to
+the corresponding access-log entry.
+
+### Canonical log filters
+
+The two canonical log filters for incident response are:
+
+- "All log lines for a specific correlation id" —
+  `grep -F '"correlationId":"<UUID>"' api.log` (matches the
+  controller's structured JSON line) OR
+  `grep -F '[<UUID>]' api.log` (matches both the controller
+  line and the service-layer annotations).
+- "All controller-level structured request-completion lines" —
+  `grep -F '[UserDashboardLayoutController]' api.log` (matches
+  the NestJS framework's context-tag bracket).
 
 ## Correlation-ID Propagation
 
 Every request to the two layout endpoints carries a fresh
 `correlationId` end-to-end. The propagation chain is:
 
-1. The controller
+1. **Express middleware** (`apps/api/src/main.ts` lines 199–213)
+   mounted at the `/api/v1/user/layout` path prefix runs BEFORE
+   NestJS's guards/pipes/handler. The middleware (a) reads any
+   caller-supplied `X-Correlation-ID` request header (for
+   distributed-tracing systems that propagate end-to-end ids
+   across service boundaries), (b) falls back to a fresh
+   `randomUUID()` from `node:crypto` when no incoming header is
+   present, (c) sets `res.setHeader('X-Correlation-ID',
+correlationId)` so the value is emitted on EVERY response —
+   including the HTTP 401, 403, 400, 404, and 500 short-circuit
+   paths that never reach the controller body, and (d) stashes
+   the id on `request.correlationId` so the controller can
+   reuse the same canonical value rather than minting a fresh
+   id that would diverge from the header.
+2. The controller
    (`apps/api/src/app/user/user-dashboard-layout.controller.ts`)
-   generates a fresh `correlationId = randomUUID()` per request
-   via `node:crypto.randomUUID()`. The id is generated at the very
-   start of the handler method, before any business logic, so
-   that all subsequent log lines reference the same value.
-2. The controller calls
-   `response.setHeader('X-Correlation-ID', correlationId)` BEFORE
-   invoking the service. Express preserves headers set before a
-   thrown exception, so the header is also emitted on
-   `NotFoundException` (404) and `BadRequestException` (400) paths
-   via NestJS's global exception filter — operators can rely on
-   the response header being present on every successful and
-   unsuccessful response, with the single exception of the 401
-   path described below.
+   reads `request.correlationId` (set by the middleware in step
+   1. and idempotently re-asserts the same value on the response
+      header via `response.setHeader('X-Correlation-ID', ...)`. The
+      `??` fallback to a fresh `randomUUID()` preserves unit-test
+      compatibility — synthetic request objects built directly in
+      `*.spec.ts` files do not traverse the middleware pipeline.
 3. The controller passes `correlationId` to
    `UserDashboardLayoutService.findByUserId(userId, correlationId)`
    and
@@ -259,13 +398,27 @@ Every request to the two layout endpoints carries a fresh
    prefixes every structured log line with `[<correlationId>]` so
    all downstream logs (Prisma queries logged at the `query`
    level, error logs, retry logs) carry the same id end-to-end.
+5. The controller emits its own structured request-completion
+   log line with the same `correlationId` field — see
+   § Structured-Log Fields above for the full payload contract.
 
-The 401 path is the single exception. `AuthGuard('jwt')` rejects
-unauthenticated requests BEFORE the controller method runs, so the
-`X-Correlation-ID` header is not set on 401 responses. Operators
-investigating a 401-only incident must rely on the access-log
-timestamp and the `Authorization` header presence rather than the
-correlationId.
+**The `X-Correlation-ID` header is emitted on EVERY response
+including HTTP 401 / 403 / 400 / 404 / 500.** This is by design —
+the Express middleware mounted ahead of NestJS guards/pipes
+ensures the header is always present, so operators investigating
+ANY incident (including authentication failures) can correlate
+the response to access-log entries and any controller-level log
+lines via the canonical id. (Earlier versions of this runbook
+claimed the header was absent on 401 responses; that was
+outdated documentation, corrected as part of QA Checkpoint 9
+finding AAP-Compliance #11 and QA Checkpoint 12 finding Issue 4.)
+
+Note: the controller's structured request-completion log line is
+NOT emitted on the upstream 401 / 403 / 400 short-circuit paths
+(the handler body never runs), but the response header IS
+emitted by the middleware on those paths — see § Structured-Log
+Fields → "Upstream short-circuits" for the operator-correlation
+procedure.
 
 ### Frontend Telemetry
 
@@ -623,13 +776,32 @@ produce the expected output.
    curl -i http://localhost:3333/api/v1/user/layout
    ```
 
-   Expected `HTTP/1.1 401 Unauthorized`. Verify
-   `X-Correlation-ID` is **NOT** present on the response — the
-   `AuthGuard('jwt')` rejects the request before the controller
-   method runs, so no correlationId is generated. The metric
-   counters do not increment on this path because the metric
-   emission lives inside the controller body, downstream of the
-   guard.
+   Expected `HTTP/1.1 401 Unauthorized`. Verify the response
+   **DOES** include an `X-Correlation-ID` header carrying a
+   fresh UUID v4. The Express middleware in
+   `apps/api/src/main.ts` (lines 199–213) is mounted ahead of
+   NestJS's guards/pipes for the `/api/v1/user/layout` path,
+   so the header is emitted on EVERY response — including the
+   HTTP 401, 403, 400, 404, and 500 paths. This is correct
+   behavior (the previous version of this runbook claimed the
+   header was absent on 401; that was outdated documentation
+   left over from a prior implementation that minted the
+   correlationId inside the controller body — QA Checkpoint 9
+   resolved the gap by promoting the generation to middleware,
+   and QA Checkpoint 12 corrected this paragraph).
+
+   Verify the metric counters DO NOT increment on this path —
+   counter emission lives inside the service downstream of the
+   guard, so the 401 short-circuit prevents the counter
+   increment:
+
+   ```bash
+   curl -s http://localhost:3333/api/v1/metrics \
+     | grep -E '^dashboard_layout_get_total\{'
+   ```
+
+   The counter values should be IDENTICAL before and after the
+   401 request.
 
 4. **Mint a JWT** for a user with the `readUserDashboardLayout`
    and `updateUserDashboardLayout` permissions (a USER- or
@@ -722,22 +894,50 @@ produce the expected output.
    upsert failure (`reason="db_error"`). The 400 response itself
    is the verifiable signal for this step.
 
-9. **Verify `X-Correlation-ID` propagation.** Every successful and
-   unsuccessful response (excluding the 401 path tested in
-   step 3) MUST include the `X-Correlation-ID` response header.
-   The `-i` flag on curl exposes response headers; compare the
+9. **Verify `X-Correlation-ID` propagation.** EVERY response
+   from `/api/v1/user/layout` (including the 401 path tested in
+   step 3, the 404 path in step 5, the 200 paths in steps 6 and
+   7, and the 400 path in step 8) MUST include the
+   `X-Correlation-ID` response header — the Express middleware
+   in `apps/api/src/main.ts` (lines 199–213) sets the header on
+   ALL responses, including the upstream short-circuits. The
+   `-i` flag on curl exposes response headers; compare the
    returned id against the structured log lines emitted by the
-   API. The canonical filter is the literal substring
-   `[<correlationId>]` — for example, if the response header is
-   `X-Correlation-ID: ab8d3e1f-2c43-4f9a-8e5b-9f4c6d8a1b2c`, then:
+   API. Two canonical filters apply:
+   - For requests that REACHED the controller body (steps 5, 6,
+     7, but NOT the upstream short-circuits in steps 3 and 8),
+     a structured request-completion JSON log line is emitted
+     by `UserDashboardLayoutController`. Filter by the literal
+     correlationId substring:
 
-   ```bash
-   grep -F '[ab8d3e1f-2c43-4f9a-8e5b-9f4c6d8a1b2c]' api.log
-   ```
+     ```bash
+     grep -F '"correlationId":"ab8d3e1f-2c43-4f9a-8e5b-9f4c6d8a1b2c"' api.log
+     ```
 
-   should show the controller entry, the service invocation,
-   any Prisma query log lines, and the response completion log
-   line — all carrying the same correlationId.
+     should show one structured JSON log line carrying the
+     full set of required fields (`correlationId`, `userId`,
+     `route`, `method`, `statusCode`, `durationMs`, `level`,
+     `timestamp`).
+
+   - For requests that reached the service layer (regardless of
+     outcome — `found`, `not_found`, or `error`), additional
+     free-text annotation lines are prefixed with the
+     `[<correlationId>]` substring. The broader filter
+
+     ```bash
+     grep -F '[ab8d3e1f-2c43-4f9a-8e5b-9f4c6d8a1b2c]' api.log
+     ```
+
+     matches both the controller's structured JSON line AND any
+     service-layer annotations sharing the same correlationId.
+
+   For the upstream 401 / 403 / 400 short-circuits (steps 3 and
+   8), the controller-level structured JSON line is NOT emitted
+   (the handler body never runs), but the response header IS
+   emitted by the middleware — operators investigating those
+   incidents must use the response header value to correlate
+   the request with NestJS's framework-level
+   `[ExceptionsHandler]` log line via timestamp.
 
 10. **Verify all four metrics are populated** after the 401
     (step 3), 404 (step 5), 200 PATCH (step 6), 200 GET (step 7),
