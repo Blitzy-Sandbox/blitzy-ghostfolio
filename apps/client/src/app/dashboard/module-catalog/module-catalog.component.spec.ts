@@ -23,6 +23,46 @@ import { DashboardModuleDescriptor } from '../interfaces/dashboard-module.interf
 import { ModuleRegistryService } from '../module-registry.service';
 import { GfModuleCatalogComponent } from './module-catalog.component';
 
+// Short-circuit the `@ionic/angular/standalone` ESM import chain
+// before the SUT is loaded (QA Checkpoint 6 Issue #3 fix added
+// IonIcon to module-catalog.component.ts directly).
+//
+// See `module-wrapper.component.spec.ts:18-65` for the full
+// rationale; the canonical workaround is to register a `jest.mock`
+// returning a bare standalone component for `IonIcon`. Jest
+// hoists `jest.mock(...)` calls above all imports, so the SUT's
+// `import { IonIcon } from '@ionic/angular/standalone'` resolves
+// to the mock at load time and the underlying `@ionic/core`
+// ESM-only `.js` files are never touched. Editing
+// `apps/client/jest.config.ts`'s `transformIgnorePatterns` is
+// OUT OF SCOPE for this QA-fixer pass.
+jest.mock('@ionic/angular/standalone', () => {
+  const { Component: NgComponent } = jest.requireActual('@angular/core');
+  @NgComponent({
+    selector: 'ion-icon',
+    standalone: true,
+    template: ''
+  })
+  class IonIconMock {}
+  return { IonIcon: IonIconMock };
+});
+
+jest.mock('ionicons', () => ({
+  addIcons: jest.fn()
+}));
+
+jest.mock('ionicons/icons', () => ({
+  // Each named export below corresponds to one icon imported by
+  // module-catalog.component.ts. Mock values are arbitrary; tests
+  // do not assert on them.
+  addOutline: 'addOutline',
+  analyticsOutline: 'analyticsOutline',
+  barChartOutline: 'barChartOutline',
+  chatbubblesOutline: 'chatbubblesOutline',
+  listOutline: 'listOutline',
+  pieChartOutline: 'pieChartOutline'
+}));
+
 /**
  * Standalone test stub component used as the {@link
  * DashboardModuleDescriptor.component} field in valid-fixture

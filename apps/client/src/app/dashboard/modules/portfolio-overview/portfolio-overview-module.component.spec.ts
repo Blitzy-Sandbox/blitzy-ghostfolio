@@ -3,19 +3,19 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 // Initializes the global `$localize` function used by Angular i18n at
 // runtime. The companion `portfolio-overview-module.component.ts`
 // declares a `$localize`-tagged template literal at module scope (the
-// `PORTFOLIO_OVERVIEW_TITLE` constant shared by the SUT's `title` field
-// and the `PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.displayLabel`), and the
-// transitively imported `module-wrapper.component.ts` declares
-// `DRAG_ARIA_LABEL`, `DRAG_TOOLTIP`, `REMOVE_ARIA_LABEL`, and
-// `REMOVE_TOOLTIP` at module scope. Without this side-effect import,
-// simply importing the SUT class throws `ReferenceError: $localize is
-// not defined` before any test even runs. Mirrors the canonical pattern
-// from `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts:12`.
+// `PORTFOLIO_OVERVIEW_TITLE` constant referenced by the
+// `PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.displayLabel`). Without this
+// side-effect import, simply importing the SUT class throws
+// `ReferenceError: $localize is not defined` before any test even runs.
+// Mirrors the canonical pattern from
+// `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts:12`.
 import '@angular/localize/init';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 
-import { GfModuleWrapperComponent } from '../../module-wrapper/module-wrapper.component';
-import { GfPortfolioOverviewModuleComponent } from './portfolio-overview-module.component';
+import {
+  GfPortfolioOverviewModuleComponent,
+  PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR
+} from './portfolio-overview-module.component';
 
 // Mock the home-overview component module BEFORE any imports are
 // evaluated. This short-circuits the transitive ESM import chain
@@ -48,7 +48,7 @@ import { GfPortfolioOverviewModuleComponent } from './portfolio-overview-module.
 // imports.
 //
 // Mirrors the canonical pattern at
-// `apps/client/src/app/dashboard/modules/transactions/transactions-module.component.spec.ts:54-56,80-82`.
+// `apps/client/src/app/dashboard/modules/transactions/transactions-module.component.spec.ts`.
 jest.mock('../../../components/home-overview/home-overview.component', () => ({
   GfHomeOverviewComponent: class GfHomeOverviewComponentMock {}
 }));
@@ -64,10 +64,9 @@ jest.mock('../../../components/home-overview/home-overview.component', () => ({
  * brittle and slow inside a unit-test sandbox. The stub:
  *
  * 1. Carries the real component's `gf-home-overview` selector so the
- *    SUT's template binding (`<gf-home-overview />` inside the
- *    `<gf-module-wrapper>` content slot) resolves to this stub when
- *    the SUT's standalone `imports` array is overridden via
- *    `TestBed.overrideComponent(...)` below.
+ *    SUT's template binding (the bare `<gf-home-overview />`) resolves
+ *    to this stub when the SUT's standalone `imports` array is
+ *    overridden via `TestBed.overrideComponent(...)` below.
  * 2. Declares ZERO `@Input()` decorators because the real
  *    `GfHomeOverviewComponent` declares ZERO public inputs (verified
  *    in `apps/client/src/app/components/home-overview/home-overview.component.ts`
@@ -84,8 +83,12 @@ jest.mock('../../../components/home-overview/home-overview.component', () => ({
  * `GfHomeOverviewComponent` is OUT OF SCOPE here — its behaviors are
  * covered by its own dedicated spec under
  * `apps/client/src/app/components/home-overview/`. This spec focuses
- * exclusively on the wrapper contract: title rendering, icon binding,
- * remove emission propagation, and content-slot DOM presence.
+ * exclusively on the wrapper contract: the bare presentation
+ * component is rendered as the wrapper's only content (the canvas's
+ * outer `<gf-module-wrapper>` provides the chrome). Header chrome
+ * tests that previously asserted DOM elements like `.gf-module-title`
+ * were removed when the inner `<gf-module-wrapper>` was eliminated to
+ * fix the double-wrapper DOM defect (QA Checkpoint 6 Issue #1).
  */
 @Component({
   selector: 'gf-home-overview',
@@ -104,7 +107,7 @@ describe('GfPortfolioOverviewModuleComponent', () => {
     })
       .overrideComponent(GfPortfolioOverviewModuleComponent, {
         set: {
-          imports: [GfModuleWrapperComponent, MockHomeOverviewComponent]
+          imports: [MockHomeOverviewComponent]
         }
       })
       .compileComponents();
@@ -119,115 +122,25 @@ describe('GfPortfolioOverviewModuleComponent', () => {
 
   // Phase 4.1 — Component is created.
   // Smoke test that confirms the SUT instantiates with the overridden
-  // imports list (real GfModuleWrapperComponent + the
-  // MockHomeOverviewComponent stub). Because the SUT has zero service
-  // dependencies (no constructor injection, no signals beyond the
-  // signal-based output, no lifecycle hooks), a failure here is almost
-  // certainly a configuration issue (unresolved import, $localize not
-  // initialized) rather than a behaviour bug.
+  // imports list (the MockHomeOverviewComponent stub). Because the SUT
+  // has zero service dependencies (no constructor injection, no
+  // signals, no lifecycle hooks, no inputs/outputs), a failure here
+  // is almost certainly a configuration issue (unresolved import,
+  // $localize not initialized) rather than a behaviour bug.
   it('should be created', () => {
     fixture.detectChanges();
 
     expect(component).toBeTruthy();
   });
 
-  // Phase 4.2 — Title is rendered as 'Portfolio Overview' inside the
-  // module wrapper. The SUT initializes its `title` field from the
-  // module-scope `PORTFOLIO_OVERVIEW_TITLE` constant
-  // (= $localize`Portfolio Overview`), binds it via `[title]="title"`
-  // on the inner `<gf-module-wrapper>`, and the wrapper renders
-  // `{{ title() }}` inside the `<h2 class="gf-module-title">` element.
-  // This test asserts the end-to-end binding chain so the catalog row
-  // label and the rendered header label cannot drift from the
-  // `PORTFOLIO_OVERVIEW_TITLE` source-of-truth.
-  it('should render the module title as "Portfolio Overview"', () => {
-    fixture.detectChanges();
-
-    const titleElement = fixture.nativeElement.querySelector(
-      '.gf-module-title'
-    ) as HTMLElement | null;
-
-    expect(titleElement).toBeTruthy();
-    expect(titleElement?.textContent?.trim()).toBe('Portfolio Overview');
-  });
-
-  // Phase 4.3 — Title icon name matches `'analytics-outline'`. The SUT
-  // binds `[iconName]="iconName"` on the inner `<gf-module-wrapper>`,
-  // which then renders `<ion-icon [name]="iconName()" />` inside the
-  // `.gf-module-title-icon` <span>.
-  //
-  // NOTE on property vs attribute: Angular's `[name]="iconName()"`
-  // syntax compiles to `Renderer2.setProperty(element, 'name', value)`,
-  // not `setAttribute(...)`. For native elements where `name` is a
-  // reflected IDL attribute the property assignment is mirrored to the
-  // attribute automatically by the browser; for custom elements like
-  // `<ion-icon>` (registered at runtime by `@ionic/core`'s
-  // `defineCustomElements()` rather than statically known to the
-  // browser parser) the property is set on the element instance but
-  // the framework does NOT mirror it into a `name="..."` attribute. In
-  // the Jest test environment the ion-icon custom element is NOT
-  // registered (it is only registered in the production browser bundle
-  // via `provideIonicAngular()` and per-component `addIcons(...)`
-  // calls), so `getAttribute('name')` would always return `null` here.
-  // The property assertion below is the canonical contract check for
-  // the binding because the property is what Angular actually drives,
-  // regardless of whether the custom element is active. Mirrors the
-  // pattern established by `module-wrapper.component.spec.ts:142-152`
-  // and `transactions-module.component.spec.ts:290-299`.
-  it('should bind iconName "analytics-outline" to the title-icon ion-icon', () => {
-    fixture.detectChanges();
-
-    const titleIcon = fixture.nativeElement.querySelector(
-      '.gf-module-title-icon ion-icon'
-    ) as (HTMLElement & { name?: string }) | null;
-
-    expect(titleIcon).toBeTruthy();
-    expect(titleIcon?.name).toBe('analytics-outline');
-  });
-
-  // Phase 4.4 — Remove emission propagates from the inner wrapper
-  // through the SUT's own `remove` output. End-to-end emission chain
-  // exercised:
-  //   1. User clicks the `.gf-module-remove` button rendered by
-  //      `GfModuleWrapperComponent`.
-  //   2. Wrapper's `(click)="onRemove()"` handler fires.
-  //   3. `onRemove()` calls `this.remove.emit()` on the wrapper.
-  //   4. The wrapper's `(remove)` output emits.
-  //   5. The SUT's template binds `(remove)="remove.emit()"` on the
-  //      `<gf-module-wrapper>`, which forwards the event to the SUT's
-  //      own `remove` output.
-  //   6. The subscriber attached to `component.remove` increments the
-  //      counter once.
-  //
-  // Subscribes via `.subscribe(...)` (the public OutputEmitterRef API)
-  // rather than `jest.spyOn(component.remove, 'emit')` per AAP
-  // anti-pattern checklist (the OutputEmitterRef's `emit` is internal
-  // implementation detail with a different signature than rxjs
-  // Subject.next). Mirrors the pattern established by
-  // `module-wrapper.component.spec.ts:204-218` and
-  // `transactions-module.component.spec.ts:319-333`.
-  it('should emit the remove output exactly once when the wrapper remove button is clicked', () => {
-    let emissions = 0;
-    component.remove.subscribe(() => (emissions += 1));
-
-    fixture.detectChanges();
-
-    const removeBtn = fixture.nativeElement.querySelector(
-      '.gf-module-remove'
-    ) as HTMLButtonElement | null;
-    expect(removeBtn).toBeTruthy();
-
-    removeBtn?.click();
-
-    expect(emissions).toBe(1);
-  });
-
-  // Phase 4.5 — `<gf-home-overview>` element is present in the DOM.
+  // Phase 4.2 — `<gf-home-overview>` element is present in the DOM.
   // Verifies the SUT's template renders the wrapped component selector
   // by checking for the `gf-home-overview` element (resolved against
   // the `MockHomeOverviewComponent` stub via the overridden `imports`
-  // array). This is the minimal smoke test that the wrapped component
-  // is mounted at all.
+  // array). The SUT's template (`<gf-home-overview />`) reduced to a
+  // single bare element so the canvas's outer `<gf-module-wrapper>`
+  // can project the content into its `<ng-content>` slot without the
+  // double-wrapper DOM defect (QA Checkpoint 6 Issue #1).
   it('should render the wrapped <gf-home-overview> element in the DOM', () => {
     fixture.detectChanges();
 
@@ -237,51 +150,59 @@ describe('GfPortfolioOverviewModuleComponent', () => {
     expect(homeOverview).toBeTruthy();
   });
 
-  // Phase 4.6 — `<gf-home-overview>` is rendered INSIDE the wrapper's
-  // content slot. Verifies the SUT's template structure
-  // (`<gf-module-wrapper>...<gf-home-overview /></gf-module-wrapper>`)
-  // is correctly projected through the wrapper's `<ng-content />`
-  // inside the `.gf-module-content` div. This guards against a
-  // regression where the wrapped component might be rendered outside
-  // the wrapper's chrome (e.g., if the template were accidentally
-  // restructured) — the structural relationship is the contract.
-  it('should render the <gf-home-overview> element inside the .gf-module-content slot', () => {
+  // Phase 4.3 — The SUT does NOT render its own `<gf-module-wrapper>`.
+  // Pins the architectural fix from QA Checkpoint 6 Issue #1 — the
+  // module wrapper component renders ONLY the bare presentation
+  // content; chrome (header, drag handle, remove button, content
+  // slot) is rendered by the canvas-level outer `<gf-module-wrapper>`.
+  // A regression that re-introduced the inner wrapper would surface
+  // as a duplicated header at runtime; this test traps that
+  // regression at the unit-test layer.
+  it('should NOT render an inner <gf-module-wrapper> chrome', () => {
     fixture.detectChanges();
 
-    const contentSlot = fixture.nativeElement.querySelector(
-      '.gf-module-content'
-    ) as HTMLElement | null;
-    expect(contentSlot).toBeTruthy();
+    const wrappers =
+      fixture.nativeElement.querySelectorAll('gf-module-wrapper');
 
-    const homeOverview = contentSlot?.querySelector('gf-home-overview');
-
-    expect(homeOverview).toBeTruthy();
+    expect(wrappers.length).toBe(0);
   });
 
-  // Phase 4.7 — Public `iconName` field exposes `'analytics-outline'`.
-  // Defensive class-surface check that complements Phase 4.3's DOM
-  // assertion. A divergence between the class field and the rendered
-  // attribute would indicate a template-binding regression. The class
-  // field is a `readonly` static configuration value (NOT a signal)
-  // because the icon name never changes after construction —
-  // {@link PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.iconName} mirrors this
-  // value so the catalog row icon and the module header icon stay in
-  // sync.
-  it('should expose iconName as a static "analytics-outline" string', () => {
-    expect(component.iconName).toBe('analytics-outline');
+  // Phase 4.4 — Descriptor's `iconName` is `'analytics-outline'`.
+  // Defensive descriptor check that complements the wrapped-element
+  // assertion. The descriptor's `iconName` is what the canvas's
+  // `resolveIconName(item.name)` helper reads to bind onto the outer
+  // `<gf-module-wrapper [iconName]>`, so any drift between the
+  // descriptor and the catalog/header rendering would cascade through
+  // the canvas — pinning the descriptor value here keeps the source
+  // of truth honest.
+  it('should expose iconName "analytics-outline" on the registry descriptor', () => {
+    expect(PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.iconName).toBe(
+      'analytics-outline'
+    );
   });
 
-  // Phase 4.8 — Public `title` field exposes `'Portfolio Overview'`.
-  // Defensive class-surface check that complements Phase 4.2's DOM
-  // assertion. A divergence between the class field and the rendered
-  // header text would indicate a template-binding regression. The
-  // class field is initialized from the module-scope
-  // `PORTFOLIO_OVERVIEW_TITLE = $localize`Portfolio Overview`` constant
-  // so the title shares the exact same `$localize`-tagged value with
-  // {@link PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.displayLabel} (the
-  // catalog row label). A single source-of-truth constant prevents
-  // translation drift between the two surfaces.
-  it('should expose title as the localized "Portfolio Overview" string', () => {
-    expect(component.title).toBe('Portfolio Overview');
+  // Phase 4.5 — Descriptor's `displayLabel` is the localized
+  // `'Portfolio Overview'` string. Mirrors the iconName assertion at
+  // the descriptor level: the canvas's `resolveTitle(item.name)`
+  // reads the descriptor's `displayLabel` and projects it onto the
+  // outer `<gf-module-wrapper [title]>`. Pinning the value here
+  // ensures the module-scope `PORTFOLIO_OVERVIEW_TITLE = $localize`Portfolio Overview``
+  // constant is wired through to the descriptor without translation drift.
+  it('should expose displayLabel as the localized "Portfolio Overview" string on the registry descriptor', () => {
+    expect(PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.displayLabel).toBe(
+      'Portfolio Overview'
+    );
+  });
+
+  // Phase 4.6 — Descriptor's `name` is `'portfolio-overview'`. The
+  // stable identifier discriminator used by `LayoutItem.moduleId` in
+  // persisted layout documents and by
+  // `ModuleRegistryService.getByName(name)` lookups. A rename here
+  // would break every saved layout that references this module —
+  // pinning the value at the test layer prevents accidental breakage.
+  it('should expose name "portfolio-overview" on the registry descriptor', () => {
+    expect(PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.name).toBe(
+      'portfolio-overview'
+    );
   });
 });

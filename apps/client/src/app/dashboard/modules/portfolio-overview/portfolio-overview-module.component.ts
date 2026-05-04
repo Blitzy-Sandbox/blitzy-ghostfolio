@@ -1,24 +1,20 @@
 import { GfHomeOverviewComponent } from '@ghostfolio/client/components/home-overview/home-overview.component';
 
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 import { DashboardModuleDescriptor } from '../../interfaces/dashboard-module.interface';
-import { GfModuleWrapperComponent } from '../../module-wrapper/module-wrapper.component';
 
 // Module-scope i18n title constant.
 //
 // Declared at module scope (NOT as a class field with a default expression)
-// so the value can be referenced by BOTH the SUT's `title` field AND the
+// so the value can be referenced by the
 // {@link PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.displayLabel} field below.
-// A single shared `$localize`-tagged constant is the single source of
-// truth for the human-readable label that appears in two surfaces:
-//
-// 1. The module header rendered by `<gf-module-wrapper [title]="title">`
-//    inside `portfolio-overview-module.component.html`.
-// 2. The module catalog row rendered by `<gf-module-catalog>` from the
-//    descriptor's `displayLabel` (the catalog reads the registered
-//    descriptor via `ModuleRegistryService.getAll()`).
+// The `$localize`-tagged constant is the single source of truth for the
+// human-readable label that appears as the module catalog row title and
+// (via the registry-mediated `resolveTitle(item.name)` helper on the
+// canvas) as the module header title rendered by the canvas-owned outer
+// `<gf-module-wrapper>`.
 //
 // Module-scope `$localize` template literals are statically extractable by
 // the Angular i18n extractor (`ng extract-i18n`) — the same pattern used
@@ -41,8 +37,14 @@ const PORTFOLIO_OVERVIEW_TITLE = $localize`Portfolio Overview`;
  * Wraps the existing `GfHomeOverviewComponent` (selector
  * `gf-home-overview`) from
  * `@ghostfolio/client/components/home-overview/home-overview.component`
- * inside the unified `GfModuleWrapperComponent` chrome and renders it
- * as a self-contained grid module on the dashboard canvas.
+ * as the inner content of a dashboard grid module. The CHROME (header,
+ * drag handle, remove button, title icon, content slot) is provided by
+ * the canvas-level outer `<gf-module-wrapper>` declared inside
+ * `dashboard-canvas.component.html`; this component renders ONLY the
+ * inner presentation content. Keeping the chrome at the canvas level
+ * eliminates the double-wrapper DOM defect (QA Checkpoint 6 Issue #1)
+ * that previously stacked two `<gf-module-wrapper>` instances per
+ * grid cell, producing duplicated drag handles and titles.
  *
  * The wrapped `GfHomeOverviewComponent` is preserved UNCHANGED — it
  * declares no public inputs or outputs and self-loads portfolio
@@ -57,8 +59,7 @@ const PORTFOLIO_OVERVIEW_TITLE = $localize`Portfolio Overview`;
  * Per Rule 1 (AAP § 0.8.1.1), this component MUST NOT import from
  * the dashboard-canvas, module-catalog, sibling modules, or
  * services subfolders. The only allowed dashboard imports are
- * the sibling `module-wrapper` chrome (`GfModuleWrapperComponent`)
- * and the `interfaces` type definitions (`DashboardModuleDescriptor`).
+ * the `interfaces` type definitions (`DashboardModuleDescriptor`).
  * The external imports are limited to `@angular/common`, `@angular/core`,
  * and the wrapped `GfHomeOverviewComponent` from
  * `@ghostfolio/client/components/...` — all of which are preserved
@@ -77,89 +78,24 @@ const PORTFOLIO_OVERVIEW_TITLE = $localize`Portfolio Overview`;
  * Per Rule 4 (AAP § 0.8.1.4), this component MUST NOT inject
  * `UserDashboardLayoutService` or `LayoutPersistenceService` — layout
  * persistence is triggered exclusively by grid state-change events
- * subscribed at the canvas level. The wrapper merely emits a `remove`
- * event when the user activates the inner `<gf-module-wrapper>`'s
- * remove button; the canvas reconciles the gridster `dashboard` array
- * and the persistence pipeline observes that mutation through
- * gridster's change callbacks.
- *
- * Public API surface:
- *
- * - `remove` — signal-based output of `void`. Emits when the inner
- *   `<gf-module-wrapper>` propagates its remove event (the user has
- *   activated the remove button in the module header). The receiving
- *   canvas listens via `(remove)="..."` per-item.
- * - `iconName` — readonly string field bound to
- *   `[iconName]="iconName"` on `<gf-module-wrapper>`. Carries the
- *   Ionicons name for the module header icon.
- * - `title` — readonly string field initialized from the module-scope
- *   `PORTFOLIO_OVERVIEW_TITLE` constant; bound to `[title]="title"` on
- *   `<gf-module-wrapper>`.
+ * subscribed at the canvas level. The wrapper has no public outputs
+ * because the canvas-level outer wrapper exposes the remove control;
+ * the canvas listens to the canvas-level `<gf-module-wrapper>`
+ * `(remove)` output via `(remove)="removeItem(item)"` per-item.
  *
  * Reference: AAP § 0.6.1.4 (Group 4 — Angular Dashboard Feature) is
  * the canonical specification for this contract; AAP § 0.7.4 governs
- * the `gf-portfolio-overview-module` selector convention.
+ * the `gf-portfolio-overview-module` selector convention; QA
+ * Checkpoint 6 Issue #1 is the source of the wrapper-removal change.
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CommonModule, GfHomeOverviewComponent, GfModuleWrapperComponent],
+  imports: [CommonModule, GfHomeOverviewComponent],
   selector: 'gf-portfolio-overview-module',
   styleUrls: ['./portfolio-overview-module.component.scss'],
   templateUrl: './portfolio-overview-module.component.html'
 })
-export class GfPortfolioOverviewModuleComponent {
-  /**
-   * Emits `void` whenever the inner `<gf-module-wrapper>` propagates
-   * its remove event. The template binds
-   * `(remove)="remove.emit()"` on the wrapper element to forward the
-   * event up to whichever canvas instance has subscribed.
-   *
-   * Per Rule 2 (AAP § 0.8.1.2), this output is the wrapper's ONLY
-   * coupling point to the canvas — the wrapper does NOT mutate the
-   * gridster `dashboard` array and does NOT call any layout-save APIs.
-   *
-   * The signal-based `output<void>()` factory is used (per AAP § 0.1.2)
-   * instead of the legacy `EventEmitter<void>` decorator pattern — the
-   * factory provides typed emission, automatic teardown, and a more
-   * concise template-binding API.
-   */
-  public readonly remove = output<void>();
-
-  /**
-   * Ionicons icon name shown alongside the title in the module header.
-   * Must exist in the Ionicons 8.x catalog; `'analytics-outline'` is a
-   * standard analytics-themed icon. Mirrors the value of
-   * {@link PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.iconName} so the icon
-   * shown in the module header matches the icon shown in the module
-   * catalog row.
-   *
-   * Bound in the template as `[iconName]="iconName"` (NOT a signal —
-   * `<gf-module-wrapper>`'s `iconName` input accepts a plain string,
-   * Angular handles the binding without explicit signal call syntax).
-   *
-   * A plain `readonly` field (rather than a signal) is correct here
-   * because the icon name is static configuration that never changes
-   * after construction; signals are reserved for reactive state that
-   * may change at runtime.
-   */
-  public readonly iconName = 'analytics-outline';
-
-  /**
-   * Module title shown in the header. Initialized from the
-   * module-scope {@link PORTFOLIO_OVERVIEW_TITLE} constant so the
-   * title shares the exact same `$localize`-tagged value with
-   * {@link PORTFOLIO_OVERVIEW_MODULE_DESCRIPTOR.displayLabel} (the
-   * catalog row label). A single source-of-truth constant prevents
-   * translation drift between the two surfaces.
-   *
-   * Bound in the template as `[title]="title"` on `<gf-module-wrapper>`.
-   *
-   * A plain `readonly` field (rather than a signal) is correct here
-   * because the title is static configuration that never changes after
-   * construction.
-   */
-  public readonly title = PORTFOLIO_OVERVIEW_TITLE;
-}
+export class GfPortfolioOverviewModuleComponent {}
 
 /**
  * Module descriptor for the Portfolio Overview module wrapper — the
@@ -194,12 +130,13 @@ export class GfPortfolioOverviewModuleComponent {
  *   as the discriminator in `LayoutItem.moduleId` of persisted layout
  *   documents. MUST NOT be renamed without a layout-document migration
  *   step (renaming breaks every saved layout that references it).
- * - `displayLabel: PORTFOLIO_OVERVIEW_TITLE` — shares the same
- *   `$localize`-tagged constant with
- *   {@link GfPortfolioOverviewModuleComponent.title} so translations
- *   update both the catalog row and the module header consistently.
- * - `iconName: 'analytics-outline'` — Ionicons 8.x standard icon
- *   name; matches {@link GfPortfolioOverviewModuleComponent.iconName}.
+ * - `displayLabel: PORTFOLIO_OVERVIEW_TITLE` — the catalog row label
+ *   and (via the canvas's `resolveTitle(item.name)` helper) the
+ *   module header title rendered by the canvas-owned outer
+ *   `<gf-module-wrapper>`. The single `$localize`-tagged constant is
+ *   the single source of truth so translations update both surfaces
+ *   consistently.
+ * - `iconName: 'analytics-outline'` — Ionicons 8.x standard icon name.
  * - `minCols: 4`, `minRows: 3` — both ≥ 2 (Rule 6 satisfied).
  * - `defaultCols: 6 ≥ minCols: 4`, `defaultRows: 4 ≥ minRows: 3` —
  *   default placement size respects the engine-enforced minimums.

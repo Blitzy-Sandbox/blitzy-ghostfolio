@@ -25,6 +25,53 @@ import { LayoutPersistenceService } from '../services/layout-persistence.service
 import { UserDashboardLayoutService } from '../services/user-dashboard-layout.service';
 import { GfDashboardCanvasComponent } from './dashboard-canvas.component';
 
+// Short-circuit the `@ionic/angular/standalone` ESM import chain
+// transitively reached through {@link GfModuleWrapperComponent} and
+// {@link GfModuleCatalogComponent} (QA Checkpoint 6 Issue #3 fix
+// added IonIcon imports to both wrapper and catalog directly; the
+// canvas declares `<gf-module-wrapper>` in its template and opens
+// the catalog via MatDialog, so the canvas spec transitively
+// imports both modules at SUT-load time).
+//
+// See `apps/client/src/app/dashboard/module-wrapper/module-wrapper.component.spec.ts:18-65`
+// for the full rationale; this is the canonical workaround used
+// elsewhere in the codebase (e.g.,
+// `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.spec.ts:46`)
+// to bypass the `transformIgnorePatterns: ['node_modules/(?!.*.mjs$)']`
+// rule that excludes plain `.js` ESM modules from Jest's
+// transform pipeline. Editing the Jest config is OUT OF SCOPE for
+// this QA-fixer pass.
+jest.mock('@ionic/angular/standalone', () => {
+  const { Component: NgComponent } = jest.requireActual('@angular/core');
+  @NgComponent({
+    selector: 'ion-icon',
+    standalone: true,
+    template: ''
+  })
+  class IonIconMock {}
+  return { IonIcon: IonIconMock };
+});
+
+jest.mock('ionicons', () => ({
+  addIcons: jest.fn()
+}));
+
+jest.mock('ionicons/icons', () => ({
+  // Union of icons referenced by module-wrapper.component.ts and
+  // module-catalog.component.ts (the two transitively-loaded SUTs
+  // that consume `ionicons/icons` named exports through their
+  // `addIcons({ ... })` constructor calls).
+  addOutline: 'addOutline',
+  analyticsOutline: 'analyticsOutline',
+  appsOutline: 'appsOutline',
+  barChartOutline: 'barChartOutline',
+  chatbubblesOutline: 'chatbubblesOutline',
+  closeOutline: 'closeOutline',
+  listOutline: 'listOutline',
+  pieChartOutline: 'pieChartOutline',
+  reorderThreeOutline: 'reorderThreeOutline'
+}));
+
 /**
  * Unit-test spec for {@link GfDashboardCanvasComponent} — the central
  * orchestrator component of the modular dashboard refactor (AAP
@@ -938,6 +985,139 @@ describe('GfDashboardCanvasComponent', () => {
   // collision resolution if the heuristic picks an overlapping cell,
   // but the in-memory `dashboard()` reflects the canvas-computed
   // initial coordinates.
+  // ===========================================================
+  // Test 15 — Hydration suppresses redundant gridStateChange$ emissions
+  //           via content-based signature comparison.
+  // ===========================================================
+  // QA Checkpoint 6 Issue #2 / Rule 4 (strict reading):
+  // gridster's `itemChangeCallback` fires when items are
+  // programmatically added during hydration (each placement is
+  // internally an "item change" event). The SUT mitigates this
+  // with the `lastPersistedSignature` field — captured immediately
+  // after `dashboard.set(items)` in `hydrateFromLayout`, then
+  // compared against the current canvas signature on every
+  // gridster callback. When equal (= "the layout has not changed
+  // since the last hydration/save"), the callback early-returns
+  // WITHOUT emitting on `gridStateChange$`, so no PATCH fires
+  // for hydration-synthetic callbacks OR for no-op user gestures
+  // (e.g., drag-then-drop-at-same-position). When different
+  // (= "the layout has actually changed"), the signature is
+  // updated and the callback emits to drive the persistence
+  // pipeline.
+  //
+  // The mechanism is content-based and timing-independent — a
+  // deliberate replacement of the prior `setTimeout(0)`-based
+  // `isHydrating` flag, which empirically failed to suppress in
+  // real browser environments where gridster's callbacks
+  // dispatched AFTER the next macrotask drain (QA Checkpoint 6
+  // browser re-verification observed a redundant PATCH firing
+  // ~500 ms after every page load with a saved layout).
+  //
+  // We assert three contracts:
+  //   1. Hydration produces NO emissions, even when synthetic
+  //      gridster callbacks (`options.itemChangeCallback` /
+  //      `options.itemResizeCallback`) fire AFTER hydration with
+  //      no actual dashboard mutation in between.
+  //   2. A real layout mutation (mutating `dashboard()` to a
+  //      different position/size, then firing the callback) DOES
+  //      emit, demonstrating the suppression is narrowly scoped
+  //      to "no actual change" rather than blanket-blocking
+  //      callbacks.
+  //   3. After a successful real-mutation emission, a follow-up
+  //      callback for the SAME (now-current) state suppresses
+  //      again — the signature has been updated to the new state,
+  //      so the next no-op callback for the same state is treated
+  //      as a no-op.
+  it('should suppress gridStateChange$ emissions when dashboard signature has not changed (Rule 4 strict, Issue #2)', () => {
+    fixture.detectChanges();
+
+    // Capture the persistence binding's `changes$` observable BEFORE
+    // hydration completes — in real usage the canvas has already
+    // bound the pipeline at ngOnInit, so the test fixture mirrors
+    // that ordering.
+    const bindArg: PersistenceBindingArg = bindSpy.mock.calls[0][0];
+    let emissionCount = 0;
+    const subscription = bindArg.changes$.subscribe(() => {
+      emissionCount += 1;
+    });
+
+    // Drive the GET with SAMPLE_LAYOUT — `hydrateFromLayout` runs
+    // synchronously inside `subscribe`, mutates `dashboard.set(items)`,
+    // and captures `lastPersistedSignature` from the post-hydration
+    // canvas state.
+    userDashboardLayoutSubject.next(SAMPLE_LAYOUT);
+    userDashboardLayoutSubject.complete();
+    fixture.detectChanges();
+
+    // Hydration produced one item. `gridStateChange$` MUST NOT have
+    // emitted, even though gridster v21 fires `itemChangeCallback` for
+    // placed items — the signature gate suppresses callbacks where the
+    // canvas's projected `LayoutData` matches `lastPersistedSignature`.
+    expect(component.dashboard()).toHaveLength(1);
+    expect(emissionCount).toBe(0);
+
+    // Contract 1a: synthesize a hydration-time gridster callback by
+    // directly invoking `options.itemChangeCallback`. Since the
+    // dashboard hasn't actually changed since hydration, the current
+    // signature equals `lastPersistedSignature` — the call MUST be a
+    // no-op (no emission).
+    component.options.itemChangeCallback?.(
+      component.dashboard()[0],
+      undefined as any
+    );
+    expect(emissionCount).toBe(0);
+
+    // Contract 1b: same defense-in-depth for `itemResizeCallback`.
+    component.options.itemResizeCallback?.(
+      component.dashboard()[0],
+      undefined as any
+    );
+    expect(emissionCount).toBe(0);
+
+    // Contract 2: simulate a real user drag — mutate the dashboard to
+    // a different position, THEN fire the callback. The signature
+    // gate will detect the changed signature and emit.
+    //
+    // We synthesize the mutation via `component.dashboard.update(...)`
+    // (the public signal API) since gridster mutates items in place
+    // via direct property assignment in real browsers; the spec
+    // double simulates this by setting a new array reference with
+    // the moved coordinates.
+    component.dashboard.update((items) =>
+      items.map((it, idx) => (idx === 0 ? { ...it, x: 5, y: 0 } : it))
+    );
+    component.options.itemChangeCallback?.(
+      component.dashboard()[0],
+      undefined as any
+    );
+    expect(emissionCount).toBe(1);
+
+    // Contract 3: a follow-up callback for the SAME (now-current)
+    // state must suppress again. The signature gate updated
+    // `lastPersistedSignature` to the post-emit state above, so this
+    // callback's current signature now matches and is suppressed.
+    component.options.itemChangeCallback?.(
+      component.dashboard()[0],
+      undefined as any
+    );
+    expect(emissionCount).toBe(1);
+
+    // Contract 2 again, for resize: another real mutation (resize)
+    // produces another emission.
+    component.dashboard.update((items) =>
+      items.map((it, idx) =>
+        idx === 0 ? { ...it, cols: it.cols + 1, rows: it.rows + 1 } : it
+      )
+    );
+    component.options.itemResizeCallback?.(
+      component.dashboard()[0],
+      undefined as any
+    );
+    expect(emissionCount).toBe(2);
+
+    subscription.unsubscribe();
+  });
+
   it('should place successive added modules at the next available row (computeNextAvailableY)', () => {
     fixture.detectChanges();
     userDashboardLayoutSubject.next(null);

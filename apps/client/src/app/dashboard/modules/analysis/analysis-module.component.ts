@@ -18,7 +18,6 @@ import {
   DestroyRef,
   inject,
   OnInit,
-  output,
   signal
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -26,23 +25,22 @@ import { MatCardModule } from '@angular/material/card';
 import { DataSource, SymbolProfile } from '@prisma/client';
 
 import { DashboardModuleDescriptor } from '../../interfaces/dashboard-module.interface';
-import { GfModuleWrapperComponent } from '../../module-wrapper/module-wrapper.component';
 
 // Module-scope i18n title constant (AAP agent prompt Phase 2 — i18n
 // String Constants).
 //
 // Declared at module scope (NOT as a class field with a default
-// expression) so the value can be referenced by BOTH the SUT's `title`
-// field AND the {@link ANALYSIS_MODULE_DESCRIPTOR.displayLabel} field
-// below. A single shared `$localize`-tagged constant is the single
-// source of truth for the human-readable label that appears in two
-// surfaces:
-//
-// 1. The module header rendered by `<gf-module-wrapper [title]="title">`
-//    inside `analysis-module.component.html`.
-// 2. The module catalog row rendered by `<gf-module-catalog>` from the
-//    descriptor's `displayLabel` (the catalog reads the registered
-//    descriptor via `ModuleRegistryService.getAll()`).
+// expression) so the value remains the single source of truth for
+// the catalog row label rendered by `<gf-module-catalog>` (via the
+// exported `ANALYSIS_MODULE_DESCRIPTOR.displayLabel`) and for the
+// module header label rendered by the canvas's outer
+// `<gf-module-wrapper [title]="resolveTitle(item.name)">` (the canvas
+// reads the descriptor's `displayLabel` via
+// `ModuleRegistryService.getByName(...)`). A single shared constant
+// guarantees translation updates propagate to both surfaces
+// consistently — there is no risk of header label drifting from
+// catalog label because both reference the same `$localize`-tagged
+// template literal.
 //
 // Module-scope `$localize` template literals are statically extractable
 // by the Angular i18n extractor (`ng extract-i18n`) — the same pattern
@@ -64,11 +62,28 @@ const ANALYSIS_TITLE = $localize`Analysis`;
  *
  * Wraps the existing analysis presentation primitives —
  * {@link GfBenchmarkComparatorComponent}, {@link GfInvestmentChartComponent},
- * and {@link GfValueComponent} — inside the unified
- * {@link GfModuleWrapperComponent} chrome and renders them as a
- * self-contained grid module on the dashboard canvas. The wrapper
- * orchestrates data fetching for the wrapped primitives via
- * {@link DataService} and {@link UserService}.
+ * and {@link GfValueComponent} — and renders them as a self-contained
+ * grid module on the dashboard canvas. The wrapper orchestrates data
+ * fetching for the wrapped primitives via {@link DataService} and
+ * {@link UserService}.
+ *
+ * Per QA Checkpoint 6 Issue #1 (the double-wrapper DOM defect), this
+ * wrapper renders the analysis content BARE — without its own
+ * `<gf-module-wrapper>` chrome around the content. The chrome (header
+ * with drag handle, title, title icon, and remove button, plus the
+ * `<ng-content>` slot for the body) is rendered by the canvas-level
+ * outer `<gf-module-wrapper>` declared in
+ * `dashboard-canvas.component.html`. The canvas's outer wrapper binds
+ * `[iconName]="resolveIconName(item.name)"`,
+ * `[title]="resolveTitle(item.name)"`, and
+ * `(remove)="removeItem(item)"` — both `resolveIconName` and
+ * `resolveTitle` read directly from the module registry's
+ * `ANALYSIS_MODULE_DESCRIPTOR.iconName` and `displayLabel`, so the
+ * module wrapper component itself does NOT carry duplicate chrome
+ * fields (no `iconName` field, no `title` field, no `remove` output).
+ * This eliminates the duplicated header that previously rendered both
+ * the inner wrapper's chrome AND the outer wrapper's chrome stacked on
+ * top of each other.
  *
  * Per AAP § 0.7.3, the wrapper EXCLUDES the source page's
  * experimental-features menu, AI prompt copy-to-clipboard, Duck.ai
@@ -86,13 +101,11 @@ const ANALYSIS_TITLE = $localize`Analysis`;
  * Per Rule 1 (AAP § 0.8.1.1), this component MUST NOT import from
  * the dashboard-canvas, module-catalog, sibling modules, or
  * services subfolders. The only allowed dashboard imports are
- * the sibling `module-wrapper` chrome ({@link GfModuleWrapperComponent})
- * and the `interfaces` type definitions
- * ({@link DashboardModuleDescriptor}). External imports are limited
- * to the wrapped presentation components, the existing data-fetching
- * services (preserved unchanged per the AAP boundaries section),
- * `@angular/common`, `@angular/core`, `@angular/material/card`, and
- * the Prisma type bindings.
+ * the `interfaces` type definitions ({@link DashboardModuleDescriptor}).
+ * External imports are limited to the wrapped presentation components,
+ * the existing data-fetching services (preserved unchanged per the
+ * AAP boundaries section), `@angular/common`, `@angular/core`,
+ * `@angular/material/card`, and the Prisma type bindings.
  *
  * Per Rule 2 (AAP § 0.8.1.2), this component MUST NOT declare
  * layout-coordinate inputs/outputs (`x`, `y`, `cols`, `rows`).
@@ -109,16 +122,17 @@ const ANALYSIS_TITLE = $localize`Analysis`;
  * method calls `dataService.putUserSetting(...)` which is a
  * USER-PREFERENCE save (the user's selected benchmark profile)
  * and is conceptually distinct from the dashboard's grid-layout
- * persistence — it is therefore allowed under Rule 4.
+ * persistence — it is therefore allowed under Rule 4. After the
+ * inner-wrapper removal in QA Checkpoint 6 Issue #1, this wrapper
+ * no longer exposes a `remove` output either; the canvas-level
+ * outer `<gf-module-wrapper>` handles the remove button click
+ * directly via its `(remove)="removeItem(item)"` binding.
  *
  * Public API surface (members enumerated in the schema's
  * `exports.members_exposed` list):
  *
- * - `remove` — signal-based output of `void`. Emits when the inner
- *   `<gf-module-wrapper>` propagates its remove event (the user has
- *   activated the remove button in the module header).
- * - `iconName`, `precision`, `title` — readonly static configuration
- *   bound to the inner wrapper / value components.
+ * - `precision` — readonly static configuration bound to the inner
+ *   `gf-value` components.
  * - `benchmark`, `benchmarkDataItems`, `benchmarks`, `investments`,
  *   `isLoadingBenchmarkComparator`, `isLoadingInvestmentChart`,
  *   `performance`, `performanceDataItems`,
@@ -173,7 +187,6 @@ const ANALYSIS_TITLE = $localize`Analysis`;
     CommonModule,
     GfBenchmarkComparatorComponent,
     GfInvestmentChartComponent,
-    GfModuleWrapperComponent,
     GfValueComponent,
     MatCardModule
   ],
@@ -184,37 +197,6 @@ const ANALYSIS_TITLE = $localize`Analysis`;
 })
 export class GfAnalysisModuleComponent implements OnInit {
   /**
-   * Emits `void` whenever the inner `<gf-module-wrapper>` propagates
-   * its remove event. The template binds
-   * `(remove)="remove.emit()"` on the wrapper element to forward the
-   * event up to whichever canvas instance has subscribed.
-   *
-   * Per Rule 2 (AAP § 0.8.1.2), this output is the wrapper's ONLY
-   * coupling point to the canvas — the wrapper does NOT mutate the
-   * gridster `dashboard` array and does NOT call any layout-save
-   * APIs.
-   *
-   * The signal-based `output<void>()` factory is used (per AAP
-   * § 0.1.2) instead of the legacy `EventEmitter<void>` decorator
-   * pattern.
-   */
-  public readonly remove = output<void>();
-
-  /**
-   * Ionicons icon name shown alongside the title in the module
-   * header. `'bar-chart-outline'` is a standard Ionicons 8.x icon
-   * appropriate for an analysis surface. Mirrors the value of
-   * {@link ANALYSIS_MODULE_DESCRIPTOR.iconName} so the icon shown
-   * in the module header matches the icon shown in the module
-   * catalog row.
-   *
-   * Bound in the template as `[iconName]="iconName"` (NOT a signal
-   * — `<gf-module-wrapper>`'s `iconName` input accepts a plain
-   * string).
-   */
-  public readonly iconName = 'bar-chart-outline';
-
-  /**
    * Number of fraction digits for currency formatting in the inner
    * `gf-value` components. The source page additionally adjusts
    * this to `0` on mobile when amounts exceed 1M
@@ -223,19 +205,6 @@ export class GfAnalysisModuleComponent implements OnInit {
    * are out of scope per AAP § 0.7.3.
    */
   public readonly precision = 2;
-
-  /**
-   * Module title shown in the header. Initialized from the
-   * module-scope {@link ANALYSIS_TITLE} constant so the title shares
-   * the exact same `$localize`-tagged value with
-   * {@link ANALYSIS_MODULE_DESCRIPTOR.displayLabel} (the catalog row
-   * label). A single source-of-truth constant prevents translation
-   * drift between the two surfaces.
-   *
-   * Bound in the template as `[title]="title"` on
-   * `<gf-module-wrapper>`.
-   */
-  public readonly title = ANALYSIS_TITLE;
 
   // ----- State signals -----
 
@@ -671,12 +640,12 @@ export class GfAnalysisModuleComponent implements OnInit {
  *   documents. MUST NOT be renamed without a layout-document
  *   migration step (renaming breaks every saved layout that
  *   references it).
- * - `displayLabel: ANALYSIS_TITLE` — shares the same
- *   `$localize`-tagged constant with
- *   {@link GfAnalysisModuleComponent.title} so translations update
- *   both the catalog row and the module header consistently.
+ * - `displayLabel: ANALYSIS_TITLE` — read by the canvas's
+ *   `resolveTitle(item.name)` helper and bound onto the outer
+ *   `<gf-module-wrapper [title]>` chrome.
  * - `iconName: 'bar-chart-outline'` — Ionicons 8.x standard icon
- *   name; matches {@link GfAnalysisModuleComponent.iconName}.
+ *   name; read by the canvas's `resolveIconName(item.name)` helper
+ *   and bound onto the outer `<gf-module-wrapper [iconName]>` chrome.
  * - `minCols: 6`, `minRows: 4` — both ≥ 2 (Rule 6 satisfied).
  * - `defaultCols: 8 ≥ minCols: 6`, `defaultRows: 6 ≥ minRows: 4` —
  *   default placement size respects the engine-enforced minimums.

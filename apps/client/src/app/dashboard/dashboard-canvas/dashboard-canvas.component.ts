@@ -670,6 +670,86 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
   private readonly gridStateChange$ = new Subject<void>();
 
   /**
+   * Canonical JSON signature of the most recently hydrated-or-persisted
+   * layout. Acts as a content-based suppression key for redundant
+   * persistence emissions during hydration AND for no-op user gestures
+   * (e.g., drag-then-drag-back-to-same-position). QA Checkpoint 6
+   * Issue #2 / Rule 4 strict reading per AAP § 0.8.1.4.
+   *
+   * **The problem this field fixes**: `hydrateFromLayout(...)` calls
+   * `this.dashboard.set(items)` which Angular reflects to gridster
+   * via the `[options]`/`<gridster-item>` re-rendering. Gridster's
+   * v21 implementation invokes `itemChangeCallback` for each placed
+   * item as it reconciles the new array — these callbacks are
+   * INDISTINGUISHABLE at the engine level from a real user
+   * drag-stop. Without suppression, those engine-internal callbacks
+   * call {@link onItemChange} (and possibly {@link onItemResize}),
+   * which emit on {@link gridStateChange$}, which the
+   * {@link LayoutPersistenceService} debounces 500 ms then PATCHes
+   * back to the server with byte-identical content — a redundant
+   * idempotent write triggered purely by the GET response, NOT by
+   * any user action.
+   *
+   * **Why this violates Rule 4**: Rule 4 (AAP § 0.8.1.4) mandates
+   * that "Layout persistence MUST be triggered exclusively by grid
+   * state change events (drag, resize, add, remove)". Hydration is
+   * none of those — it is an internal data-loading flow. The strict
+   * reading of Rule 4 requires hydration callbacks to be suppressed.
+   *
+   * **How this guard works (content-based, timing-independent)**:
+   * `hydrateFromLayout(...)` updates this signature AFTER mutating
+   * {@link dashboard}, capturing the canonical JSON projection of
+   * the freshly-hydrated layout. {@link onItemChange} and
+   * {@link onItemResize} compute the CURRENT signature on every
+   * gridster callback and compare it to this stored value:
+   *
+   *   - **Equal**: the dashboard's persisted shape has not changed
+   *     since the last hydration/save — the callback is a synthetic
+   *     reconciliation event (or a no-op user gesture, e.g., drag
+   *     then drop at the same position). Early-return WITHOUT
+   *     emitting on {@link gridStateChange$}.
+   *   - **Different**: the dashboard has actually changed —
+   *     real drag/resize. Update this signature to the new value
+   *     (so the NEXT callback for the same state suppresses) and
+   *     emit on {@link gridStateChange$} to drive persistence.
+   *
+   * Similarly, {@link addModule} and {@link removeItem} update
+   * this signature after mutating {@link dashboard} so that any
+   * gridster callbacks fired by the engine in response to the
+   * mutation are suppressed (the user-driven mutation has already
+   * emitted on {@link gridStateChange$} from inside the method
+   * body — gridster's follow-up callback would be redundant).
+   *
+   * **Why content-based instead of timing-based**: the prior
+   * implementation used a boolean `isHydrating` flag cleared on the
+   * next macrotask via `setTimeout(0)`. Empirical browser testing
+   * (QA Checkpoint 6 re-verification) revealed that gridster v21
+   * fires `itemChangeCallback` AFTER the `setTimeout(0)` macrotask
+   * drains in real browser environments, so the timing-based guard
+   * failed to suppress and a redundant PATCH still fired ~500 ms
+   * after every page load. Content-based suppression is
+   * timing-independent: it consults the actual data shape rather
+   * than a temporal window, so it correctly suppresses regardless
+   * of WHEN gridster's callbacks happen to dispatch.
+   *
+   * **Initial value `''`**: differs from `serializeEmptyLayout()`'s
+   * stable signature (`'{"items":[],"version":1}'`) so the first
+   * legitimate state transition (empty -> first item) computes
+   * different signatures and emits. Tests for first-visit blank
+   * canvas paths therefore behave correctly.
+   *
+   * **Why a plain string (not a signal)**: this field is read
+   * synchronously inside gridster callbacks and never participates
+   * in template binding. Using a signal would add unnecessary
+   * change-detection overhead with no observable benefit. The
+   * field is intentionally NOT exposed via a getter — it is an
+   * internal implementation detail of the suppression mechanism
+   * and consumers (tests, the persistence service) interact with
+   * the canvas only through {@link gridStateChange$} emissions.
+   */
+  private lastPersistedSignature = '';
+
+  /**
    * On init:
    *
    * 1. Bind the persistence pipeline (FIRST, before the GET) so any
@@ -859,6 +939,16 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
     // array reference for OnPush change detection — `.push(...)` would
     // mutate in place and skip change detection.
     this.dashboard.update((items) => [...items, newItem]);
+
+    // Capture the post-add signature BEFORE emitting on
+    // `gridStateChange$`. Gridster will fire `itemChangeCallback` for
+    // the new item as it registers with the engine — that callback
+    // would re-emit on `gridStateChange$` if the signature gate in
+    // {@link onItemChange} found a difference. Capturing here ensures
+    // the gate's comparison shows "no change" for the engine's
+    // synthetic registration callback. The user-driven add itself is
+    // persisted via the explicit `gridStateChange$.next()` below.
+    this.lastPersistedSignature = this.computeLayoutSignature();
     this.gridStateChange$.next();
   }
 
@@ -873,6 +963,14 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
     this.dashboard.update((items) =>
       items.filter((existing) => existing !== item)
     );
+
+    // Capture the post-remove signature BEFORE emitting on
+    // `gridStateChange$`. Symmetric to {@link addModule} — gridster
+    // may fire reconciliation callbacks for items adjacent to the
+    // removed cell, and those callbacks must be suppressed by the
+    // signature gate. The user-driven remove itself is persisted via
+    // the explicit `gridStateChange$.next()` below.
+    this.lastPersistedSignature = this.computeLayoutSignature();
     this.gridStateChange$.next();
   }
 
@@ -989,6 +1087,15 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
       // All three paths render blank and auto-open the catalog per
       // Rule 10 (AAP § 0.8.1.10).
       this.dashboard.set([]);
+      // Capture the empty-canvas signature as the persistence
+      // baseline. Without this, the first user-driven gesture on a
+      // blank canvas would compare its current signature against
+      // the field's initial `''` value — which differs from the
+      // empty-layout signature `{"items":[],"version":1}` — and the
+      // gate would treat the empty-state engine callback as a real
+      // change. Capturing here ensures the gate's first comparison
+      // is against the correctly-projected empty layout.
+      this.lastPersistedSignature = this.computeLayoutSignature();
       this.openCatalog();
       return;
     }
@@ -1024,6 +1131,28 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
     });
 
     this.dashboard.set(items);
+
+    // Capture the hydrated layout's canonical signature as the
+    // persistence baseline. Subsequent gridster engine callbacks
+    // (`itemChangeCallback` / `itemResizeCallback`) fired during the
+    // engine's reconciliation of the new dashboard array will compute
+    // an identical signature in {@link onItemChange} /
+    // {@link onItemResize} and early-return without emitting on
+    // {@link gridStateChange$} — suppressing the redundant PATCH that
+    // would otherwise fire 500 ms after every GET that returned a
+    // populated layout (QA Checkpoint 6 Issue #2 / Rule 4 strict
+    // reading per AAP § 0.8.1.4). See
+    // {@link lastPersistedSignature} for the full suppression
+    // contract; see {@link computeLayoutSignature} for the canonical
+    // projection used to compare states.
+    //
+    // **Why capture AFTER `dashboard.set(items)`**: the signature
+    // reflects the projected `LayoutData` shape derived from
+    // `dashboard()`, so it must be computed AFTER the signal write
+    // has settled. Computing before would yield a stale signature
+    // (the previous dashboard's projection), defeating the
+    // comparison gate.
+    this.lastPersistedSignature = this.computeLayoutSignature();
   }
 
   /**
@@ -1056,6 +1185,35 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
    * the gridster API surface.
    */
   private onItemChange(): void {
+    // Content-based suppression gate. Compare the current layout
+    // signature against the most recently persisted/hydrated baseline:
+    //
+    //   - **Equal**: the dashboard's persisted shape has not changed
+    //     since the last hydration/save. The callback is either
+    //     synthetic reconciliation from the engine (fired during
+    //     {@link hydrateFromLayout}, {@link addModule}, or
+    //     {@link removeItem}) or a no-op user gesture
+    //     (drag-then-drop-at-same-position). Either way: silently
+    //     drop to honor Rule 4 (AAP § 0.8.1.4) which mandates that
+    //     persistence triggers EXCLUSIVELY from user-initiated grid
+    //     events that ACTUALLY change the layout.
+    //   - **Different**: the dashboard has actually changed — real
+    //     drag. Update the baseline (so any follow-up engine
+    //     callback for the same state suppresses) and emit on
+    //     {@link gridStateChange$} to drive the persistence pipeline.
+    //
+    // See {@link lastPersistedSignature} for the full suppression
+    // contract; see {@link computeLayoutSignature} for the canonical
+    // projection used to compare states. The mechanism is
+    // timing-independent and replaces the prior `setTimeout(0)`-based
+    // `isHydrating` flag, which empirically failed to suppress in
+    // real browser environments where gridster's callbacks dispatch
+    // AFTER the next macrotask drain.
+    const currentSignature = this.computeLayoutSignature();
+    if (currentSignature === this.lastPersistedSignature) {
+      return;
+    }
+    this.lastPersistedSignature = currentSignature;
     this.ngZone.run(() => {
       this.dashboardTelemetryService.measureChange();
       this.gridStateChange$.next();
@@ -1073,6 +1231,17 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
    * that method's JSDoc for the defense-in-depth rationale.
    */
   private onItemResize(): void {
+    // Content-based suppression gate symmetric to {@link onItemChange}.
+    // Resize-stop callbacks fired during hydration, addModule, or
+    // removeItem reconciliation suppress (signature unchanged); only
+    // genuine user-initiated resize gestures that actually change the
+    // dashboard's persisted shape emit on {@link gridStateChange$}.
+    // See {@link lastPersistedSignature} for the full contract.
+    const currentSignature = this.computeLayoutSignature();
+    if (currentSignature === this.lastPersistedSignature) {
+      return;
+    }
+    this.lastPersistedSignature = currentSignature;
     this.ngZone.run(() => {
       this.dashboardTelemetryService.measureResize();
       this.gridStateChange$.next();
@@ -1109,6 +1278,43 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
       })),
       version: 1
     };
+  }
+
+  /**
+   * Computes a canonical JSON signature of the current dashboard
+   * layout for content-based change detection in the persistence
+   * suppression gate ({@link lastPersistedSignature}). Wraps
+   * {@link serializeLayout} with `JSON.stringify` so the result is a
+   * deterministic string suitable for `===` comparison.
+   *
+   * **Determinism**: `serializeLayout` projects `dashboard()` items
+   * into a fixed-key-order object (`cols`, `moduleId`, `rows`, `x`,
+   * `y` — alphabetical) so `JSON.stringify` produces a stable,
+   * byte-identical string for equivalent layouts. The `version: 1`
+   * field is also included so the signature naturally changes if
+   * the schema version is ever bumped (a forward-compatibility
+   * guarantee).
+   *
+   * **Performance**: `JSON.stringify` of a small object (≤ 50 items
+   * per AAP § 0.8.3 cap, each with five integer-or-short-string
+   * fields) is sub-millisecond and well below the 100 ms drag/resize
+   * SLO (AAP § 0.6.3.3). Computing the signature on every gridster
+   * callback adds negligible overhead while completely eliminating
+   * the redundant-PATCH defect (Issue #2).
+   *
+   * **Why NOT a deep-equal helper**: lodash-style deep equality
+   * would avoid the JSON stringify cost but adds a runtime
+   * dependency or a 50-line custom helper, both of which are
+   * excessive for a payload that's bounded to ~50 items × 5 fields.
+   * `JSON.stringify` is built-in, deterministic for our shape, and
+   * trivially debuggable (the signature is human-readable).
+   *
+   * @returns canonical JSON string representation of the current
+   *   `LayoutData`. The empty-canvas signature is
+   *   `'{"items":[],"version":1}'`.
+   */
+  private computeLayoutSignature(): string {
+    return JSON.stringify(this.serializeLayout());
   }
 
   /**

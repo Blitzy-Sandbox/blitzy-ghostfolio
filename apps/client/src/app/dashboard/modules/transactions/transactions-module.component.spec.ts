@@ -5,23 +5,23 @@ import { Component, Input } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 // Initializes the global `$localize` function used by Angular i18n at
 // runtime. The companion `transactions-module.component.ts` declares
-// `$localize`-tagged template literals at module scope (the
-// `TRANSACTIONS_TITLE` constant shared by the SUT's `title` field and
-// the `TRANSACTIONS_MODULE_DESCRIPTOR.displayLabel`), and the
-// transitively imported `module-wrapper.component.ts` declares
-// `DRAG_ARIA_LABEL`, `DRAG_TOOLTIP`, `REMOVE_ARIA_LABEL`, and
-// `REMOVE_TOOLTIP` at module scope. Without this side-effect import,
-// simply importing the SUT class throws `ReferenceError: $localize is
-// not defined` before any test even runs. Mirrors the canonical pattern
-// from `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts:12`.
+// a `$localize`-tagged template literal at module scope (the
+// `TRANSACTIONS_TITLE` constant referenced by the
+// `TRANSACTIONS_MODULE_DESCRIPTOR.displayLabel`). Without this
+// side-effect import, simply importing the SUT class throws
+// `ReferenceError: $localize is not defined` before any test even
+// runs. Mirrors the canonical pattern from
+// `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts:12`.
 import '@angular/localize/init';
 import { MatTableDataSource } from '@angular/material/table';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { of } from 'rxjs';
 
 import { UserService } from '../../../services/user/user.service';
-import { GfModuleWrapperComponent } from '../../module-wrapper/module-wrapper.component';
-import { GfTransactionsModuleComponent } from './transactions-module.component';
+import {
+  GfTransactionsModuleComponent,
+  TRANSACTIONS_MODULE_DESCRIPTOR
+} from './transactions-module.component';
 
 // Mock the UserService module BEFORE any imports are evaluated. This
 // short-circuits the transitive ESM import chain
@@ -219,7 +219,7 @@ describe('GfTransactionsModuleComponent', () => {
     })
       .overrideComponent(GfTransactionsModuleComponent, {
         set: {
-          imports: [GfModuleWrapperComponent, MockActivitiesTableComponent]
+          imports: [MockActivitiesTableComponent]
         }
       })
       .compileComponents();
@@ -235,110 +235,23 @@ describe('GfTransactionsModuleComponent', () => {
   // Phase 5.1 — Component is created.
   // Smoke test that confirms the SUT instantiates with the mocked
   // dependency injection chain (DataService, UserService) and the
-  // overridden imports list (real GfModuleWrapperComponent + the
-  // MockActivitiesTableComponent stub). A failure here is almost
-  // certainly a configuration issue (missing provider, unresolved
-  // import, $localize not initialized) rather than a behaviour bug.
+  // overridden imports list (the MockActivitiesTableComponent stub).
+  // A failure here is almost certainly a configuration issue (missing
+  // provider, unresolved import, $localize not initialized) rather
+  // than a behaviour bug.
   it('should be created', () => {
     fixture.detectChanges();
 
     expect(component).toBeTruthy();
   });
 
-  // Phase 5.2 — Title is rendered as 'Transactions' inside the module
-  // wrapper. The SUT initializes its `title` field from the
-  // module-scope `TRANSACTIONS_TITLE` constant (= $localize`Transactions`),
-  // binds it via `[title]="title"` on the inner
-  // `<gf-module-wrapper>`, and the wrapper renders `{{ title() }}`
-  // inside the `<h2 class="gf-module-title">` element. This test
-  // asserts the end-to-end binding chain so the catalog row label and
-  // the rendered header label cannot drift from the
-  // `TRANSACTIONS_TITLE` source-of-truth.
-  it('should render the module title as "Transactions"', () => {
-    fixture.detectChanges();
-
-    const titleElement = fixture.nativeElement.querySelector(
-      '.gf-module-title'
-    ) as HTMLElement | null;
-
-    expect(titleElement).toBeTruthy();
-    expect(titleElement?.textContent?.trim()).toBe('Transactions');
-  });
-
-  // Phase 5.3 — Title icon name matches `'list-outline'`. The SUT
-  // binds `[iconName]="iconName"` on the inner `<gf-module-wrapper>`,
-  // which then renders `<ion-icon [name]="iconName()" />` inside the
-  // `.gf-module-title-icon` <span>.
-  //
-  // NOTE on property vs attribute: Angular's `[name]="iconName()"`
-  // syntax compiles to `Renderer2.setProperty(element, 'name', value)`,
-  // not `setAttribute(...)`. For native elements where `name` is a
-  // reflected IDL attribute the property assignment is mirrored to the
-  // attribute automatically by the browser; for custom elements like
-  // `<ion-icon>` (registered at runtime by `@ionic/core`'s
-  // `defineCustomElements()` rather than statically known to the
-  // browser parser) the property is set on the element instance but
-  // the framework does NOT mirror it into a `name="..."` attribute. In
-  // the Jest test environment the ion-icon custom element is NOT
-  // registered (it is only registered in the production browser bundle
-  // via `provideIonicAngular()` and per-component `addIcons(...)`
-  // calls), so `getAttribute('name')` would always return `null` here.
-  // The property assertion below is the canonical contract check for
-  // the binding because the property is what Angular actually drives,
-  // regardless of whether the custom element is active. Mirrors the
-  // pattern established by `module-wrapper.component.spec.ts:142-152`.
-  it('should bind iconName "list-outline" to the title-icon ion-icon', () => {
-    fixture.detectChanges();
-
-    const titleIcon = fixture.nativeElement.querySelector(
-      '.gf-module-title-icon ion-icon'
-    ) as (HTMLElement & { name?: string }) | null;
-
-    expect(titleIcon).toBeTruthy();
-    expect(titleIcon?.name).toBe('list-outline');
-  });
-
-  // Phase 5.4 — Remove emission propagates from the inner wrapper
-  // through the SUT's own `remove` output. End-to-end emission chain
-  // exercised:
-  //   1. User clicks the `.gf-module-remove` button rendered by
-  //      `GfModuleWrapperComponent`.
-  //   2. Wrapper's `(click)="onRemove()"` handler fires.
-  //   3. `onRemove()` calls `this.remove.emit()` on the wrapper.
-  //   4. The wrapper's `(remove)` output emits.
-  //   5. The SUT's template binds `(remove)="remove.emit()"` on the
-  //      `<gf-module-wrapper>`, which forwards the event to the SUT's
-  //      own `remove` output.
-  //   6. The subscriber attached to `component.remove` increments the
-  //      counter once.
-  //
-  // Subscribes via `.subscribe(...)` (the public OutputEmitterRef API)
-  // rather than `jest.spyOn(component.remove, 'emit')` per AAP
-  // anti-pattern checklist (the OutputEmitterRef's `emit` is internal
-  // implementation detail with a different signature than rxjs Subject.next).
-  it('should emit the remove output exactly once when the wrapper remove button is clicked', () => {
-    let emissions = 0;
-    component.remove.subscribe(() => (emissions += 1));
-
-    fixture.detectChanges();
-
-    const removeBtn = fixture.nativeElement.querySelector(
-      '.gf-module-remove'
-    ) as HTMLButtonElement | null;
-    expect(removeBtn).toBeTruthy();
-
-    removeBtn?.click();
-
-    expect(emissions).toBe(1);
-  });
-
-  // Phase 5.5 — `DataService.fetchActivities` is called from
+  // Phase 5.2 — `DataService.fetchActivities` is called from
   // `ngOnInit`. Confirms the SUT subscribes to the activities feed on
   // first render. The exact arguments are NOT asserted here (the SUT
   // calls `fetchActivities({})` with an empty options object as the
   // v1 read-only contract per AAP § 0.7.3 — a future change to add
   // pagination/sort would refactor this contract); only that the call
-  // happens. Together with Phase 5.6 this proves the data-flow path
+  // happens. Together with Phase 5.3 this proves the data-flow path
   // from service mock through the `activities` signal to the rendered
   // table.
   it('should call DataService.fetchActivities on init', () => {
@@ -347,7 +260,7 @@ describe('GfTransactionsModuleComponent', () => {
     expect(mockDataService.fetchActivities).toHaveBeenCalled();
   });
 
-  // Phase 5.6 — `<gf-activities-table>` element renders after data
+  // Phase 5.3 — `<gf-activities-table>` element renders after data
   // loads. Verifies the `@if (activities()) { ... }` template guard
   // in `transactions-module.component.html`. Because the default
   // mock `fetchActivities` returns `of({ activities: [], count: 0 })`
@@ -368,7 +281,7 @@ describe('GfTransactionsModuleComponent', () => {
     expect(activitiesTable).toBeTruthy();
   });
 
-  // Phase 5.7 — Before data loads, `<gf-activities-table>` does NOT
+  // Phase 5.4 — Before data loads, `<gf-activities-table>` does NOT
   // render. Verifies the `@if (activities()) { ... }` falsy-branch.
   // Drops the default fixture and rebuilds a fresh test bed where
   // `fetchActivities` returns an Observable that NEVER emits (`of()`
@@ -392,7 +305,7 @@ describe('GfTransactionsModuleComponent', () => {
     })
       .overrideComponent(GfTransactionsModuleComponent, {
         set: {
-          imports: [GfModuleWrapperComponent, MockActivitiesTableComponent]
+          imports: [MockActivitiesTableComponent]
         }
       })
       .compileComponents();
@@ -407,7 +320,7 @@ describe('GfTransactionsModuleComponent', () => {
     expect(activitiesTable).toBeNull();
   });
 
-  // Phase 5.8 — Read-only flags propagate to the inner table.
+  // Phase 5.5 — Read-only flags propagate to the inner table.
   // Defensive guard for the AAP § 0.7.3 OUT-OF-SCOPE constraint that
   // the v1 wrapper renders the activities table strictly read-only:
   // no editing, deletion, export, filtering, or click-into-details.
@@ -433,5 +346,57 @@ describe('GfTransactionsModuleComponent', () => {
     expect(tableInstance.hasPermissionToExportActivities).toBe(false);
     expect(tableInstance.hasPermissionToFilterByType).toBe(false);
     expect(tableInstance.hasPermissionToOpenDetails).toBe(false);
+  });
+
+  // Phase 5.6 — The SUT does NOT render its own `<gf-module-wrapper>`.
+  // Pins the architectural fix from QA Checkpoint 6 Issue #1 — the
+  // module wrapper component renders ONLY the bare presentation
+  // content; chrome (header, drag handle, remove button, content
+  // slot) is rendered by the canvas-level outer `<gf-module-wrapper>`.
+  // A regression that re-introduced the inner wrapper would surface
+  // as a duplicated header at runtime; this test traps that
+  // regression at the unit-test layer.
+  it('should NOT render an inner <gf-module-wrapper> chrome', () => {
+    fixture.detectChanges();
+
+    const wrappers =
+      fixture.nativeElement.querySelectorAll('gf-module-wrapper');
+
+    expect(wrappers.length).toBe(0);
+  });
+
+  // Phase 5.7 — Descriptor's `iconName` is `'list-outline'`. Defensive
+  // descriptor check that complements the wrapped-element assertion.
+  // The descriptor's `iconName` is what the canvas's
+  // `resolveIconName(item.name)` helper reads to bind onto the outer
+  // `<gf-module-wrapper [iconName]>`, so any drift between the
+  // descriptor and the catalog/header rendering would cascade through
+  // the canvas — pinning the descriptor value here keeps the source
+  // of truth honest.
+  it('should expose iconName "list-outline" on the registry descriptor', () => {
+    expect(TRANSACTIONS_MODULE_DESCRIPTOR.iconName).toBe('list-outline');
+  });
+
+  // Phase 5.8 — Descriptor's `displayLabel` is the localized
+  // `'Transactions'` string. Mirrors the iconName assertion at the
+  // descriptor level: the canvas's `resolveTitle(item.name)` reads
+  // the descriptor's `displayLabel` and projects it onto the outer
+  // `<gf-module-wrapper [title]>`. Pinning the value here ensures
+  // the module-scope `TRANSACTIONS_TITLE = $localize`Transactions``
+  // constant is wired through to the descriptor without translation
+  // drift.
+  it('should expose displayLabel as the localized "Transactions" string on the registry descriptor', () => {
+    expect(TRANSACTIONS_MODULE_DESCRIPTOR.displayLabel).toBe('Transactions');
+  });
+
+  // Phase 5.9 — Descriptor's `name` is `'transactions'`. The stable
+  // identifier discriminator used by `LayoutItem.moduleId` in
+  // persisted layout documents and by
+  // `ModuleRegistryService.getByName(name)` lookups. A rename here
+  // would break every saved layout that references the transactions
+  // module — pinning the value at the test layer prevents accidental
+  // breakage.
+  it('should expose name "transactions" on the registry descriptor', () => {
+    expect(TRANSACTIONS_MODULE_DESCRIPTOR.name).toBe('transactions');
   });
 });

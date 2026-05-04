@@ -23,21 +23,21 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 // Initializes the global `$localize` function used by Angular i18n at
 // runtime. The companion `analysis-module.component.ts` declares a
 // `$localize`-tagged template literal at module scope (the
-// `ANALYSIS_TITLE` constant shared by the SUT's `title` field and the
-// `ANALYSIS_MODULE_DESCRIPTOR.displayLabel`), and the transitively
-// imported `module-wrapper.component.ts` declares `DRAG_ARIA_LABEL`,
-// `DRAG_TOOLTIP`, `REMOVE_ARIA_LABEL`, and `REMOVE_TOOLTIP` at module
-// scope. Without this side-effect import, simply importing the SUT
-// class throws `ReferenceError: $localize is not defined` before any
-// test even runs. Mirrors the canonical pattern from
+// `ANALYSIS_TITLE` constant referenced by the
+// `ANALYSIS_MODULE_DESCRIPTOR.displayLabel`). Without this side-effect
+// import, simply importing the SUT class throws
+// `ReferenceError: $localize is not defined` before any test even
+// runs. Mirrors the canonical pattern from
 // `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts:12`.
 import '@angular/localize/init';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { BehaviorSubject, of } from 'rxjs';
 
 import { UserService } from '../../../services/user/user.service';
-import { GfModuleWrapperComponent } from '../../module-wrapper/module-wrapper.component';
-import { GfAnalysisModuleComponent } from './analysis-module.component';
+import {
+  ANALYSIS_MODULE_DESCRIPTOR,
+  GfAnalysisModuleComponent
+} from './analysis-module.component';
 
 // Mock the benchmark-comparator component module BEFORE any imports
 // are evaluated. This short-circuits the transitive ESM import chain
@@ -182,8 +182,10 @@ jest.mock('../../../services/user/user.service', () => ({
  * Per the AAP folder spec: deep behavioral testing of `GfValueComponent`
  * is OUT OF SCOPE here — its behaviors are covered by its own
  * dedicated spec under `libs/ui/src/lib/value/`. This spec focuses
- * exclusively on the wrapper contract: title rendering, icon binding,
- * remove emission propagation, and content-slot DOM presence.
+ * exclusively on the wrapper contract: the bare presentation primitives
+ * are rendered as the wrapper's only content (the canvas's outer
+ * `<gf-module-wrapper>` provides the chrome) and the data-fetching
+ * pipeline is correctly wired through `DataService` and `UserService`.
  */
 @Component({
   selector: 'gf-value',
@@ -381,7 +383,6 @@ describe('GfAnalysisModuleComponent', () => {
       .overrideComponent(GfAnalysisModuleComponent, {
         set: {
           imports: [
-            GfModuleWrapperComponent,
             MockBenchmarkComparatorComponent,
             MockInvestmentChartComponent,
             MockValueComponent
@@ -401,133 +402,36 @@ describe('GfAnalysisModuleComponent', () => {
   // Phase 5.1 — Component is created.
   // Smoke test that confirms the SUT instantiates with the mocked
   // dependency injection chain (DataService, UserService) and the
-  // overridden imports list (real GfModuleWrapperComponent + the
-  // three Mock components). A failure here is almost certainly a
-  // configuration issue (missing provider, unresolved import,
-  // $localize not initialized) rather than a behaviour bug.
+  // overridden imports list (the three Mock components). A failure
+  // here is almost certainly a configuration issue (missing provider,
+  // unresolved import, $localize not initialized) rather than a
+  // behaviour bug.
   it('should be created', () => {
     fixture.detectChanges();
 
     expect(component).toBeTruthy();
   });
 
-  // Phase 5.2 — Title is rendered as 'Analysis' inside the module
-  // wrapper. The SUT initializes its `title` field from the
-  // module-scope `ANALYSIS_TITLE` constant (= $localize`Analysis`),
-  // binds it via `[title]="title"` on the inner `<gf-module-wrapper>`,
-  // and the wrapper renders `{{ title() }}` inside the
-  // `<h2 class="gf-module-title">` element. This test asserts the
-  // end-to-end binding chain so the catalog row label and the
-  // rendered header label cannot drift from the `ANALYSIS_TITLE`
-  // source-of-truth.
-  it('should render the module title as "Analysis"', () => {
-    fixture.detectChanges();
-
-    const titleElement = fixture.nativeElement.querySelector(
-      '.gf-module-title'
-    ) as HTMLElement | null;
-
-    expect(titleElement).toBeTruthy();
-    expect(titleElement?.textContent?.trim()).toBe('Analysis');
+  // Phase 5.2 — Public class surface (defensive coverage of static
+  // configuration). Asserts that `component.precision` exposes the
+  // expected literal value (`2`) without requiring `detectChanges()`
+  // to render the template. The `precision` field is bound via
+  // `[precision]="precision"` on the first two `gf-value` cards
+  // (Total amount, Change with currency effect); a regression in
+  // this field would mean number formatting drifted out of spec.
+  it('should expose precision as 2', () => {
+    expect(component.precision).toBe(2);
   });
 
-  // Phase 5.3 — Title icon name matches `'bar-chart-outline'`. The
-  // SUT binds `[iconName]="iconName"` on the inner
-  // `<gf-module-wrapper>`, which then renders
-  // `<ion-icon [name]="iconName()" />` inside the
-  // `.gf-module-title-icon` <span>.
-  //
-  // NOTE on property vs attribute: Angular's `[name]="iconName()"`
-  // syntax compiles to `Renderer2.setProperty(element, 'name', value)`,
-  // not `setAttribute(...)`. For native elements where `name` is a
-  // reflected IDL attribute the property assignment is mirrored to
-  // the attribute automatically by the browser; for custom elements
-  // like `<ion-icon>` (registered at runtime by `@ionic/core`'s
-  // `defineCustomElements()` rather than statically known to the
-  // browser parser) the property is set on the element instance but
-  // the framework does NOT mirror it into a `name="..."` attribute.
-  // In the Jest test environment the ion-icon custom element is NOT
-  // registered (it is only registered in the production browser
-  // bundle via `provideIonicAngular()` and per-component
-  // `addIcons(...)` calls), so `getAttribute('name')` would always
-  // return `null` here. The property assertion below is the canonical
-  // contract check for the binding because the property is what
-  // Angular actually drives, regardless of whether the custom element
-  // is active. Mirrors the pattern established by
-  // `module-wrapper.component.spec.ts:142-152` and
-  // `transactions-module.component.spec.ts:290-299`.
-  it('should bind iconName "bar-chart-outline" to the title-icon ion-icon', () => {
-    fixture.detectChanges();
-
-    const titleIcon = fixture.nativeElement.querySelector(
-      '.gf-module-title-icon ion-icon'
-    ) as (HTMLElement & { name?: string }) | null;
-
-    expect(titleIcon).toBeTruthy();
-    expect(titleIcon?.name).toBe('bar-chart-outline');
-  });
-
-  // Phase 5.4 — Remove emission propagates from the inner wrapper
-  // through the SUT's own `remove` output. End-to-end emission chain
-  // exercised:
-  //   1. User clicks the `.gf-module-remove` button rendered by
-  //      `GfModuleWrapperComponent`.
-  //   2. Wrapper's `(click)="onRemove()"` handler fires.
-  //   3. `onRemove()` calls `this.remove.emit()` on the wrapper.
-  //   4. The wrapper's `(remove)` output emits.
-  //   5. The SUT's template binds `(remove)="remove.emit()"` on the
-  //      `<gf-module-wrapper>`, which forwards the event to the
-  //      SUT's own `remove` output.
-  //   6. The subscriber attached to `component.remove` increments
-  //      the counter once.
-  //
-  // Subscribes via `.subscribe(...)` (the public OutputEmitterRef
-  // API) rather than `jest.spyOn(component.remove, 'emit')` per AAP
-  // anti-pattern checklist (the OutputEmitterRef's `emit` is internal
-  // implementation detail with a different signature than
-  // rxjs Subject.next).
-  it('should emit the remove output exactly once when the wrapper remove button is clicked', () => {
-    let emissions = 0;
-    component.remove.subscribe(() => (emissions += 1));
-
-    fixture.detectChanges();
-
-    const removeBtn = fixture.nativeElement.querySelector(
-      '.gf-module-remove'
-    ) as HTMLButtonElement | null;
-    expect(removeBtn).toBeTruthy();
-
-    removeBtn?.click();
-
-    expect(emissions).toBe(1);
-  });
-
-  // Phase 5.5 — Public class surface (defensive coverage of static
-  // configuration). Asserts that `component.iconName` and
-  // `component.title` expose the expected literal values without
-  // requiring `detectChanges()` to render the template. A regression
-  // in either field would mean the descriptor / catalog / header
-  // labels have drifted out of sync and would surface here before
-  // the slower DOM-binding tests.
-  it('should expose iconName as "bar-chart-outline"', () => {
-    expect(component.iconName).toBe('bar-chart-outline');
-  });
-
-  it('should expose title as the localized "Analysis" string', () => {
-    expect(component.title).toBe('Analysis');
-  });
-
-  // Phase 5.6 — Analysis content remains hidden until performance
+  // Phase 5.3 — Analysis content remains hidden until performance
   // data loads. Validates the `@if (performance() && user())` guard
-  // in `analysis-module.component.html` line 6: no analysis
+  // in `analysis-module.component.html` line 1: no analysis
   // presentation primitives are rendered before both signals are
   // truthy. The default test bed initializes `userStateChanged$` to
   // `null`, so ngOnInit's early-return branch fires
   // (`if (!state?.user) { return; }`) and neither `user.set()` nor
   // `update()` is invoked — leaving `performance()` undefined and
-  // the guard falsy. The wrapper chrome (header, drag handle, title,
-  // remove button) IS rendered (asserted by Phases 5.2-5.4); only
-  // the inner content is suppressed.
+  // the guard falsy.
   it('should NOT render analysis content before performance data loads', () => {
     fixture.detectChanges();
 
@@ -544,7 +448,7 @@ describe('GfAnalysisModuleComponent', () => {
     expect(valueElements.length).toBe(0);
   });
 
-  // Phase 5.7 — Analysis content renders once performance and user
+  // Phase 5.4 — Analysis content renders once performance and user
   // data load. End-to-end data-flow chain exercised:
   //   1. `userStateChanged$.next({ user: {...} })` publishes a user
   //      state to the BehaviorSubject. Because `next(...)` is called
@@ -603,22 +507,7 @@ describe('GfAnalysisModuleComponent', () => {
     expect(valueElements.length).toBe(3);
   });
 
-  // Phase 5.8 — `<gf-module-wrapper>` is the structural root of the
-  // SUT's template. Asserts that the wrapper is the outermost
-  // element rendered by the SUT (verified against
-  // `analysis-module.component.html` line 1) — a regression in this
-  // structure would mean a different chrome / drag handle layout
-  // and would break the gridster integration documented at
-  // `module-wrapper.component.ts:64-67`.
-  it('should render <gf-module-wrapper> as the structural root', () => {
-    fixture.detectChanges();
-
-    const wrapper = fixture.nativeElement.querySelector('gf-module-wrapper');
-
-    expect(wrapper).toBeTruthy();
-  });
-
-  // Phase 5.9 — `DataService.fetchInfo` is called from `ngOnInit`.
+  // Phase 5.5 — `DataService.fetchInfo` is called from `ngOnInit`.
   // Confirms that the SUT captures the cached `benchmarks` list at
   // initialization. The synchronous `fetchInfo()` returns the
   // singleton-cached info payload that was fetched once at app
@@ -629,10 +518,10 @@ describe('GfAnalysisModuleComponent', () => {
     expect(mockDataService.fetchInfo).toHaveBeenCalled();
   });
 
-  // Phase 5.10 — `DataService.fetchPortfolioPerformance` is called
+  // Phase 5.6 — `DataService.fetchPortfolioPerformance` is called
   // when a user is published. Confirms that the
   // `userService.stateChanged` subscription correctly propagates
-  // through to the `update()` method. Together with Phase 5.7 this
+  // through to the `update()` method. Together with Phase 5.4 this
   // proves the full data-flow path: stateChanged subscription →
   // user.set() → update() → fetchPortfolioPerformance() →
   // performance.set() → @if guard truthy → DOM render.
@@ -653,7 +542,7 @@ describe('GfAnalysisModuleComponent', () => {
     expect(mockDataService.fetchPortfolioPerformance).toHaveBeenCalled();
   });
 
-  // Phase 5.11 — No `fetchPortfolioPerformance` call before a user
+  // Phase 5.7 — No `fetchPortfolioPerformance` call before a user
   // is published. Defensive guard for the SUT's early-return branch
   // in the `userService.stateChanged` subscription
   // (`if (!state?.user) { return; }`). When the BehaviorSubject's
@@ -664,5 +553,72 @@ describe('GfAnalysisModuleComponent', () => {
     fixture.detectChanges();
 
     expect(mockDataService.fetchPortfolioPerformance).not.toHaveBeenCalled();
+  });
+
+  // Phase 5.8 — The SUT does NOT render its own `<gf-module-wrapper>`.
+  // Pins the architectural fix from QA Checkpoint 6 Issue #1 — the
+  // module wrapper component renders ONLY the bare presentation
+  // content; chrome (header, drag handle, remove button, content
+  // slot) is rendered by the canvas-level outer `<gf-module-wrapper>`.
+  // A regression that re-introduced the inner wrapper would surface
+  // as a duplicated header at runtime; this test traps that
+  // regression at the unit-test layer.
+  it('should NOT render an inner <gf-module-wrapper> chrome', () => {
+    // Publish a user so the @if guard evaluates truthy and the
+    // analysis content renders — this maximizes coverage by
+    // ensuring the assertion holds even when the module is
+    // fully populated, not just in the empty-state.
+    userStateChanged$.next({
+      user: {
+        settings: {
+          baseCurrency: 'USD',
+          colorScheme: 'LIGHT',
+          isRestrictedView: false,
+          locale: 'en-US'
+        }
+      }
+    });
+
+    fixture.detectChanges();
+
+    const wrappers =
+      fixture.nativeElement.querySelectorAll('gf-module-wrapper');
+
+    expect(wrappers.length).toBe(0);
+  });
+
+  // Phase 5.9 — Descriptor's `iconName` is `'bar-chart-outline'`.
+  // Defensive descriptor check that complements the wrapped-element
+  // assertion. The descriptor's `iconName` is what the canvas's
+  // `resolveIconName(item.name)` helper reads to bind onto the outer
+  // `<gf-module-wrapper [iconName]>`, so any drift between the
+  // descriptor and the catalog/header rendering would cascade through
+  // the canvas — pinning the descriptor value here keeps the source
+  // of truth honest.
+  it('should expose iconName "bar-chart-outline" on the registry descriptor', () => {
+    expect(ANALYSIS_MODULE_DESCRIPTOR.iconName).toBe('bar-chart-outline');
+  });
+
+  // Phase 5.10 — Descriptor's `displayLabel` is the localized
+  // `'Analysis'` string. Mirrors the iconName assertion at the
+  // descriptor level: the canvas's `resolveTitle(item.name)` reads
+  // the descriptor's `displayLabel` and projects it onto the outer
+  // `<gf-module-wrapper [title]>`. Pinning the value here ensures
+  // the module-scope `ANALYSIS_TITLE = $localize`Analysis``
+  // constant is wired through to the descriptor without translation
+  // drift.
+  it('should expose displayLabel as the localized "Analysis" string on the registry descriptor', () => {
+    expect(ANALYSIS_MODULE_DESCRIPTOR.displayLabel).toBe('Analysis');
+  });
+
+  // Phase 5.11 — Descriptor's `name` is `'analysis'`. The stable
+  // identifier discriminator used by `LayoutItem.moduleId` in
+  // persisted layout documents and by
+  // `ModuleRegistryService.getByName(name)` lookups. A rename here
+  // would break every saved layout that references the analysis
+  // module — pinning the value at the test layer prevents accidental
+  // breakage.
+  it('should expose name "analysis" on the registry descriptor', () => {
+    expect(ANALYSIS_MODULE_DESCRIPTOR.name).toBe('analysis');
   });
 });

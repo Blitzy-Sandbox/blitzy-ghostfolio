@@ -8,6 +8,18 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import {
+  analyticsOutline,
+  appsOutline,
+  barChartOutline,
+  chatbubblesOutline,
+  closeOutline,
+  listOutline,
+  pieChartOutline,
+  reorderThreeOutline
+} from 'ionicons/icons';
 
 // Module-scope i18n string constants (AAP § 0.7.4 selector convention,
 // AAP agent prompt Phase 2 — i18n String Constants).
@@ -57,9 +69,10 @@ const REMOVE_TOOLTIP = $localize`Remove module`;
  * Per Rule 1 (AAP § 0.8.1.1), the wrapper does NOT import from any other
  * dashboard subfolder (`dashboard-canvas/`, `module-catalog/`, `modules/`,
  * `services/`). Its dependency surface is limited to `@angular/common`,
- * `@angular/core`, and the two Angular Material modules used in the
- * template. This keeps the wrapper independently testable and free from
- * circular grid-layer references.
+ * `@angular/core`, the two Angular Material modules used in the template,
+ * `@ionic/angular/standalone` (for `IonIcon`), and `ionicons`/`ionicons/icons`
+ * (for the icon registration). This keeps the wrapper independently
+ * testable and free from circular grid-layer references.
  *
  * The header drag-handle button carries the `.gf-module-drag-handle` CSS
  * class, which is the gridster `draggable.handle` selector configured in
@@ -68,6 +81,39 @@ const REMOVE_TOOLTIP = $localize`Remove module`;
  * `apps/client/src/app/dashboard/modules/<name>/` consume this wrapper
  * via the `gf-module-wrapper` selector and project their content
  * presentation component into `<ng-content />`.
+ *
+ * **Ionicon registration** (QA Checkpoint 6 Issue #3): the constructor
+ * calls `addIcons(...)` once per component instance to register every
+ * Ionicons SVG that any rendered `<ion-icon>` element on this wrapper
+ * may reference. Registration is keyed by the camelCase symbol name
+ * (e.g., `closeOutline`) which the Ionicons runtime maps to the
+ * kebab-case `name` attribute on the rendered element
+ * (`close-outline`). Without this registration, the production browser
+ * bundle silently logs `[Ionicons Warning]: Could not load icon with
+ * name "close-outline"` and renders the literal text instead of the
+ * SVG glyph — a visual-fidelity regression observed in the QA report.
+ *
+ * The set of registered icons covers:
+ *   - {@link closeOutline} — fixed-name icon on the remove button.
+ *   - {@link reorderThreeOutline} — fixed-name icon on the drag handle.
+ *   - {@link appsOutline} — the default value of {@link iconName} when
+ *     a wrapper is rendered without an explicit override.
+ *   - The five module-descriptor icons that the canvas's
+ *     `resolveIconName(item.name)` helper may bind to {@link iconName}
+ *     when a registered module is rendered in the wrapper:
+ *     {@link analyticsOutline} (portfolio-overview),
+ *     {@link pieChartOutline} (holdings),
+ *     {@link listOutline} (transactions),
+ *     {@link barChartOutline} (analysis),
+ *     {@link chatbubblesOutline} (chat).
+ *
+ * `addIcons` registers names in a process-global Ionicons registry —
+ * each name need only be registered once per page-lifetime. Calling
+ * `addIcons(...)` from EVERY wrapper instance is idempotent (the
+ * registry deduplicates by name). The duplication has zero runtime
+ * cost beyond the initial registration; the safety margin from
+ * registering at every consumer site outweighs the negligible
+ * overhead.
  *
  * Public API surface:
  *
@@ -87,7 +133,7 @@ const REMOVE_TOOLTIP = $localize`Remove module`;
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CommonModule, MatButtonModule, MatTooltipModule],
+  imports: [CommonModule, IonIcon, MatButtonModule, MatTooltipModule],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-module-wrapper',
   styleUrls: ['./module-wrapper.component.scss'],
@@ -152,6 +198,33 @@ export class GfModuleWrapperComponent {
    * and on keyboard focus per Material 3 affordance guidelines.
    */
   protected readonly removeTooltip = REMOVE_TOOLTIP;
+
+  /**
+   * Constructor — registers every Ionicons SVG referenced anywhere in
+   * this wrapper's template (or that {@link iconName} could possibly
+   * be bound to by the canvas). See the class-level JSDoc "Ionicon
+   * registration" section for the full rationale and the QA Checkpoint
+   * 6 Issue #3 finding that motivates this registration.
+   *
+   * The map keys MUST be the camelCase symbol names (e.g.,
+   * `closeOutline`); the Ionicons runtime converts these into the
+   * corresponding kebab-case `name` attributes (`close-outline`)
+   * during rendering. Importing each symbol from `ionicons/icons`
+   * preserves tree-shakeability — only the listed icons end up in
+   * the production bundle.
+   */
+  public constructor() {
+    addIcons({
+      analyticsOutline,
+      appsOutline,
+      barChartOutline,
+      chatbubblesOutline,
+      closeOutline,
+      listOutline,
+      pieChartOutline,
+      reorderThreeOutline
+    });
+  }
 
   /**
    * Bound to the remove button's `(click)` handler in the template.

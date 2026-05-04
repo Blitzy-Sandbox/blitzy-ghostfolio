@@ -16,6 +16,16 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import {
+  addOutline,
+  analyticsOutline,
+  barChartOutline,
+  chatbubblesOutline,
+  listOutline,
+  pieChartOutline
+} from 'ionicons/icons';
 
 import { ModuleRegistryService } from '../module-registry.service';
 
@@ -98,6 +108,7 @@ const SEARCH_ARIA_LABEL = $localize`Search modules`;
   imports: [
     CommonModule,
     FormsModule,
+    IonIcon,
     MatButtonModule,
     MatDialogModule,
     MatFormFieldModule,
@@ -237,6 +248,58 @@ export class GfModuleCatalogComponent {
    * `viewContainerRef.createComponent(descriptor.component)`.
    */
   private readonly moduleRegistry = inject(ModuleRegistryService);
+
+  /**
+   * Constructor — registers every Ionicons SVG referenced by the
+   * catalog's rendered template (QA Checkpoint 6 Issue #3).
+   *
+   * The catalog renders three categories of `<ion-icon>` elements:
+   *
+   * 1. The five module-descriptor icons in the `<mat-list-item>`
+   *    rows: each row's `<ion-icon [name]="module.iconName" />`
+   *    binding resolves to one of the descriptor `iconName` values
+   *    declared in the registry. The current registered descriptors
+   *    use {@link analyticsOutline} (portfolio-overview),
+   *    {@link pieChartOutline} (holdings),
+   *    {@link listOutline} (transactions),
+   *    {@link barChartOutline} (analysis), and
+   *    {@link chatbubblesOutline} (chat) — see
+   *    `apps/client/src/app/dashboard/dashboard.providers.ts` for the
+   *    canonical registry-bootstrap site.
+   *
+   * 2. The `add-outline` icon on the per-row "Add" button. This
+   *    replaces the previous `<mat-icon>add</mat-icon>` rendering
+   *    which was visually rendering as the literal text "add" (the
+   *    QA-observed text-fallback failure mode) when the Material
+   *    icon font failed to apply. Using `<ion-icon>` keeps the
+   *    catalog's icon strategy consistent with the rest of the
+   *    Ghostfolio shell (per the existing pattern in
+   *    `apps/client/src/app/components/portfolio-performance/portfolio-performance.component.ts:51`).
+   *
+   * Without registration, the production browser bundle silently
+   * logs `[Ionicons Warning]: Could not load icon with name "..."`
+   * and renders the literal name text instead of the SVG glyph
+   * (the visual-fidelity regression observed in the QA report).
+   *
+   * `addIcons` registers names in a process-global Ionicons registry
+   * — each name need only be registered once per page-lifetime, and
+   * subsequent registrations of the same name are idempotent. The
+   * catalog registers its own icons defensively even though the
+   * `GfModuleWrapperComponent` constructor also registers most of
+   * the same icons; the cost of the extra `addIcons` call is
+   * negligible and the safety margin against future template-render
+   * order changes outweighs it.
+   */
+  public constructor() {
+    addIcons({
+      addOutline,
+      analyticsOutline,
+      barChartOutline,
+      chatbubblesOutline,
+      listOutline,
+      pieChartOutline
+    });
+  }
 
   /**
    * Builds a localized aria-label for a per-row Add button —

@@ -10,27 +10,28 @@ import {
   DestroyRef,
   OnInit,
   inject,
-  output,
   signal
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatTableDataSource } from '@angular/material/table';
 
 import { DashboardModuleDescriptor } from '../../interfaces/dashboard-module.interface';
-import { GfModuleWrapperComponent } from '../../module-wrapper/module-wrapper.component';
 
 // Module-scope i18n title constant (AAP agent prompt Phase 2 — i18n
 // String Constants).
 //
-// Declared at module scope (NOT as a class field) so the value can be
-// shared between the SUT's `title` field (rendered inside the module
-// header by `<gf-module-wrapper>`) and the exported
-// `TRANSACTIONS_MODULE_DESCRIPTOR.displayLabel` (rendered as the catalog
-// row label by `<gf-module-catalog>`). A single shared constant
-// guarantees that translation updates propagate to both surfaces
-// consistently — there is no risk of the header label drifting from
-// the catalog label because both are wired to the same
-// `$localize`-tagged template literal.
+// Declared at module scope (NOT as a class field) so the value remains
+// the single source of truth for the catalog row label rendered by
+// `<gf-module-catalog>` (via the exported
+// `TRANSACTIONS_MODULE_DESCRIPTOR.displayLabel`) and for the module
+// header label rendered by the canvas's outer
+// `<gf-module-wrapper [title]="resolveTitle(item.name)">` (the canvas
+// reads the descriptor's `displayLabel` via
+// `ModuleRegistryService.getByName(...)`). A single shared constant
+// guarantees translation updates propagate to both surfaces
+// consistently — there is no risk of header label drifting from
+// catalog label because both reference the same `$localize`-tagged
+// template literal.
 //
 // Module-scope `$localize` template literals are statically extractable
 // by the Angular i18n extractor (`ng extract-i18n`), the same pattern
@@ -47,12 +48,29 @@ const TRANSACTIONS_TITLE = $localize`Transactions`;
  * Transactions (a.k.a. Activities) dashboard module wrapper.
  *
  * Wraps the existing `GfActivitiesTableComponent` from
- * `@ghostfolio/ui/activities-table` inside the unified
- * `GfModuleWrapperComponent` chrome and renders it as a self-contained
+ * `@ghostfolio/ui/activities-table` and renders it as a self-contained
  * grid module on the dashboard canvas. On `ngOnInit`, the wrapper
  * fetches activities once via `DataService.fetchActivities({})` and
  * pipes the resulting array into a `MatTableDataSource<Activity>` for
  * the inner table.
+ *
+ * Per QA Checkpoint 6 Issue #1 (the double-wrapper DOM defect), this
+ * wrapper renders the activities table BARE — without its own
+ * `<gf-module-wrapper>` chrome around the content. The chrome (header
+ * with drag handle, title, title icon, and remove button, plus the
+ * `<ng-content>` slot for the body) is rendered by the canvas-level
+ * outer `<gf-module-wrapper>` declared in
+ * `dashboard-canvas.component.html`. The canvas's outer wrapper binds
+ * `[iconName]="resolveIconName(item.name)"`,
+ * `[title]="resolveTitle(item.name)"`, and
+ * `(remove)="removeItem(item)"` — both `resolveIconName` and
+ * `resolveTitle` read directly from the module registry's
+ * `TRANSACTIONS_MODULE_DESCRIPTOR.iconName` and `displayLabel`, so the
+ * module wrapper component itself does NOT carry duplicate chrome
+ * fields (no `iconName` field, no `title` field, no `remove` output).
+ * This eliminates the duplicated header that previously rendered both
+ * the inner wrapper's chrome AND the outer wrapper's chrome stacked on
+ * top of each other.
  *
  * Per AAP § 0.7.3 (Out-of-scope), this wrapper exposes a strictly
  * read-only view of activities — all editing, deletion, export,
@@ -67,8 +85,7 @@ const TRANSACTIONS_TITLE = $localize`Transactions`;
  *
  * Per Rule 1 (AAP § 0.8.1.1), this component MUST NOT import from the
  * dashboard-canvas, module-catalog, sibling modules, or services
- * subfolders. The only allowed dashboard imports are the sibling
- * `module-wrapper` chrome (`GfModuleWrapperComponent`) and the
+ * subfolders. The only allowed dashboard imports are the
  * `interfaces` type definitions (`DashboardModuleDescriptor`). Data
  * flows exclusively through the existing `DataService` (from
  * `@ghostfolio/ui/services`) and `UserService` (from
@@ -84,23 +101,14 @@ const TRANSACTIONS_TITLE = $localize`Transactions`;
  * Per Rule 4 (AAP § 0.8.1.4), this component MUST NOT inject
  * `UserDashboardLayoutService` or `LayoutPersistenceService` — layout
  * persistence is triggered exclusively by grid state-change events
- * subscribed at the canvas level. The wrapper merely emits a `remove`
- * event when the user activates the wrapper's remove button; the
- * canvas reconciles the gridster `dashboard` array and the persistence
- * pipeline observes that mutation through gridster's change callbacks.
+ * subscribed at the canvas level. After the inner-wrapper removal in
+ * QA Checkpoint 6 Issue #1, this wrapper no longer exposes a `remove`
+ * output either; the canvas-level outer `<gf-module-wrapper>` handles
+ * the remove button click directly via its
+ * `(remove)="removeItem(item)"` binding.
  *
  * Public API surface:
  *
- * - `remove` — signal-based output of `void`. Emits when the inner
- *   `<gf-module-wrapper>` propagates its remove event (the user has
- *   activated the remove button in the module header). The receiving
- *   canvas listens via `(remove)="..."` per-item.
- * - `iconName` — readonly string field bound to
- *   `[iconName]="iconName"` on `<gf-module-wrapper>`. Carries the
- *   Ionicons name for the module header icon.
- * - `title` — readonly string field initialized from the module-scope
- *   `TRANSACTIONS_TITLE` constant; bound to `[title]="title"` on
- *   `<gf-module-wrapper>`.
  * - `activities` — signal of `MatTableDataSource<Activity> |
  *   undefined`; populated by the `dataService.fetchActivities({})`
  *   subscription in `ngOnInit`. The template guards rendering on
@@ -119,50 +127,12 @@ const TRANSACTIONS_TITLE = $localize`Transactions`;
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CommonModule, GfActivitiesTableComponent, GfModuleWrapperComponent],
+  imports: [CommonModule, GfActivitiesTableComponent],
   selector: 'gf-transactions-module',
   styleUrls: ['./transactions-module.component.scss'],
   templateUrl: './transactions-module.component.html'
 })
 export class GfTransactionsModuleComponent implements OnInit {
-  /**
-   * Emits `void` whenever the inner `<gf-module-wrapper>` propagates
-   * its remove event. The template binds
-   * `(remove)="remove.emit()"` on the wrapper element to forward the
-   * event up to whichever canvas instance has subscribed.
-   *
-   * Per Rule 2 (AAP § 0.8.1.2), this output is the wrapper's ONLY
-   * coupling point to the canvas — the wrapper does NOT mutate the
-   * gridster `dashboard` array and does NOT call any layout-save APIs.
-   */
-  public readonly remove = output<void>();
-
-  /**
-   * Ionicons icon name shown alongside the title in the module header.
-   * Must exist in the Ionicons 8.x catalog; `'list-outline'` is a
-   * standard icon. Mirrors the value of
-   * {@link TRANSACTIONS_MODULE_DESCRIPTOR.iconName} so the icon shown
-   * in the module header matches the icon shown in the module catalog
-   * row.
-   *
-   * Bound in the template as `[iconName]="iconName"` (NOT a signal —
-   * `<gf-module-wrapper>`'s `iconName` input accepts a plain string,
-   * Angular handles the binding without explicit signal call syntax).
-   */
-  public readonly iconName = 'list-outline';
-
-  /**
-   * Module title shown in the header. Initialized from the
-   * module-scope {@link TRANSACTIONS_TITLE} constant so the title
-   * shares the exact same `$localize`-tagged value with
-   * {@link TRANSACTIONS_MODULE_DESCRIPTOR.displayLabel} (the catalog
-   * row label). A single source-of-truth constant prevents translation
-   * drift between the two surfaces.
-   *
-   * Bound in the template as `[title]="title"` on `<gf-module-wrapper>`.
-   */
-  public readonly title = TRANSACTIONS_TITLE;
-
   /**
    * Component state for the inner `<gf-activities-table>` data source.
    *
@@ -320,12 +290,12 @@ export class GfTransactionsModuleComponent implements OnInit {
  *   the discriminator in `LayoutItem.moduleId` of persisted layout
  *   documents. MUST NOT be renamed without a layout-document migration
  *   step (renaming breaks every saved layout that references it).
- * - `displayLabel: TRANSACTIONS_TITLE` — shares the same
- *   `$localize`-tagged constant with {@link GfTransactionsModuleComponent.title}
- *   so translations update both the catalog row and the module header
- *   consistently.
- * - `iconName: 'list-outline'` — Ionicons 8.x standard icon name;
- *   matches {@link GfTransactionsModuleComponent.iconName}.
+ * - `displayLabel: TRANSACTIONS_TITLE` — read by the canvas's
+ *   `resolveTitle(item.name)` helper and bound onto the outer
+ *   `<gf-module-wrapper [title]>` chrome.
+ * - `iconName: 'list-outline'` — Ionicons 8.x standard icon name; read
+ *   by the canvas's `resolveIconName(item.name)` helper and bound onto
+ *   the outer `<gf-module-wrapper [iconName]>` chrome.
  */
 export const TRANSACTIONS_MODULE_DESCRIPTOR: DashboardModuleDescriptor = {
   component: GfTransactionsModuleComponent,

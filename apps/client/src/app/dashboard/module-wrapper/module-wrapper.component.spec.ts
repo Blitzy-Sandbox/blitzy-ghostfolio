@@ -16,6 +16,70 @@ import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 
 import { GfModuleWrapperComponent } from './module-wrapper.component';
 
+// Short-circuit the `@ionic/angular/standalone` ESM import chain
+// before any component is loaded (QA Checkpoint 6 Issue #3 fix
+// added IonIcon to module-wrapper.component.ts directly).
+//
+// The full unmocked dependency graph is:
+//   GfModuleWrapperComponent
+//     -> @ionic/angular/standalone (IonIcon)
+//        -> @ionic/angular/common
+//           -> @ionic/core (publishes plain ESM `.js` files)
+// which Jest cannot parse under the project's existing
+// `transformIgnorePatterns: ['node_modules/(?!.*.mjs$)']` rule
+// (`apps/client/jest.config.ts`). Editing that config is OUT OF
+// SCOPE for this QA-fixer pass — the canonical workaround used
+// elsewhere in this codebase (see
+// `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.spec.ts:46`)
+// is to register a `jest.mock` that returns a bare class symbol
+// for the module's named exports, which Jest hoists above all
+// imports. The `IonIcon` mock is a minimal Angular component
+// declared with the matching `ion-icon` selector so the SUT's
+// `<ion-icon>` template references resolve to a benign no-op
+// element at test render time.
+//
+// `jest.mock('ionicons', ...)` and `jest.mock('ionicons/icons',
+// ...)` are also needed because the module-wrapper constructor
+// calls `addIcons({ ... })` with named imports from those two
+// modules. Without the mock the same ESM-parse error occurs at
+// the SUT's import site (line 12 of module-wrapper.component.ts).
+jest.mock('@ionic/angular/standalone', () => {
+  const { Component: NgComponent } = jest.requireActual('@angular/core');
+  // The `selector: 'ion-icon'` matches the rendered element name in
+  // the SUT's template. Declaring it standalone with an empty
+  // template lets the SUT's `<ion-icon>` references resolve under
+  // TestBed without actually loading the Ionicons runtime.
+  @NgComponent({
+    selector: 'ion-icon',
+    standalone: true,
+    template: ''
+  })
+  class IonIconMock {}
+  return { IonIcon: IonIconMock };
+});
+
+jest.mock('ionicons', () => ({
+  // `addIcons` is a no-op in tests — the registry side-effect is
+  // irrelevant to spec assertions, and mocking it sidesteps the
+  // ESM parse failure on the production `ionicons` package.
+  addIcons: jest.fn()
+}));
+
+jest.mock('ionicons/icons', () => ({
+  // Each named export below corresponds to one icon imported by
+  // module-wrapper.component.ts. The mock values are arbitrary
+  // (Ionicons icons are SVG path strings at runtime); tests do not
+  // assert on these values.
+  analyticsOutline: 'analyticsOutline',
+  appsOutline: 'appsOutline',
+  barChartOutline: 'barChartOutline',
+  chatbubblesOutline: 'chatbubblesOutline',
+  closeOutline: 'closeOutline',
+  listOutline: 'listOutline',
+  pieChartOutline: 'pieChartOutline',
+  reorderThreeOutline: 'reorderThreeOutline'
+}));
+
 /**
  * Standalone test host component used to exercise the SUT's content
  * projection slot. Angular's TestBed cannot directly project content

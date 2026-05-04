@@ -23,16 +23,79 @@ import {
  * Defense-in-depth ceiling; mirrors the `INVESTMENT_GOAL_LABEL_MAX_LENGTH = 200`
  * precedent in `apps/api/src/app/user-financial-profile/dtos/financial-profile.dto.ts`.
  *
- * Legitimate `moduleId` values are bound to the client-side
- * `ModuleRegistryService`'s registered names (currently five: `portfolio-overview`,
- * `holdings`, `transactions`, `analysis`, `chat`). Capping at 100 chars
- * rejects pathological payloads while preserving headroom for future module
- * names — without this cap, a single `moduleId` could be arbitrarily long,
- * wasting storage and inflating the persisted PostgreSQL `jsonb` column. The
- * limit is enforced at the DTO boundary so requests fail fast with a clear
- * validation error before reaching the persistence layer.
+ * Legitimate `moduleId` values are constrained to the
+ * {@link SUPPORTED_MODULE_IDS} whitelist below (currently five names:
+ * `portfolio-overview`, `holdings`, `transactions`, `analysis`, `chat`).
+ * Capping at 100 chars provides a length-based guard at the DTO boundary
+ * BEFORE the whitelist match runs — without this cap, a single
+ * `moduleId` could be arbitrarily long and would waste storage and
+ * inflate the persisted PostgreSQL `jsonb` column even on payloads that
+ * the whitelist would later reject. The two constraints (length cap
+ * and `@IsIn` whitelist) layer defensively: a request fails the
+ * cheaper length check first when applicable, and only proceeds to
+ * the more expensive set-membership check when the length is plausible.
  */
 const MODULE_ID_MAX_LENGTH = 100;
+
+/**
+ * Canonical whitelist of `moduleId` values the API accepts in a
+ * `LayoutItemDto.moduleId` field — the SOLE source of truth on the
+ * server side for the set of registered module types.
+ *
+ * **Why a whitelist** (QA Checkpoint 6 Issue #4): without
+ * `@IsIn(SUPPORTED_MODULE_IDS)` the DTO's `moduleId` field accepts any
+ * string ≤ {@link MODULE_ID_MAX_LENGTH} characters. The QA agent
+ * verified that a legitimate USER JWT could PATCH a payload with
+ * `{ moduleId: 'nonexistent-module-x', cols: 4, rows: 4, x: 0, y: 0 }`
+ * and the API would respond `200 OK` and persist the row as-is. The
+ * client's `hydrateFromLayout` helpfully filters out unregistered
+ * names on read, so the user never SAW the garbage row — but the
+ * garbage SAT in the database indefinitely (or until the user added
+ * another module which would trigger a save with the cleaned set).
+ * The whitelist closes that data-hygiene gap by rejecting unknown
+ * names at the DTO boundary with HTTP 400 BEFORE they reach the
+ * persistence layer.
+ *
+ * **Synchronization with the client registry**: the names listed
+ * here MUST stay in lockstep with the descriptors registered by
+ * `apps/client/src/app/dashboard/dashboard.providers.ts` via
+ * `provideAppInitializer(...)` calls on `ModuleRegistryService`.
+ * Adding a new module requires:
+ *   1. Creating the wrapper component under
+ *      `apps/client/src/app/dashboard/modules/<new-module>/`.
+ *   2. Adding the new descriptor name to {@link SUPPORTED_MODULE_IDS}
+ *      below (in alphabetical order to ease future merges).
+ *   3. Registering the new descriptor in
+ *      `dashboard.providers.ts` adjacent to the existing
+ *      `*_MODULE_DESCRIPTOR` registrations.
+ *
+ * The list is intentionally NOT shared via a `libs/common`
+ * interface (no such file exists) because the API layer's
+ * server-side defense-in-depth is conceptually independent of the
+ * client's runtime registry — the client could in principle ship
+ * with a SUBSET of the modules registered (e.g., a beta build with
+ * a feature-flagged module hidden), and the server's whitelist
+ * remains the union of EVER-supported module names. Coupling the
+ * two through a shared constant would tightly bind a server
+ * deployment to a specific client build, which is undesirable.
+ *
+ * **Why `as const`**: the literal-type tuple makes the
+ * `@IsIn(SUPPORTED_MODULE_IDS as unknown as string[])` decorator's
+ * accepted-values whitelist match the array's exact runtime values
+ * at compile time. The `as unknown as string[]` cast at the
+ * decorator site is the documented `class-validator` workaround
+ * for the type-signature mismatch between TypeScript's
+ * `readonly [...string[]]` tuple and `IsIn`'s `unknown[]` parameter
+ * — the same pattern already used by {@link SUPPORTED_LAYOUT_VERSIONS}
+ * below.
+ */
+const SUPPORTED_MODULE_IDS = [
+  'analysis',
+  'chat',
+  'holdings',
+  'portfolio-overview',
+  'transactions'
+] as const;
 
 /**
  * Maximum permitted number of layout items per persisted `layoutData` payload.
@@ -178,7 +241,9 @@ function IsWithinGridWidth(validationOptions?: ValidationOptions) {
  * Single layout item describing one module's grid placement.
  *
  * Per AAP § 0.6.1.7 contract:
- *   - `moduleId`: registered module name (string ≤ 100 chars).
+ *   - `moduleId`: registered module name. Must be a non-empty string
+ *     ≤ 100 chars AND must appear in {@link SUPPORTED_MODULE_IDS}
+ *     (whitelist enforced by `@IsIn(...)` per QA Checkpoint 6 Issue #4).
  *   - `cols`, `rows`: cell-extent ≥ 2 (minimum module size per AAP § 0.1.2).
  *     - `cols` additionally ≤ 12 (full grid width).
  *     - `rows` has no upper bound (canvas is vertically scrollable).
@@ -194,6 +259,7 @@ export class LayoutItemDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(MODULE_ID_MAX_LENGTH)
+  @IsIn(SUPPORTED_MODULE_IDS as unknown as string[])
   moduleId: string;
 
   @IsInt()
