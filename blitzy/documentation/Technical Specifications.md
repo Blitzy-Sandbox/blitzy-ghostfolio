@@ -6,1075 +6,1464 @@
 
 ### 0.1.1 Core Feature Objective
 
-Based on the prompt, the Blitzy platform understands that the new feature requirement is to **extend the existing Ghostfolio v3.0.0 Nx monorepo with a coherent AI-powered portfolio intelligence layer composed of three independently demoable but narratively connected features**, all introduced as additive code paths that leave the pre-existing Ghostfolio source surface untouched outside of a small set of explicitly named wiring points. The work is strictly additive — new NestJS modules, new Prisma model, new Angular components, and new client-side route — registered in the existing `AppModule` (`apps/api/src/app/app.module.ts`), the existing Prisma schema (`prisma/schema.prisma`), the existing Angular route table (`apps/client/src/app/app.routes.ts`), and the existing portfolio-page sidebar slot, without modifying any existing controller, service, DTO, route handler, or Prisma model.
+Based on the prompt, the Blitzy platform understands that the new feature requirement is to refactor the existing Ghostfolio Angular client application from a multi-route, navigation-shell-driven UI into a single-canvas modular dashboard system. Every existing user-facing feature — portfolio overview, holdings, transactions/activities, analysis, and the AI chat panel — must be repackaged as a self-contained, independently placeable grid module that the user can compose freely on a 12-column cell-based grid via drag-and-drop. Per-user layouts must persist to PostgreSQL through a new Prisma model and a new authenticated NestJS endpoint pair, so that returning users see their saved layout and new users see a blank canvas with the module catalog auto-opened on first visit.
 
-The three features in scope are:
+The Blitzy platform restates the explicit feature requirements with enhanced clarity:
 
-- **Feature A — Snowflake Sync Layer:** A `SnowflakeSyncModule` that mirrors Ghostfolio's operational data — portfolio snapshots, trade history, and performance metrics — into Snowflake as an append-only analytical backend. The mirror runs on a daily cron at `02:00 UTC` and additionally triggers on Order create/update events that are emitted via the existing `@nestjs/event-emitter` machinery. All writes are MERGE (upsert) statements keyed on the unique constraints documented in `§ 0.5.1`, ensuring idempotency on re-runs.
+- **Single-canvas application shell** — the Angular Router's currently-rich route table must collapse to one root route `/` whose component is a new `DashboardCanvasComponent` rendered inside the existing `gf-root` shell.
+- **Modular grid container** — the canvas wraps `angular-gridster2` v21.0.1 configured for a 12-column, fixed row-height grid with a 2×2 minimum module size and per-module minimum cell dimensions enforced at the grid-engine level.
+- **Module registry as the single registration mechanism** — a new `ModuleRegistryService` exposes the catalog of available module types, each registered with a stable name, an Angular component reference, and minimum cell dimensions; ad-hoc component insertion into the grid is prohibited.
+- **Module catalog UI** — an overlay or sidebar panel listing every registered module (searchable by name) supports both drag-to-place and click-to-add interactions; modules are removed via a header action on the module wrapper itself.
+- **Authenticated layout persistence** — `GET /api/v1/user/layout` returns the saved layout and `PATCH /api/v1/user/layout` upserts it; both endpoints are protected by the existing `AuthGuard('jwt')` and `HasPermissionGuard` pattern from `apps/api/src/app/user/user.controller.ts`.
+- **New Prisma model** — `UserDashboardLayout` (foreign-key to `User.id`, `layoutData` JSONB, `updatedAt`), located after confirming the `schema.prisma` path (verified at `prisma/schema.prisma`).
+- **First-visit UX** — when no layout row exists for the authenticated user, the canvas renders blank and the module catalog opens automatically.
+- **AI chat as a co-equal module** — the existing `ChatPanelComponent` (currently embedded at `apps/client/src/app/pages/portfolio/portfolio-page.html` line 32) becomes a standalone grid module on equal footing with all other modules. This is an intentional deviation from the existing tech spec § 7.4.1.2 ("the component is rendered below the `mat-tab-nav-bar` of the portfolio page and persists across all six portfolio tabs").
 
-- **Feature B — AI Portfolio Chat Agent:** An `AiChatModule` exposing a streaming Claude API chat endpoint (`POST /api/ai/chat`) that answers natural-language questions about the authenticated user's portfolio. The agent dispatches **four** Claude tool calls — `get_current_positions`, `get_performance_metrics`, `query_history`, and `get_market_data` — to live Ghostfolio data and to Snowflake historical queries. Responses stream to the browser via Server-Sent Events. The system prompt is personalized at request time with the caller's current portfolio state and `FinancialProfile`. Chat session state is **stateless** server-side; the client transmits the full message array (capped at 4 prior turns) per request.
+The Blitzy platform also surfaces the following implicit requirements detected from the prompt:
 
-- **Feature C — Explainable Rebalancing Engine:** A `RebalancingModule` exposing `POST /api/ai/rebalancing` that returns structured JSON trade recommendations. Every recommendation includes a plain-language `rationale` that explicitly references the user's stated financial goals, plus a machine-readable `goalReference` mapping to a `FinancialProfile` field name or to a label inside the JSON `investmentGoals` array. Claude returns structured output **exclusively** via the Anthropic SDK `tool_use` content block — no text parsing.
+- **Routing infrastructure preservation, route table elimination** — the prompt explicitly requires that the `RouterModule.forRoot(...)` registration in `apps/client/src/main.ts`, `ServiceWorkerModule` navigation handling, the `PageTitleStrategy` provider, and the `ModulePreloadService` preloading strategy must remain functional after the refactor; only the route entries are reduced to a single `path: ''` with the new canvas component. The existing `app.routes.ts` array of ~22 lazy-loaded route entries is removed in favor of one entry.
+- **Removal of shell chrome** — the existing `GfHeaderComponent` and `GfFooterComponent` imported into `GfAppComponent` (`apps/client/src/app/app.component.ts` lines 36–37) and rendered in `apps/client/src/app/app.component.html`, plus any sidebar/topnav components, are out of scope after the refactor; `gf-root` reduces to a `<router-outlet />` plus any always-visible chrome the dashboard requires.
+- **Preservation of all data services and business logic** — every existing feature service (`PortfolioService`, `SymbolService`, `AiChatService`, `RebalancingService`, `FinancialProfileService`) and every Ghostfolio API integration must remain unchanged; modules consume them exactly as the route-driven pages do today.
+- **Module-to-grid isolation contract** — module components must not import from the grid canvas layer, and grid state is the single source of truth for module positions and sizes (no per-module layout state).
+- **Grid-state-driven persistence** — saves trigger only on grid state-change events (drag, resize, add, remove) with debounce (≥ 500 ms) — module components never call layout-save APIs.
+- **Material Design 3 compliance for grid chrome** — module headers, resize handles, and drop-zone indicators must use the `var(--mat-sys-<token>, <hardcoded-fallback>)` pattern per Decision D-020 (recorded in `docs/decisions/agent-action-plan-decisions.md`).
+- **Migration coordination** — the new Prisma migration must not conflict with existing `User` and `FinancialProfile` models; `schema.prisma` must be located and read before migration generation (path verified: `prisma/schema.prisma`).
+- **Auto-open catalog on first visit** — the canvas initialization logic (not the catalog) is responsible for the auto-open behavior when no saved layout exists for the authenticated user.
+- **Performance bound** — drag/resize visual updates must complete within 100 ms; this must be measured against the existing zone-based Angular setup (`provideZoneChangeDetection()` in `apps/client/src/main.ts` line 87) and the zoneless-aware NgZone calls in angular-gridster2 v21.
 
-A new Prisma model `FinancialProfile` (1:1 with `User` via `userId`, cascade delete) stores per-user goals, risk tolerance, income, and debt obligations. A new `UserFinancialProfileModule` exposes `GET` and `PATCH /api/user/financial-profile`; its `UserFinancialProfileService` is exported and consumed by `AiChatModule` and `RebalancingModule` via constructor injection, providing the single canonical read path for downstream personalization. A new Angular `FinancialProfileFormComponent` opens as a modal dialog from the user-account page and pre-populates from `GET` when a record exists or shows an empty form on HTTP 404.
+The Blitzy platform identifies the following feature dependencies and prerequisites:
 
-#### 0.1.1.1 Implicit Requirements Detected
-
-The following implicit requirements are surfaced for explicit handling during code generation:
-
-- **Stack version reconciliation.** The user's prompt names "Angular 19" and "Prisma 6," but the installed `package.json` pins `@angular/core 21.2.7` and `@prisma/client 7.7.0`. The Blitzy platform interprets the user's intent as "use whatever Angular and Prisma versions are already in `package.json`" and will conform to **Angular 21.2.7** and **Prisma 7.7.0** as the actual installed versions, in accordance with the additive-only mandate.
-- **Existing `AiModule` is preserved.** Ghostfolio already ships a feature module named `AiModule` at `apps/api/src/app/endpoints/ai/` for the `GET /ai/prompt/:mode` OpenRouter-backed prompt feature (F-020). The new `AiChatModule` and `RebalancingModule` are **separate modules** and **must not** import from, modify, or replace the existing `AiModule`. They are mounted under distinct controller prefixes (`@Controller('ai/chat')` and `@Controller('ai/rebalancing')`).
-- **JWT guard pattern reuse.** "JwtAuthGuard" in the prompt corresponds to Ghostfolio's existing pattern `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` from `@nestjs/passport`, applied uniformly across `apps/api/src/app/portfolio/portfolio.controller.ts`, `apps/api/src/app/endpoints/ai/ai.controller.ts`, and other authenticated endpoints. New controllers reuse this exact pattern.
-- **`/api/v1` URI versioning.** Ghostfolio's `main.ts` configures `VersioningType.URI` with default version `v1`; therefore `POST /api/ai/chat` resolves at runtime to `/api/v1/ai/chat`. Test gates and Angular HTTP calls must use the `/api/v1/...` form.
-- **PortfolioService and SymbolService are already exported.** `apps/api/src/app/portfolio/portfolio.module.ts` exports `PortfolioService` (line 34) and `apps/api/src/app/symbol/symbol.module.ts` exports `SymbolService` (line 14). The four chat-agent tools delegate to existing methods (`PortfolioService.getDetails()`, `PortfolioService.getPerformance()`, `SymbolService.get()`, etc.), so no existing module needs an `exports` modification.
-- **Order event hook.** `apps/api/src/app/activities/activities.service.ts` already emits `PortfolioChangedEvent` on every `createActivity` / `updateActivity` / `deleteActivity` operation through the injected `EventEmitter2`. The Snowflake sync listener subscribes to `PortfolioChangedEvent.getName()` (which resolves to `'portfolio.changed'`) using the same `@OnEvent` pattern already used by `apps/api/src/events/portfolio-changed.listener.ts`. No new event class is required.
-- **Schedule module is already imported.** `app.module.ts` already imports `ScheduleModule.forRoot()` (line 133) and the project ships `@nestjs/schedule@6.1.3` and `@nestjs/event-emitter@3.0.1` — meaning the cron and event infrastructure for `SnowflakeSyncModule` is already bootstrapped at the application root.
-- **`.config/prisma.ts` resolves the schema path.** Prisma's schema lives at `prisma/schema.prisma` (per `.config/prisma.ts`). Adding the `FinancialProfile` model and `RiskTolerance` enum to that single file is the only Prisma source modification required.
-- **Observability cross-cutting requirement.** The user-supplied "Observability" rule mandates structured logging with correlation IDs, distributed tracing, a metrics endpoint, health/readiness checks, and a dashboard template. Each new module must emit structured logs using NestJS `Logger` and propagate a correlation ID through SSE responses, Snowflake sync runs, and rebalancing calls; health probes for the new modules must extend the existing `HealthModule` pattern.
-- **Decision log requirement.** The user-supplied "Explainability" rule requires a Markdown decision-log table for every non-trivial decision and a bidirectional traceability matrix when relevant. Decisions made during code generation (e.g., "stateless chat: client carries 4 prior turns" vs. "server-side conversation persistence") must be recorded as explicit entries.
-- **Executive presentation requirement.** The user-supplied "Executive Presentation" rule requires a single self-contained reveal.js HTML deck (12–18 slides) using the Blitzy theme, covering scope, business value, architecture, risks, and onboarding.
-- **Segmented PR review requirement.** The user-supplied "Segmented PR Review" rule mandates a `CODE_REVIEW.md` at the repo root with YAML frontmatter (phase name, status, file count) and per-domain Expert Agent phases before any PR is opened.
-
-#### 0.1.1.2 Feature Dependencies and Prerequisites
-
-| Prerequisite | Source of Truth | Status |
-|--------------|-----------------|--------|
-| Existing `User` model | `prisma/schema.prisma` lines 261–288 | Available — `FinancialProfile.userId` references `User.id` |
-| Existing `PortfolioService` (exported) | `apps/api/src/app/portfolio/portfolio.module.ts` line 34 | Available — `getDetails()`, `getPerformance()`, `getHoldings()`, `getInvestments()` are public async methods |
-| Existing `SymbolService` (exported) | `apps/api/src/app/symbol/symbol.module.ts` line 14 | Available — `get()`, `lookup()` are public async methods |
-| Existing `EventEmitter2` and `PortfolioChangedEvent` | `apps/api/src/events/portfolio-changed.event.ts`; emission sites in `apps/api/src/app/activities/activities.service.ts` | Available — listener pattern shown in `apps/api/src/events/portfolio-changed.listener.ts` |
-| Existing `@nestjs/schedule` `ScheduleModule.forRoot()` | `apps/api/src/app/app.module.ts` line 133 | Available — `@Cron` decorators usable directly |
-| Existing JWT auth guard pattern | `apps/api/src/app/auth/jwt.strategy.ts`; usage in `apps/api/src/app/endpoints/ai/ai.controller.ts` line 31 | Available — `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` |
-| Existing `ConfigService` from `@nestjs/config` | `package.json` `@nestjs/config@4.0.4`; `app.module.ts` line 109 imports `ConfigModule.forRoot()` | Available — global config |
-| Existing `RequestWithUser` type | `libs/common/src/lib/types/request-with-user.type.ts` | Available — typed request with `user.id`, `user.settings`, etc. |
-| Existing `internalRoutes` registry | `libs/common/src/lib/routes/routes.ts` (lines 121–148 define `portfolio` route family) | The new `/portfolio/rebalancing` path may be added either as a literal route entry in `app.routes.ts` (per the user's prompt) or via `internalRoutes.portfolio.subRoutes`. The user's prompt mandates the former — a single literal `/portfolio/rebalancing` entry in `app.routes.ts`. |
+- The Angular workspace already runs Angular 21.2.7 and Angular Material 21.2.5, satisfying the angular-gridster2 v21.0.1 peer-dependency requirement (confirmed against `package.json` lines 61–67).
+- Prisma 7.7.0 is installed and `schema.prisma` is located at `prisma/schema.prisma` (confirmed via `find` command). The `.config/prisma.ts` file references `prisma/schema.prisma` and `prisma/migrations` paths.
+- The existing `User` model declares `id String @id @default(uuid())` (`prisma/schema.prisma` line 273) and supports cascade-delete via the `onDelete: Cascade` pattern used by `FinancialProfile.user` (line 374). The new `UserDashboardLayout.user` relation will follow the identical convention.
+- The existing `UserFinancialProfileModule` (`apps/api/src/app/user-financial-profile/`) is the structural template for the new `UserDashboardLayoutModule`: thin controller with `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)`, service with `findByUserId` / `upsertForUser`, DTOs in a `dtos/` subfolder, and idempotent PATCH upsert semantics (Decision D-019 pattern).
+- The `permissions` registry at `libs/common/src/lib/permissions.ts` is the canonical place to add the two new permission constants required by the new endpoints.
 
 ### 0.1.2 Special Instructions and Constraints
 
-The user's prompt contains several explicit directives that downstream code-generation agents must preserve verbatim. These are reproduced and labeled below.
+The Blitzy platform captures the following CRITICAL directives verbatim from the prompt:
 
-#### 0.1.2.1 Architectural Directives
+- **"This refactor explicitly deviates from the tech spec's definition of `ChatPanelComponent` as embedded within `portfolio-page.html:32`. The chat panel MUST be treated as a standalone grid module co-equal with all other modules. This deviation is intentional."** — This deviation must be recorded in the project's decision log at `docs/decisions/agent-action-plan-decisions.md` per the Explainability project rule, with rationale and trade-off analysis.
+- **"Layout persistence: new Prisma model `UserDashboardLayout` (`userId` FK, `layoutData` JSONB, `updatedAt`); locate `schema.prisma` before writing migration — confirm path under `apps/api/prisma/`, `libs/`, or workspace root `prisma/`"** — Confirmed: `schema.prisma` is at workspace-root `prisma/schema.prisma`.
+- **"New NestJS endpoints: `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout`, protected by existing `AuthGuard('jwt')` and `HasPermissionGuard` pattern from `apps/api/src/app/user/user.controller.ts`"** — The exact decorator stack `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` plus a `@HasPermission(...)` decorator must be applied; the same controller path conventions used by `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` (route `user/financial-profile`) inform the new `user/layout` route.
+- **"Module catalog: overlay or sidebar panel listing all registered modules, searchable by name; add via drag or click; remove via module header action"** — Both interaction paths must be supported.
+- **"Grid spec: 12 columns, fixed row height (constant px), minimum module size 2×2 cells"** — angular-gridster2 `GridsterConfig` properties `minCols: 12`, `maxCols: 12`, `fixedRowHeight: <constant px>`, `minItemCols: 2`, `minItemRows: 2`.
 
-- **Authority is strictly additive.** New modules, models, and components are introduced **without modifying** existing Ghostfolio v3.0.0 code outside of the minimum registration wiring. The complete list of permitted modifications is enumerated in `§ 0.6` and matches the user's "Additive-only wiring points" verbatim.
-- **Module isolation.** New NestJS modules MUST NOT import from file paths inside existing Ghostfolio feature module directories. Cross-module access MUST occur only through services explicitly listed in the source module's `exports` array (e.g., `PortfolioService` from `PortfolioModule`, `SymbolService` from `SymbolModule`, `UserService` from `UserModule`). This is captured as Rule 1 in `§ 0.7`.
-- **Each new module is self-contained.** Every new module owns its own controller, service(s), DTOs, and (where applicable) Prisma access. The `UserFinancialProfileService` is the single exception — it is **explicitly exported** from `UserFinancialProfileModule` and consumed by `AiChatModule` and `RebalancingModule` through constructor injection.
-- **Controller thinness.** New controllers MUST contain zero business logic and zero Prisma calls. They extract the authenticated user, validate request shape via `class-validator` DTOs, delegate to the module service, and return the result. No new controller method body exceeds 10 lines. This is captured as Rule 8 in `§ 0.7`.
+The Blitzy platform documents the following architectural requirements:
 
-#### 0.1.2.2 Security Directives
+- **Use the existing service pattern verbatim** — the new `UserDashboardLayoutController` follows the controller shape of `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` (correlation-ID header, JWT `request.user.id`, idempotent upsert).
+- **Follow repository conventions** — Angular component selectors use the `gf` prefix (configured in `apps/client/project.json` line 6 and `nx.json`); standalone components with `ChangeDetectionStrategy.OnPush`; `takeUntilDestroyed(destroyRef)` for RxJS subscriptions; SCSS component styles; Angular control flow (`@if`, `@for`); i18n via `i18n="..."` attributes and `$localize` template literals.
+- **Maintain backward compatibility for routing infrastructure** — `RouterModule.forRoot(routes, { anchorScrolling: 'enabled', preloadingStrategy: ModulePreloadService, scrollPositionRestoration: 'top' })` from `apps/client/src/main.ts` lines 70–74 stays exactly as-is; only the `routes` array contents change.
+- **Use existing Ghostfolio API integrations unchanged** — every data-fetch call inside a module wrapper component delegates to its existing service (e.g., `PortfolioService.fetchPortfolioDetails(...)`).
+- **Module isolation rule applies** — Engineering Rule 1 (§ 5.1.1.1 of the existing tech spec) requires that no source file under any new feature module directory imports from inside another feature module's directory; module wrapper components import the module's existing service from `apps/client/src/app/services/...` and existing presentation components from `apps/client/src/app/components/...` only.
 
-- **Parameterized Snowflake queries.** All Snowflake SQL execution MUST use `snowflake-sdk` bind variable syntax (`?` placeholders + `binds: [...]`). String template literals and `+` concatenation operators adjacent to SQL strings are PROHIBITED. This is captured as Rule 2 in `§ 0.7` and verified by Gate 11 in `§ 0.7.5`.
-- **Credential access via `ConfigService`.** `ANTHROPIC_API_KEY` and all `SNOWFLAKE_*` environment variables MUST be read **exclusively** via the injected NestJS `ConfigService`. Direct `process.env.ANTHROPIC` and `process.env.SNOWFLAKE` access in new module files is PROHIBITED. This is captured as Rule 3 in `§ 0.7`.
-- **`FinancialProfile` authorization.** Every Prisma operation on `FinancialProfile` MUST include `where: { userId: authenticatedUserId }` using the JWT-verified user ID — never the request body. Unscoped queries against `FinancialProfile` are PROHIBITED. This is captured as Rule 5 in `§ 0.7`.
-- **All four new endpoints require `JwtAuthGuard`.** Per the endpoint table in the user's prompt, `POST /api/ai/chat`, `POST /api/ai/rebalancing`, `GET /api/user/financial-profile`, and `PATCH /api/user/financial-profile` are all protected by `AuthGuard('jwt')`. Unauthenticated requests must return HTTP 401.
+The Blitzy platform preserves the user-provided examples verbatim:
 
-#### 0.1.2.3 API Design Directives
+- **User Example (Grid engine pin):** "angular-gridster2 v21.0.1 (version-compatible with Angular 21)"
+- **User Example (Module registry shape):** "centralized Angular service registering available module types with metadata (name, component reference, min cell dimensions)"
+- **User Example (Schema model):** "new Prisma model `UserDashboardLayout` (`userId` FK, `layoutData` JSONB, `updatedAt`)"
+- **User Example (Endpoint contract):** "`GET /api/v1/user/layout` and `PATCH /api/v1/user/layout`, protected by existing `AuthGuard('jwt')` and `HasPermissionGuard` pattern"
+- **User Example (Module file layout):** "Module wrapper components: `apps/client/src/app/dashboard/modules/<module-name>/`"
+- **User Example (Layout NestJS controller path):** "`apps/api/src/app/user/user-dashboard-layout.controller.ts`"
+- **User Example (Layout NestJS service path):** "`apps/api/src/app/user/user-dashboard-layout.service.ts`"
+- **User Example (Validation timing):** "Grid drag/resize MUST complete visual update within 100ms (measure against zone-based Angular setup; validate zone/zoneless interaction with angular-gridster2 v21's NgZone calls)"
+- **User Example (Test placement convention):** "Follow existing nx workspace test file placement conventions"
 
-- **Structured rebalancing via tool use.** `RebalancingService` MUST populate `RebalancingResponse` exclusively from a `tool_use` content block returned by the Anthropic SDK. Parsing Claude's text message content to extract structured fields is PROHIBITED. This is captured as Rule 4 in `§ 0.7`.
-- **Snowflake sync idempotency.** All Snowflake write operations in `SnowflakeSyncService` MUST use MERGE (upsert) statements keyed on the unique constraints in `§ 0.5.1`. INSERT-only statements that produce duplicate rows on re-run are PROHIBITED. This is captured as Rule 7 in `§ 0.7`.
-- **SSE disconnection handling.** `ChatPanelComponent` MUST render a non-empty `errorMessage` and a visible reconnect button when the SSE stream terminates with an error. Silent stream failures with no UI state change are PROHIBITED. This is captured as Rule 6 in `§ 0.7`.
-- **Stateless chat protocol.** Chat session state is stateless server-side. The client sends the full message array (max 4 prior turns) on every `POST /api/ai/chat` request. The server stores no per-session conversation history.
+The Blitzy platform documents the following web search research conducted:
 
-#### 0.1.2.4 User-Provided Examples (Preserved Verbatim)
-
-**User Example — `FinancialProfile` Prisma model:**
-
-```plaintext
-FinancialProfile (1:1 → User via userId, cascade delete)
-  userId                 String   @id
-  retirementTargetAge    Int
-  retirementTargetAmount Float
-  timeHorizonYears       Int
-  riskTolerance          RiskTolerance   // new enum: LOW | MEDIUM | HIGH
-  monthlyIncome          Float
-  monthlyDebtObligations Float
-  investmentGoals        Json    // [{label: string, targetAmount: float, targetDate: string}]
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-```
-
-**User Example — Snowflake schema (3 tables, MERGE keys):**
-
-- `portfolio_snapshots(snapshot_date, user_id, asset_class, allocation_pct, total_value_usd)` — unique key: `(snapshot_date, user_id, asset_class)`
-- `orders_history(order_id, user_id, date, type, ticker, quantity, unit_price, fee, currency, synced_at)` — unique key: `(order_id)`
-- `performance_metrics(metric_date, user_id, twr, volatility, sharpe_ratio)` — unique key: `(metric_date, user_id)`
-
-**User Example — Chat-agent tool definitions:**
-
-- `get_current_positions(userId)` → delegates to injected `PortfolioService.getPositions()`
-- `get_performance_metrics(userId, startDate, endDate)` → delegates to injected `PortfolioService.getPerformance()`
-- `query_history(userId, sql, binds)` → executes parameterized SQL against Snowflake via `snowflake-sdk` bind variables; Claude supplies `sql` and typed `binds`; no string concatenation
-- `get_market_data(ticker)` → delegates to injected `SymbolService.getProfile()`
-
-**User Example — `RebalancingResponse` TypeScript contract:**
-
-```typescript
-interface RebalancingResponse {
-  recommendations: Array<{
-    action: 'BUY' | 'SELL' | 'HOLD';
-    ticker: string;
-    fromPct: number;
-    toPct: number;
-    rationale: string;
-    goalReference: string;
-  }>;
-  summary: string;
-  warnings: string[];
-}
-```
-
-**User Example — New API endpoint matrix:**
-
-| Method | Path | Guard | Module |
-| --- | --- | --- | --- |
-| POST | /api/ai/chat | JwtAuthGuard | AiChatModule |
-| POST | /api/ai/rebalancing | JwtAuthGuard | RebalancingModule |
-| GET | /api/user/financial-profile | JwtAuthGuard | UserFinancialProfileModule |
-| PATCH | /api/user/financial-profile | JwtAuthGuard | UserFinancialProfileModule |
-
-**User Example — Required environment variables:**
-
-`SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_SCHEMA`, `ANTHROPIC_API_KEY` — read exclusively through `ConfigService`.
-
-#### 0.1.2.5 Naming Note: The `PortfolioService.getPositions()` Tool
-
-The user's chat-agent tool list specifies `PortfolioService.getPositions()`. The actual Ghostfolio service exposes its holdings/positions through `PortfolioService.getDetails(...)` and `PortfolioService.getHoldings(...)` (per `apps/api/src/app/portfolio/portfolio.service.ts`). The Blitzy platform interprets `getPositions()` as a logical alias resolved at implementation time to the appropriate existing public method on the exported `PortfolioService`; the new code does not introduce a new method on the existing service. A decision-log entry will record this resolution per the "Explainability" rule.
+- **angular-gridster2 v21.0.1 release notes and API surface** — confirmed v21.0.1 is the latest stable release (published January 9, 2026 on GitHub), v21.0.0 introduced standalone-only API: imports are `Gridster` and `GridsterItemComponent` rather than the legacy `GridsterModule`, the API is exposed via `initCallback` or `viewChild(Gridster).api`, `gridster.api.optionsChanged()` is removed in favor of "set a new object on input options when there is a change", and `NgZone.run` / `NgZone.runOutsideAngular` are retained "for apps still using zone.js to keep the performance high" — directly relevant to the prompt's validation requirement to verify zone/zoneless interaction in a `provideZoneChangeDetection()` host.
 
 ### 0.1.3 Technical Interpretation
 
-These feature requirements translate to the following technical implementation strategy:
+These feature requirements translate to the following technical implementation strategy. The Blitzy platform decomposes the work into seven coordinated change vectors that together deliver the modular dashboard:
 
-- **To extend the Prisma data model**, **add** a `FinancialProfile` model and a `RiskTolerance` enum (`LOW | MEDIUM | HIGH`) to `prisma/schema.prisma`. Generate a single new timestamped migration folder under `prisma/migrations/` containing `migration.sql` that creates the `FinancialProfile` table, the `"RiskTolerance"` PostgreSQL enum type, and the `userId` foreign-key constraint with `ON DELETE CASCADE`. Run `prisma generate` to refresh the typed client.
+To **introduce the grid engine and dashboard shell**, we will install `angular-gridster2@21.0.1` as a runtime dependency, create a new dashboard namespace at `apps/client/src/app/dashboard/`, and implement `DashboardCanvasComponent` (`apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.{ts,html,scss,spec.ts}`) as a standalone Angular component that imports the gridster v21 standalone primitives (`Gridster`, `GridsterItemComponent`), defines a `GridsterConfig` with `minCols: 12`, `maxCols: 12`, `fixedRowHeight: <constant>`, `minItemCols: 2`, `minItemRows: 2`, and renders one `<gridster-item>` per active grid item bound to a registered module's component reference.
 
-- **To deliver Feature A (Snowflake Sync)**, **create** a new `SnowflakeSyncModule` at `apps/api/src/app/snowflake-sync/` with: `snowflake-sync.module.ts`, `snowflake-sync.service.ts` (cron `@Cron('0 2 * * *')` + `@OnEvent(PortfolioChangedEvent.getName())` listener + bind-variable MERGE statements), `snowflake-sync.controller.ts` (admin manual-trigger endpoint), and a `snowflake-client.factory.ts` that constructs the `snowflake-sdk` connection from `ConfigService.get('SNOWFLAKE_*')`. **Modify** `apps/api/src/app/app.module.ts` only to add the import.
+To **register module types centrally**, we will create `apps/client/src/app/dashboard/module-registry.service.ts` exposing a `ModuleRegistryService` with `register(metadata: ModuleMetadata)`, `getAll(): ModuleMetadata[]`, and `getByName(name: string): ModuleMetadata | undefined` methods, where `ModuleMetadata` carries `{ name: string; component: Type<unknown>; minCols: number; minRows: number; displayLabel: string; iconName: string }`. The registry is provided in `providedIn: 'root'`, populated at app bootstrap by a side-effect import (or APP_INITIALIZER), and is the single source of allowed grid-item component types — `DashboardCanvasComponent` rejects any `GridsterItem` whose `name` is not registered.
 
-- **To deliver Feature B (AI Portfolio Chat Agent)**, **create** a new `AiChatModule` at `apps/api/src/app/ai-chat/` with: `ai-chat.module.ts`, `ai-chat.service.ts` (constructs `Anthropic` client from `ConfigService.get('ANTHROPIC_API_KEY')`, defines the four tool schemas, dispatches tool calls to `PortfolioService` / `SymbolService` / `SnowflakeSyncService.queryHistory(...)` and the injected `UserFinancialProfileService`, streams the SDK response over an `Observable<MessageEvent>`), `ai-chat.controller.ts` (`@Sse()` endpoint at `POST /ai/chat` with `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)`), and DTOs validating the inbound message array. **Import** `PortfolioModule`, `SymbolModule`, and `UserFinancialProfileModule` to consume their exported services.
+To **wrap each existing feature as a module**, we will create one wrapper component per module type under `apps/client/src/app/dashboard/modules/<module-name>/<module-name>-module.component.{ts,html,scss,spec.ts}` for at minimum: `portfolio-overview`, `holdings`, `transactions` (a.k.a. activities), `analysis`, and `chat` (the AI chat panel). Each wrapper imports the existing presentation component from `apps/client/src/app/components/...` (e.g., `GfHomeOverviewComponent`, `GfHomeHoldingsComponent`, `GfActivitiesPageComponent`, `GfHomeOverviewComponent`'s analysis dependents, `ChatPanelComponent`) and the existing data-fetching service unchanged. The wrappers add the module header chrome (drag handle, remove button) and forward all data flow to existing services.
 
-- **To deliver Feature C (Explainable Rebalancing Engine)**, **create** a new `RebalancingModule` at `apps/api/src/app/rebalancing/` with: `rebalancing.module.ts`, `rebalancing.service.ts` (Anthropic SDK call with a `tools` array containing a single `tool_use` schema that shapes `RebalancingResponse`; reads structured output **only** from `content[type === 'tool_use']`), `rebalancing.controller.ts` (`POST /ai/rebalancing`), and DTOs/interfaces. **Import** `PortfolioModule`, `UserFinancialProfileModule`, and (optionally) `SnowflakeSyncModule` for historical context.
+To **expose the module catalog**, we will create `apps/client/src/app/dashboard/module-catalog/module-catalog.component.{ts,html,scss,spec.ts}` as an overlay or sidebar panel that injects `ModuleRegistryService`, renders a search field plus the list of registered modules, and emits an event consumed by `DashboardCanvasComponent` to add a module at the next available grid position. Drag-from-catalog is handled via standard HTML drag-and-drop or Angular CDK `DragDropModule` and integrated with gridster's drop API.
 
-- **To deliver the financial-profile data API**, **create** a new `UserFinancialProfileModule` at `apps/api/src/app/user-financial-profile/` with: `user-financial-profile.module.ts` (exports `UserFinancialProfileService`), `user-financial-profile.service.ts` (Prisma upsert/read for `FinancialProfile`, every call scoped to the authenticated `userId`), `user-financial-profile.controller.ts` (`GET` returns 200 / 404 — explicitly not 500 — and `PATCH` upserts), and `user-financial-profile.dto.ts` (class-validator schema mirroring the Prisma model).
+To **persist the layout server-side**, we will (a) add `model UserDashboardLayout { userId String @id; user User @relation(fields: [userId], references: [id], onDelete: Cascade); layoutData Json; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt }` to `prisma/schema.prisma` (using `Json` not `Jsonb` because Prisma maps `Json` to PostgreSQL `jsonb` by default); (b) declare the back-relation `userDashboardLayout UserDashboardLayout?` on the `User` model (Prisma 7.x requirement per Decision D-013); (c) generate a new migration named `add-user-dashboard-layout` via `npx prisma migrate dev --name add-user-dashboard-layout`; (d) create `apps/api/src/app/user/user-dashboard-layout.controller.ts` with `GET` and `@HttpCode(HttpStatus.OK) PATCH` handlers under route `user/layout`, mirroring the structure of `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts`; (e) create `apps/api/src/app/user/user-dashboard-layout.service.ts` with `findByUserId(userId)` and `upsertForUser(userId, dto)` methods backed by `PrismaService`; (f) create `apps/api/src/app/user/user-dashboard-layout.module.ts` registering the controller, service, and `PrismaModule` import; (g) wire `UserDashboardLayoutModule` into `apps/api/src/app/app.module.ts` imports list adjacent to the existing `UserFinancialProfileModule` registration at line 182.
 
-- **To deliver the Angular UI**, **create** three standalone Angular components: `ChatPanelComponent` at `apps/client/src/app/components/chat-panel/`, `RebalancingPageComponent` at `apps/client/src/app/pages/portfolio/rebalancing/`, and `FinancialProfileFormComponent` at `apps/client/src/app/components/financial-profile-form/`. Add a single `/portfolio/rebalancing` entry to `app.routes.ts`. Add an `<app-chat-panel>` selector to the existing portfolio-page sidebar slot in `apps/client/src/app/pages/portfolio/portfolio-page.html`. Open `FinancialProfileFormComponent` from the user-account page using Angular Material `MatDialog`.
+To **collapse the routing surface**, we will replace the array body of `apps/client/src/app/app.routes.ts` with a single entry `{ path: '', component: GfDashboardCanvasComponent, canActivate: [AuthGuard], title: 'Dashboard' }` (plus any auth/login routes the host platform requires for unauthenticated access; the wildcard `**` redirect remains pointing at the root). Strictly preserved are: `RouterModule.forRoot(routes, { ... preloadingStrategy: ModulePreloadService ... })` in `apps/client/src/main.ts`, `ServiceWorkerModule.register('ngsw-worker.js', ...)` registration, the `PageTitleStrategy` provider, and the `ModulePreloadService` provider — all without modification. Removed are the imports and template references to `GfHeaderComponent` and `GfFooterComponent` in `apps/client/src/app/app.component.{ts,html}`.
 
-- **To wire all four new NestJS modules into the application**, **modify** `apps/api/src/app/app.module.ts` to add exactly four new entries to the `imports` array: `SnowflakeSyncModule`, `AiChatModule`, `RebalancingModule`, `UserFinancialProfileModule`. No existing imports are removed or reordered.
+To **wire grid-state-driven persistence**, we will subscribe inside `DashboardCanvasComponent` to gridster's `itemChangeCallback`, `itemResizeCallback`, and the canvas's own add/remove handlers; on every event we will pipe through a 500 ms `debounceTime` operator and call a new client-side `UserDashboardLayoutService` (`apps/client/src/app/dashboard/services/user-dashboard-layout.service.ts`) that issues `PATCH /api/v1/user/layout` via `HttpClient`. On `ngOnInit`, the canvas calls `GET /api/v1/user/layout`; if the response is HTTP 404 (no saved layout), the canvas renders blank and opens the catalog programmatically.
 
-- **To document required environment variables**, **append** to `.env.example` exactly seven new placeholder entries: `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_SCHEMA`, and `ANTHROPIC_API_KEY`. Existing variables are preserved verbatim.
+To **enforce design system compliance for grid chrome**, every CSS property value in the new files (`dashboard-canvas.component.scss`, module wrapper SCSS, `module-catalog.component.scss`) must trace to either a Material 3 system token via the `var(--mat-sys-<token>, <hardcoded-fallback>)` pattern (per Decision D-020) or a token from `apps/client/src/styles/variables.scss`; raw color literals or hardcoded spacing pixel values are prohibited. All Angular Material components that map to grid chrome (buttons in module headers, the Mat dialog/overlay backing the catalog) are imported per-component as the existing codebase already does.
 
-- **To satisfy the cross-cutting Observability rule**, instrument each new service with structured `Logger` output that includes a per-request correlation ID (generated at controller boundary, propagated through service calls and SSE response headers), expose a `/api/v1/health/snowflake` and `/api/v1/health/anthropic` style probe by extending the existing `HealthModule` pattern (additive: new module file, no modification to existing health code), and emit application-level metrics (counters for sync success/failure, chat tokens, rebalancing latency) using a NestJS-idiomatic in-process registry plus a `/api/v1/metrics` route added in a new `MetricsModule`. A dashboard template (Markdown reference + JSON definition) is delivered alongside the source code under `docs/observability/`.
+Each requirement is mapped to specific technical actions in the table below:
 
-- **To satisfy the Explainability rule**, generate `docs/decisions/agent-action-plan-decisions.md` containing a Markdown decision-log table covering every non-trivial implementation decision (e.g., "stateless chat with 4-turn client window," "reuse `PortfolioChangedEvent` instead of creating `OrderCreatedEvent`," "use `tool_use` content block for rebalancing structured output," "version constraint mismatch resolution: use installed Angular 21.2.7 and Prisma 7.7.0 over user-stated Angular 19 and Prisma 6"). Include a bidirectional traceability matrix mapping each Feature A / B / C requirement to the file(s) that implement it.
-
-- **To satisfy the Executive Presentation rule**, produce `blitzy-deck/agent-action-plan.html` — a single self-contained reveal.js HTML file (12–18 slides, target 16) with the Blitzy theme, Mermaid architecture diagram, KPI cards for the 4 new endpoints / 3 new components / 1 new Prisma model, risk and mitigation table, and team onboarding closing slide. CDN versions pinned to `reveal.js 5.1.0`, `Mermaid 11.4.0`, `Lucide 0.460.0`.
-
-- **To satisfy the Segmented PR Review rule**, generate `CODE_REVIEW.md` at the repository root with YAML frontmatter listing the seven review domains (Infrastructure/DevOps, Security, Backend Architecture, QA/Test Integrity, Business/Domain, Frontend, Other SME), each with `phase`, `status: OPEN`, and `file_count`, followed by an Executive Summary and per-phase Expert Agent sections with handoff documentation.
+| Requirement | Component(s) Created/Modified | Specific Change |
+|-------------|-------------------------------|-----------------|
+| Single root route | `apps/client/src/app/app.routes.ts` (MODIFY) | Replace 22-entry routes array with 1 entry rendering `GfDashboardCanvasComponent` |
+| Grid canvas | `apps/client/src/app/dashboard/dashboard-canvas/*` (CREATE) | Standalone component embedding `<gridster>` with 12-col, 2×2-min config |
+| Module registry | `apps/client/src/app/dashboard/module-registry.service.ts` (CREATE) | `providedIn: 'root'` service with `register/getAll/getByName` |
+| Per-feature wrappers | `apps/client/src/app/dashboard/modules/<name>/*` (CREATE × 5+) | One wrapper per: portfolio-overview, holdings, transactions, analysis, chat |
+| Module catalog | `apps/client/src/app/dashboard/module-catalog/*` (CREATE) | Searchable panel with drag/click add |
+| Layout persistence (DB) | `prisma/schema.prisma` (MODIFY) + new migration (CREATE) | Add `UserDashboardLayout` model + back-relation on `User` |
+| Layout persistence (API) | `apps/api/src/app/user/user-dashboard-layout.controller.ts` (CREATE) + `.service.ts` (CREATE) + `.module.ts` (CREATE) | GET/PATCH endpoints with existing auth pattern |
+| Layout persistence (client) | `apps/client/src/app/dashboard/services/user-dashboard-layout.service.ts` (CREATE) | `HttpClient`-based wrapper for the new endpoints |
+| Routing infrastructure preservation | `apps/client/src/main.ts` (UNCHANGED) | No code edits; `RouterModule.forRoot`, `ServiceWorkerModule`, `ModulePreloadService`, `PageTitleStrategy` all retained verbatim |
+| Header/footer removal | `apps/client/src/app/app.component.{ts,html}` (MODIFY) | Remove `GfHeaderComponent` and `GfFooterComponent` imports/template references |
+| Permission additions | `libs/common/src/lib/permissions.ts` (MODIFY) | Add `permissions.readUserDashboardLayout`, `permissions.updateUserDashboardLayout` |
+| AppModule wiring | `apps/api/src/app/app.module.ts` (MODIFY) | Import `UserDashboardLayoutModule` adjacent to `UserFinancialProfileModule` |
+| Auto-open catalog | `DashboardCanvasComponent.ngOnInit` (CREATE) | On 404 from layout GET, programmatically open catalog |
+| 100 ms drag/resize SLO | gridster v21 NgZone integration | Validate against `provideZoneChangeDetection()` host |
+| 500 ms persistence debounce | `DashboardCanvasComponent` save subscription | RxJS `debounceTime(500)` on grid-state events |
+| Material Design 3 chrome | All new SCSS files | `var(--mat-sys-<token>, <fallback>)` per Decision D-020 |
 
 
 ## 0.2 Repository Scope Discovery
 
 ### 0.2.1 Comprehensive File Analysis
 
-The following file-pattern inventory enumerates every file or directory in the existing Ghostfolio v3.0.0 monorepo that is **either modified** by this work (limited to the additive wiring points enumerated in `§ 0.6.2`) or **read** to inform the new code paths. The repository was inspected through `get_source_folder_contents`, `read_file`, and `bash` (`grep`, `find`, `ls`) tooling.
+The Blitzy platform has performed an exhaustive sweep of the Ghostfolio Nx monorepo (`apps/api` NestJS backend, `apps/client` Angular 21.2.7 frontend, `libs/common` shared TypeScript library, `libs/ui` shared Angular UI library, `prisma/` schema-and-migrations area) and enumerates the existing files that must be modified, the existing files that participate as integration points (read but not modified), and the existing files that are explicitly removed.
 
-#### 0.2.1.1 Existing Modules Touched (Strictly Wiring-Only)
+#### 0.2.1.1 Existing Modules to Modify
 
-The set of existing files modified by this work is intentionally minimal and matches verbatim the user's "Additive-only wiring points":
+| File | Modification Type | Purpose |
+|------|-------------------|---------|
+| `apps/client/src/app/app.routes.ts` | Replace contents | Collapse 22-entry route array to a single `path: ''` entry rendering `GfDashboardCanvasComponent` plus an auth callback route and a wildcard redirect to root |
+| `apps/client/src/app/app.component.ts` | Remove imports | Drop `GfFooterComponent` and `GfHeaderComponent` imports (lines 36–37) and any logic exclusively servicing the removed chrome |
+| `apps/client/src/app/app.component.html` | Replace contents | Remove `<gf-header>` / `<gf-footer>` references; reduce shell to `<router-outlet />` plus optional info-message banner |
+| `apps/client/src/app/app.component.scss` | Reduce contents | Remove header/footer-specific layout rules; retain only host-level full-height layout |
+| `prisma/schema.prisma` | Add model + back-relation | Append `model UserDashboardLayout { ... }`; add `userDashboardLayout UserDashboardLayout?` back-relation to existing `User` model (Prisma 7.x explicit-back-relation requirement per Decision D-013) |
+| `apps/api/src/app/app.module.ts` | Add import | Add `UserDashboardLayoutModule` import (line ~66 area) and add to `imports: [...]` array (adjacent to `UserFinancialProfileModule` at line 182) |
+| `libs/common/src/lib/permissions.ts` | Add constants | Add `readUserDashboardLayout` and `updateUserDashboardLayout` permission constants and grant them to `ADMIN` and `USER` roles only (DEMO role explicitly excluded per Decision D-005 pattern) |
+| `package.json` | Add dependency | Add `"angular-gridster2": "21.0.1"` to `dependencies` block; the file is also auto-updated by `npm install` to refresh `package-lock.json` |
+| `package-lock.json` | Auto-updated | Locks the angular-gridster2 dependency tree |
+| `apps/client/src/main.ts` | UNCHANGED | Strictly preserved per prompt boundary: `RouterModule.forRoot`, `ServiceWorkerModule`, `provideZoneChangeDetection`, `ModulePreloadService`, `PageTitleStrategy` all remain verbatim |
+| `apps/api/src/main.ts` | UNCHANGED | API bootstrap stays as-is; the new module is wired through `AppModule` only |
+| `.config/prisma.ts` | UNCHANGED | Prisma config already points to `prisma/schema.prisma` and `prisma/migrations`; no edit required |
 
-| File | Path | Change Type | Specific Modification |
-|------|------|-------------|------------------------|
-| Root NestJS module | `apps/api/src/app/app.module.ts` | ADD imports | Append four new module imports to the `imports` array: `SnowflakeSyncModule`, `AiChatModule`, `RebalancingModule`, `UserFinancialProfileModule`. No existing entry is reordered or removed. |
-| Prisma schema | `prisma/schema.prisma` | ADD model + enum | Append one `model FinancialProfile { ... }` block and one `enum RiskTolerance { LOW MEDIUM HIGH }` block. No existing model definition is altered. |
-| Angular root routes | `apps/client/src/app/app.routes.ts` | ADD route | Insert one `{ path: 'portfolio/rebalancing', loadComponent: () => import(...) }` route entry. No existing route is altered. |
-| Portfolio page template | `apps/client/src/app/pages/portfolio/portfolio-page.html` (and SCSS sibling for sidebar slot styling, only if a sidebar grid cell does not yet exist) | ADD selector | Insert `<app-chat-panel></app-chat-panel>` into the sidebar slot. No existing markup is altered. |
-| Environment example | `.env.example` | APPEND lines | Append seven new placeholder lines for `SNOWFLAKE_*` (six) and `ANTHROPIC_API_KEY` (one). Existing entries are preserved verbatim. |
+#### 0.2.1.2 Existing Files to Remove (Route-Driven Pages and Shell Chrome)
 
-No other existing file is modified. This is a hard constraint enforced by Rule 1 in `§ 0.7` and verified by Gate 9 in `§ 0.7.5`.
+The prompt's BOUNDARIES section lists the categories of files to remove. The following enumerates the concrete folders that fall into those categories. Removal of an entire folder is denoted by a trailing `/`; removal of specific files is enumerated.
 
-#### 0.2.1.2 Existing Files Read for Context (Read-Only)
+| Path Pattern | Removal Category | Notes |
+|--------------|-------------------|-------|
+| `apps/client/src/app/components/header/` | Sidebar/topnav nav components | Entire folder (`header.component.{ts,html,scss}`) removed |
+| `apps/client/src/app/components/footer/` | Sidebar/topnav nav components | Entire folder (`footer.component.{ts,html,scss}`) removed |
+| `apps/client/src/app/pages/home/home-page.component.ts` | Screen-level route component tree | The home page shell (its tabs, route-driven children) is removed; the underlying `home-overview`, `home-holdings`, `home-summary`, `home-watchlist`, `home-market` presentation components in `apps/client/src/app/components/` are RETAINED and reused as module content |
+| `apps/client/src/app/pages/home/home-page.html` | Screen-level route component tree | Removed |
+| `apps/client/src/app/pages/home/home-page.routes.ts` | Screen-level route component tree | Removed |
+| `apps/client/src/app/pages/home/home-page.scss` | Screen-level route component tree | Removed |
+| `apps/client/src/app/pages/portfolio/portfolio-page.component.ts` | Screen-level route component tree | Removed; the `<app-chat-panel>` embed at `portfolio-page.html:32` is superseded by the standalone chat module |
+| `apps/client/src/app/pages/portfolio/portfolio-page.html` | Screen-level route component tree | Removed |
+| `apps/client/src/app/pages/portfolio/portfolio-page.routes.ts` | Screen-level route component tree | Removed |
+| `apps/client/src/app/pages/portfolio/portfolio-page.scss` | Screen-level route component tree | Removed |
+| `apps/client/src/app/pages/portfolio/{activities,allocations,analysis,fire,rebalancing,x-ray}/*-page.component.ts` | Screen-level route component tree | Page-level route shells removed; underlying presentation components (e.g., the rebalancing `RebalancingPageComponent` used as content) are retained where they exist as reusable presentation, or removed where they are pure shells |
+| `apps/client/src/app/pages/markets/`, `apps/client/src/app/pages/zen/`, `apps/client/src/app/pages/accounts/`, `apps/client/src/app/pages/admin/`, `apps/client/src/app/pages/about/`, `apps/client/src/app/pages/auth/`, `apps/client/src/app/pages/api/`, `apps/client/src/app/pages/blog/`, `apps/client/src/app/pages/demo/`, `apps/client/src/app/pages/faq/`, `apps/client/src/app/pages/features/`, `apps/client/src/app/pages/i18n/`, `apps/client/src/app/pages/landing/`, `apps/client/src/app/pages/open/`, `apps/client/src/app/pages/pricing/`, `apps/client/src/app/pages/public/`, `apps/client/src/app/pages/register/`, `apps/client/src/app/pages/resources/`, `apps/client/src/app/pages/user-account/`, `apps/client/src/app/pages/webauthn/` | Screen-level route component tree (all routed pages) | Entire `apps/client/src/app/pages/` namespace is removed because the route table has collapsed to a single canvas route. Where any underlying business-logic reused by modules currently lives in a page folder, the relevant component is moved or its consumed services are referenced directly |
 
-The following files are read by the implementation agent or are referenced by `import` statements in the new modules. None of them is modified.
+> Note on scope of `apps/client/src/app/pages/` removal: the prompt's BOUNDARIES & PRESERVATION section explicitly states "REMOVE: Angular routing shell components, sidebar/topnav nav components, all screen-level route component trees" and PRESERVES "all data-fetching services, business logic, Ghostfolio API integrations". Where a page-folder file contains only routing/shell code (e.g., `*-page.routes.ts`, `*-page.component.ts` that hosts only `mat-tab-nav-bar` + `<router-outlet/>`), it is removed. Where a presentation component lives in `apps/client/src/app/components/` (e.g., `GfHomeOverviewComponent`, `GfHomeHoldingsComponent`, `ChatPanelComponent`, `GfActivitiesPageComponent` if it is a presentation component rather than a route shell), it is RETAINED and reused as the inner content of a module wrapper.
 
-| Pattern | Purpose | Files of Interest |
-|---------|---------|-------------------|
-| Existing event infrastructure | Reuse `PortfolioChangedEvent` and the `@OnEvent` listener pattern | `apps/api/src/events/portfolio-changed.event.ts`, `apps/api/src/events/portfolio-changed.listener.ts`, `apps/api/src/events/events.module.ts` |
-| Existing emission sites for `PortfolioChangedEvent` | Confirm Order CRUD already triggers the event the Snowflake listener subscribes to | `apps/api/src/app/activities/activities.service.ts` (lines 92, 235, 244, 270, 318, 900) |
-| Existing portfolio service interface | Source of truth for chat-agent tool delegation | `apps/api/src/app/portfolio/portfolio.service.ts` (`getDetails:467`, `getPerformance:991`, `getHoldings:348`, `getInvestments:387`) |
-| Existing symbol service interface | Source of truth for `get_market_data` tool | `apps/api/src/app/symbol/symbol.service.ts` (`get:23`, `lookup:98`) |
-| Existing AI controller pattern | Stylistic reference for the new chat and rebalancing controllers | `apps/api/src/app/endpoints/ai/ai.controller.ts`, `apps/api/src/app/endpoints/ai/ai.module.ts`, `apps/api/src/app/endpoints/ai/ai.service.ts` |
-| Existing JWT strategy | Reused via `@UseGuards(AuthGuard('jwt'))` | `apps/api/src/app/auth/jwt.strategy.ts`, `apps/api/src/app/auth/auth.module.ts` |
-| Existing permission registry | New permissions registered alongside existing ones | `libs/common/src/lib/permissions.ts` |
-| Existing typed request | Used in new controllers to access `request.user.id` | `libs/common/src/lib/types/request-with-user.type.ts` |
-| Existing route registry (`internalRoutes`) | Reference for route slug constants | `libs/common/src/lib/routes/routes.ts` (lines 121–148 define `portfolio` family) |
-| Existing user account page | Host page for the `FinancialProfileFormComponent` modal trigger | `apps/client/src/app/pages/user-account/user-account-page.ts`, `apps/client/src/app/components/user-account-settings/user-account-settings.component.ts` |
-| Existing portfolio page | Host page for the `<app-chat-panel>` sidebar slot | `apps/client/src/app/pages/portfolio/portfolio-page.ts`, `apps/client/src/app/pages/portfolio/portfolio-page.html` |
-| Existing Material module setup | Reused for `MatDialog`, `MatFormField`, `MatSelect`, `MatButton` in the new components | `apps/client/src/app/app.module.ts` and per-component imports |
-| Existing data-access service | `DataService` used by all client-side feature pages for HTTP calls | `apps/client/src/app/services/data.service.ts` |
-| Existing health module pattern | Extended (additively) by the new `/health/snowflake` and `/health/anthropic` probes | `apps/api/src/app/health/` |
+#### 0.2.1.3 Test Files to Update
 
-#### 0.2.1.3 Search Patterns Applied
+| File Pattern | Update Type |
+|--------------|-------------|
+| `apps/client/src/app/dashboard/**/*.spec.ts` | CREATE — new specs for canvas, registry, module wrappers, catalog, client-side layout service |
+| `apps/api/src/app/user/user-dashboard-layout.controller.spec.ts` | CREATE — controller spec mirroring `user-financial-profile.controller.spec.ts` shape |
+| `apps/api/src/app/user/user-dashboard-layout.service.spec.ts` | CREATE — service spec mirroring `user-financial-profile.service.spec.ts` shape |
+| `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts` | RETAINED — chat panel component spec stays; the tests do not depend on portfolio-page mounting |
+| `apps/client/src/app/pages/portfolio/portfolio-page.component.spec.ts` | REMOVE if present — page shell removed |
+| Other `apps/client/src/app/pages/**/*spec.ts` | REMOVE — alongside their owning page folders |
 
-The discovery process applied the following conceptual patterns; the resulting file list is the union of matches against the existing Ghostfolio source tree:
+#### 0.2.1.4 Configuration Files Touched
 
-- **Existing modules to read:** `apps/api/src/app/**/*.module.ts`, `apps/api/src/app/**/*.service.ts`, `apps/api/src/app/**/*.controller.ts`
-- **Existing tests to reference (no test source modified):** `apps/api/src/app/**/*.spec.ts`, `apps/client/src/app/**/*.spec.ts`
-- **Configuration files (read-only except `.env.example` append):** `package.json`, `tsconfig.base.json`, `tsconfig.json`, `nx.json`, `eslint.config.cjs`, `.env.example`, `.env.dev`, `prisma/schema.prisma`
-- **Documentation files (read-only):** `README.md`, `CHANGELOG.md`, `docs/**/*.md` (where present)
-- **Build / deployment files (read-only):** `Dockerfile`, `docker-compose*.yml`, `docker/**`, `.github/workflows/*.yml`
+| File | Change |
+|------|--------|
+| `package.json` | Add `"angular-gridster2": "21.0.1"` to `dependencies` |
+| `package-lock.json` | Regenerated by `npm install` |
+| `apps/client/project.json` | UNCHANGED — Nx build/serve targets unaffected; the `"prefix": "gf"` entry already governs new component selectors |
+| `apps/client/ngsw-config.json` | UNCHANGED — service-worker prefetch list does not need to enumerate the dashboard route |
+| `apps/client/src/styles.scss` | UNCHANGED — global stylesheet is independent of the dashboard chrome |
+| `apps/client/src/styles/variables.scss` | UNCHANGED unless a new design token is required by grid chrome |
+| `apps/api/project.json` | UNCHANGED |
+| `nx.json` | UNCHANGED — workspace-level config remains |
+| `tsconfig.base.json` | UNCHANGED unless a new path alias is added (e.g., `@ghostfolio/client/dashboard/*`); current path mapping is sufficient because new code lives under existing aliases |
 
-The result confirms: only the five files listed in `§ 0.2.1.1` are modified.
+#### 0.2.1.5 Documentation Files
 
-### 0.2.2 Integration Point Discovery
+| File | Change |
+|------|--------|
+| `docs/decisions/agent-action-plan-decisions.md` | APPEND — new decision rows documenting the chat-panel deviation, gridster engine selection, single-route reduction, layout persistence model choice, debounce window, 12-column grid choice, blank-canvas-first-visit semantics |
+| `docs/observability/user-dashboard-layout.md` | CREATE — observability runbook for the new layout endpoints (per the Observability project rule), documenting the `correlation-id` header, structured log fields, the `user_dashboard_layout_request_total{outcome}` counter, the `user_dashboard_layout_request_latency_seconds` histogram, the `/api/v1/health/...`-style probe, and the local verification procedure |
+| `README.md` | OPTIONAL UPDATE — note the modular dashboard in the feature overview |
+| `CHANGELOG.md` | APPEND — release entry covering the dashboard refactor |
+| `blitzy-deck/dashboard-refactor-deck.html` | CREATE — single self-contained Reveal.js HTML executive presentation covering scope, architecture diagrams, risks, mitigations (per the Executive Presentation project rule), 12–18 slides |
 
-The new feature wiring intersects existing Ghostfolio surfaces at exactly the following well-defined integration points. Each is read-only at the type level and additive at the wiring level.
+#### 0.2.1.6 Build / Deployment Files
 
-| Integration Surface | Existing Construct | New Code Behavior |
-|---------------------|--------------------|--------------------|
-| API endpoints — module registration | `AppModule.imports` array in `apps/api/src/app/app.module.ts` | Add four new module imports (additive). |
-| API endpoints — request lifecycle | NestJS global URI versioning (`api/v1`) and `HtmlTemplateMiddleware` (registered via `configure(consumer)` in `app.module.ts`) | All four new endpoints inherit `/api/v1` prefix; new module endpoints fall under the `api/*` whitelist already configured. No middleware changes. |
-| Database — Prisma client | `PrismaModule` exports `PrismaService` (consumed across the codebase) | New `UserFinancialProfileService`, `SnowflakeSyncService`, `AiChatService`, and `RebalancingService` import `PrismaModule` and inject `PrismaService` to read/write `FinancialProfile`, read `Order`, `User`, `Account`, etc. |
-| Database — schema migration | `prisma/migrations/` (timestamped folders) | New migration folder `prisma/migrations/<timestamp>_add_financial_profile/` containing a single `migration.sql` for `FinancialProfile` table + `RiskTolerance` enum + foreign-key. |
-| Service classes — chat-agent tool dispatch | Exported `PortfolioService` (from `PortfolioModule`), exported `SymbolService` (from `SymbolModule`) | `AiChatService` injects both via constructor; the four chat tool implementations delegate to `PortfolioService.getDetails(...)` / `getPerformance(...)` and `SymbolService.get(...)`. No existing method is modified. |
-| Service classes — rebalancing context | Exported `PortfolioService`, exported `UserFinancialProfileService` (new) | `RebalancingService` injects both. |
-| Controllers / handlers | Existing controller decorator pattern (`@Controller(...)`, `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)`, `@HasPermission(...)`) | Four new controllers follow the identical decorator and guard pattern. |
-| Middleware / interceptors | None modified | New SSE response in `AiChatController` uses NestJS's built-in `@Sse()` decorator; no new middleware is registered. |
-| Event listeners | `EventEmitter2` registered globally via `EventEmitterModule.forRoot()` (line 130 of `app.module.ts`) | `SnowflakeSyncService` adds an `@OnEvent(PortfolioChangedEvent.getName())` handler. The handler invokes `syncOrders(userId)` for the affected user. |
-| Cron registry | `ScheduleModule.forRoot()` already imported (`app.module.ts` line 133) | `SnowflakeSyncService` adds a `@Cron('0 2 * * *', { name: 'snowflake-daily-sync', timeZone: 'UTC' })` method. |
-| Angular routing | `apps/client/src/app/app.routes.ts` | Insert one new lazy-loaded entry at path `portfolio/rebalancing`. The existing `internalRoutes` table in `libs/common/src/lib/routes/routes.ts` is not modified. |
-| Angular pages | Existing portfolio page template; existing user-account page template | Portfolio page sidebar slot embeds `<app-chat-panel>`. User-account page opens `FinancialProfileFormComponent` via `MatDialog.open(...)` from a new menu item; **the existing user-account-settings template is not modified** — the dialog trigger is implemented in the host page's TS, not by editing the existing settings component template. |
-| Auth — JWT validation | `JwtStrategy` registered in `AuthModule`; `AuthGuard('jwt')` used as a `UseGuards` argument | All four new controllers use the same guard. No `AuthModule` modification. |
-| Auth — permissions | `HasPermissionGuard` in `apps/api/src/app/auth/has-permission.guard.ts`; permission constants in `libs/common/src/lib/permissions.ts` | New permission constants added (additive) to `libs/common/src/lib/permissions.ts`: `readAiChat`, `readAiRebalancing`, `readFinancialProfile`, `updateFinancialProfile`, `triggerSnowflakeSync` (admin). |
-| Configuration | Global `ConfigModule.forRoot()` already imported | New services inject `ConfigService` and call `configService.get<string>('SNOWFLAKE_ACCOUNT')` etc. |
+| File | Change |
+|------|--------|
+| `Dockerfile` | UNCHANGED — runtime image is unaffected; the new module is part of `apps/api` and the new client code is part of `apps/client` |
+| `docker/docker-compose.yml`, `docker/docker-compose.dev.yml`, `docker/docker-compose.build.yml` | UNCHANGED |
+| `docker/entrypoint.sh` | UNCHANGED — `prisma migrate deploy` already runs at boot and will apply the new migration without modification |
+| `.github/workflows/*.yml` | UNCHANGED — existing CI runs `nx build`, `nx test`, `nx lint` which transparently cover the new files |
 
-### 0.2.3 Web Search Research Conducted
+#### 0.2.1.7 Integration Point Discovery
 
-The following web research was conducted (or is recommended for the implementation agent) to ground the new code in current best practice and pinned versions:
+| Integration Surface | Existing File / Symbol | Relationship to New Feature |
+|---------------------|------------------------|------------------------------|
+| API endpoints | `apps/api/src/app/user/user.controller.ts` | Reference template for route layout (`@Controller('user')` with `@Get()` / `@Patch()` decorated methods); the new layout controller uses `@Controller('user/layout')` to namespace the new endpoints under `/api/v1/user/layout` |
+| API auth pattern | `AuthGuard('jwt')` (`@nestjs/passport`) and `apps/api/src/guards/has-permission.guard.ts` (`HasPermissionGuard`) | New layout endpoints declare `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` with `@HasPermission(permissions.readUserDashboardLayout)` / `@HasPermission(permissions.updateUserDashboardLayout)` |
+| Database access | `apps/api/src/services/prisma/prisma.service.ts` (global `PrismaService`) | New service injects `PrismaService` and uses `prismaService.userDashboardLayout.{findUnique, upsert}` |
+| Database models | `prisma/schema.prisma` lines 261–290 (User model) and 364–376 (FinancialProfile model) | `User.userDashboardLayout` back-relation added; `UserDashboardLayout.user` forward relation declared with `onDelete: Cascade` (mirrors the FinancialProfile pattern from line 374) |
+| Service classes (Angular) | `apps/client/src/app/services/user/user.service.ts` (existing user store) | Module wrappers consume existing services unchanged; the dashboard does not duplicate user state |
+| Existing data-fetching services | `apps/client/src/app/services/{ai-chat.service.ts, financial-profile.service.ts, rebalancing.service.ts}` and the shared services in `libs/ui/src/lib/services/` (e.g., `DataService`) | Module wrappers import these directly; no edits to the services themselves |
+| Existing presentation components | `apps/client/src/app/components/{home-overview, home-holdings, home-summary, home-watchlist, home-market, chat-panel, portfolio-summary, portfolio-performance, holdings-table, ...}/` | Reused inside module wrappers; their existing `gf-*` selectors remain valid |
+| Auth guard (Angular) | `apps/client/src/app/core/auth.guard.ts` | The single new root route uses `canActivate: [AuthGuard]` exactly as today's protected routes do |
+| Routing infrastructure | `apps/client/src/main.ts` providers (`RouterModule.forRoot`, `ServiceWorkerModule`, `ModulePreloadService`, `PageTitleStrategy`) | All retained verbatim — preserved per BOUNDARIES section |
+| HTTP interceptors | `apps/client/src/app/core/auth.interceptor.ts` and `apps/client/src/app/core/http-response.interceptor.ts` | The new client-side layout service uses `HttpClient`, so the existing JWT bearer interceptor automatically attaches the auth header to layout requests; no edits required |
+| Permission registry | `libs/common/src/lib/permissions.ts` | Two new constants added, granted to USER and ADMIN roles only |
+| AppModule (NestJS) wiring | `apps/api/src/app/app.module.ts` | New module registered alongside `UserFinancialProfileModule` |
+| App component (Angular) | `apps/client/src/app/app.component.ts` lines 36–37 (header/footer imports) | Header/footer imports removed; nothing else in the shell consumes the dashboard |
 
-- **Anthropic TypeScript SDK** — current available version on npm and tool-use streaming pattern. The user's prompt pins `@anthropic-ai/sdk ^1.0.0`; this SemVer caret range is the version constraint added to `package.json`. Implementation uses `client.messages.stream({...})` for chat (Feature B) and `client.messages.create({...})` with a single-element `tools` array for rebalancing (Feature C, per Rule 4).
-- **Snowflake Node.js driver (`snowflake-sdk`)** — current available version on npm and its **bind-variable** API. The user's prompt pins `snowflake-sdk ^1.14.0`; this SemVer caret range is the version constraint added to `package.json`. Bind variables use `?` placeholders with a `binds: any[]` parameter to `connection.execute({...})`. The MERGE statement template, written once in `snowflake-sync.service.ts`, uses bind variables exclusively (Rule 2).
-- **NestJS Server-Sent Events** — `@Sse('chat')` decorator returning `Observable<MessageEvent>`. SSE is a first-class NestJS primitive and requires no additional package. The endpoint inherits `Content-Type: text/event-stream`.
-- **Anthropic tool-use schema for structured output** — single-tool prompt strategy: a `tools: [{name: 'rebalancing_recommendations', input_schema: {...}}]` array with `tool_choice: {type: 'tool', name: 'rebalancing_recommendations'}` to force structured invocation. The service reads only the `tool_use` content block.
-- **NestJS event-emitter v3 API** — `@OnEvent('event.name')` decorator semantics; `EventEmitter2` accepts wildcards but the new listener uses a literal event name to avoid coupling to other emitters.
-- **`@nestjs/schedule` v6 cron syntax** — supports six-field cron expressions; the `02:00 UTC` daily expression is `0 2 * * *` with `timeZone: 'UTC'` in the decorator options.
+### 0.2.2 Web Search Research Conducted
 
-### 0.2.4 New File Requirements
+The Blitzy platform performed targeted research to validate the dependency choice and catalog the gridster v21 API surface:
 
-The following new files are created. Paths follow the existing Ghostfolio Nx folder conventions (`apps/api/src/app/<feature>/` for backend feature modules; `apps/client/src/app/components/<feature>/` for shared UI; `apps/client/src/app/pages/<feature>/` for routed pages; `prisma/migrations/<timestamp>_<slug>/` for schema migrations).
+- **Best practices for grid-based dashboard layouts in Angular 21** — angular-gridster2 v21.0.1 is the current canonical Angular-native option, published January 9, 2026, with an MIT license, ~187k weekly downloads on npm, and an active maintainer (`tiberiuzuld`). It supports both zone-based and zoneless Angular setups by retaining `NgZone.run` / `NgZone.runOutsideAngular` calls, which directly addresses the prompt's validation requirement to "validate zone/zoneless interaction with angular-gridster2 v21's NgZone calls" against the host's `provideZoneChangeDetection()` configuration.
+- **Library API for v21.0.0+** — v21.0.0 introduced standalone-only imports: a component imports `Gridster` and `GridsterItemComponent` (renamed from `GridsterModule`/`GridsterItem` legacy patterns) directly into its `imports: [...]` array and uses `<gridster [options]="options"><gridster-item *ngFor="let item of dashboard" [item]="item">…</gridster-item></gridster>` template syntax. The runtime API is exposed via `initCallback` or via Angular's `viewChild(Gridster).api`. The legacy `gridster.api.optionsChanged()` method has been removed; clients must "set a new object on input options when there is a change" instead.
+- **Recommended grid configuration patterns for fixed-row-height, multi-column dashboards** — `gridType: 'fixed'` with explicit `fixedRowHeight: <px>` produces the constant-height row behavior the prompt requires; `minCols: 12`, `maxCols: 12` lock the column count; `displayGrid: 'always'` provides the visible grid backdrop expected of dashboards; `pushItems: true` and `swap: true` provide the natural drag-rearrange behavior; `minItemCols: 2`, `minItemRows: 2` enforce the 2×2 floor; per-item `minItemCols`/`minItemRows` overrides are honored by the engine.
+- **Common patterns for module catalogs and drag-drop placement** — Either gridster's native drop-from-outside support or Angular CDK `DragDropModule` with a custom drop handler are the two viable approaches; the implementation will use gridster's drop API to keep the placement logic inside the engine that already owns the grid coordinates.
+- **Persistence patterns for per-user UI preferences** — JSONB column with `userId` PK is the standard approach in the existing codebase (`Settings` model uses this pattern at `prisma/schema.prisma`); `FinancialProfile` provides the most direct precedent at lines 364–376 with cascade-delete semantics that the new model adopts verbatim.
+- **Angular zoneless and zone-based interaction with third-party libraries that call `NgZone`** — angular-gridster2 v21 release notes explicitly state NgZone calls are kept "to keep the performance high" for apps still using zone.js; this is compatible with the host's `provideZoneChangeDetection()` setup (`apps/client/src/main.ts` line 87) and meets the prompt's 100 ms drag/resize SLO without requiring a zoneless migration.
 
-#### 0.2.4.1 New Backend Source Files
+### 0.2.3 New File Requirements
 
-| File | Purpose |
-|------|---------|
-| `apps/api/src/app/snowflake-sync/snowflake-sync.module.ts` | NestJS module for Feature A; imports `ConfigModule`, `PrismaModule`, `PortfolioModule`; declares the service, controller, and `SnowflakeClientFactory` provider. |
-| `apps/api/src/app/snowflake-sync/snowflake-sync.service.ts` | Cron + event-listener implementation; constructs MERGE statements with `snowflake-sdk` bind variables for the three Snowflake tables; exposes `syncOrders(userId)`, `syncSnapshots(userId, date)`, `syncMetrics(userId, date)`, and `queryHistory(userId, sql, binds)` — the last consumed by the chat-agent tool. |
-| `apps/api/src/app/snowflake-sync/snowflake-sync.controller.ts` | `@Controller('snowflake-sync')`; `@Post('trigger')` admin manual-trigger endpoint. |
-| `apps/api/src/app/snowflake-sync/snowflake-client.factory.ts` | NestJS factory provider that constructs the `snowflake-sdk` connection from `ConfigService` values; exposes a `getConnection(): Promise<Connection>` method. |
-| `apps/api/src/app/snowflake-sync/interfaces/snowflake-sync.interface.ts` | TypeScript interfaces for the three Snowflake table row shapes. |
-| `apps/api/src/app/snowflake-sync/dtos/manual-trigger.dto.ts` | `class-validator` DTO for the admin trigger endpoint. |
-| `apps/api/src/app/ai-chat/ai-chat.module.ts` | NestJS module for Feature B; imports `ConfigModule`, `PortfolioModule`, `SymbolModule`, `UserFinancialProfileModule`, `SnowflakeSyncModule`. |
-| `apps/api/src/app/ai-chat/ai-chat.service.ts` | Anthropic SDK streaming implementation; defines four tool schemas (`get_current_positions`, `get_performance_metrics`, `query_history`, `get_market_data`); dispatches each `tool_use` content block to the corresponding injected service. |
-| `apps/api/src/app/ai-chat/ai-chat.controller.ts` | `@Controller('ai/chat')`; `@Post()` `@Sse()` endpoint streaming `Observable<MessageEvent>`. |
-| `apps/api/src/app/ai-chat/dtos/chat-request.dto.ts` | Validation for the inbound message array (max 4 prior turns + new user turn). |
-| `apps/api/src/app/ai-chat/interfaces/chat-tool.interface.ts` | TypeScript shapes for tool input/output. |
-| `apps/api/src/app/rebalancing/rebalancing.module.ts` | NestJS module for Feature C; imports `ConfigModule`, `PortfolioModule`, `UserFinancialProfileModule`, `SnowflakeSyncModule`. |
-| `apps/api/src/app/rebalancing/rebalancing.service.ts` | Anthropic SDK call with single-tool `tools` array; reads structured output **only** from `tool_use` content blocks. |
-| `apps/api/src/app/rebalancing/rebalancing.controller.ts` | `@Controller('ai/rebalancing')`; `@Post()` JSON endpoint. |
-| `apps/api/src/app/rebalancing/dtos/rebalancing-request.dto.ts` | `class-validator` schema for the request body. |
-| `apps/api/src/app/rebalancing/interfaces/rebalancing-response.interface.ts` | TypeScript `RebalancingResponse` interface verbatim from `§ 0.1.2.4`. |
-| `apps/api/src/app/user-financial-profile/user-financial-profile.module.ts` | Exports `UserFinancialProfileService`. |
-| `apps/api/src/app/user-financial-profile/user-financial-profile.service.ts` | Prisma upsert/read; every call scoped to `userId` from JWT. |
-| `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` | `@Controller('user/financial-profile')`; `@Get()`, `@Patch()`. |
-| `apps/api/src/app/user-financial-profile/dtos/financial-profile.dto.ts` | `class-validator` schema mirroring the Prisma model. |
-| `apps/api/src/app/health/snowflake-health.indicator.ts` | Additive — registered alongside existing health indicators in `HealthModule`. |
-| `apps/api/src/app/health/anthropic-health.indicator.ts` | Additive — registered alongside existing health indicators. |
-| `apps/api/src/app/metrics/metrics.module.ts` | New module exposing `/api/v1/metrics`; counters and histograms registered by services via DI. |
-| `apps/api/src/app/metrics/metrics.controller.ts` | Returns the metrics registry as text. |
-| `apps/api/src/app/metrics/metrics.service.ts` | In-process registry. |
+The Blitzy platform plans the following new source files. Every file has a clear purpose, and the path layout follows the prompt's FILE ORGANIZATION section verbatim.
 
-#### 0.2.4.2 New Backend Test Files
-
-| File | Purpose |
-|------|---------|
-| `apps/api/src/app/snowflake-sync/snowflake-sync.service.spec.ts` | Unit tests: cron registration, event handler, MERGE bind-variable usage (no template literals), idempotency (running twice does not duplicate rows). |
-| `apps/api/src/app/snowflake-sync/snowflake-sync.controller.spec.ts` | Unit tests: admin trigger 200 path; 401 without JWT; 403 without admin permission. |
-| `apps/api/src/app/ai-chat/ai-chat.service.spec.ts` | Unit tests: tool schema completeness (all 4 tools registered), `ConfigService` reads (no `process.env`), tool dispatch routing. |
-| `apps/api/src/app/ai-chat/ai-chat.controller.spec.ts` | Integration test for `@Sse()`: response `Content-Type: text/event-stream`, first-token latency budget, error → SSE error frame. |
-| `apps/api/src/app/rebalancing/rebalancing.service.spec.ts` | Unit tests: tool-use-only output (Rule 4), `goalReference` non-empty, structured-shape validation. |
-| `apps/api/src/app/rebalancing/rebalancing.controller.spec.ts` | Integration test: 200 with valid body, 401 unauth, 400 invalid body. |
-| `apps/api/src/app/user-financial-profile/user-financial-profile.service.spec.ts` | Unit tests: every `prisma.financialProfile` call includes `userId` from JWT; upsert idempotency. |
-| `apps/api/src/app/user-financial-profile/user-financial-profile.controller.spec.ts` | Integration tests: 200 after PATCH, 404 (not 500) when no record, 400 when `retirementTargetAge < currentAge`. |
-
-#### 0.2.4.3 New Backend Configuration Files
-
-| File | Purpose |
-|------|---------|
-| `prisma/migrations/<timestamp>_add_financial_profile/migration.sql` | Single SQL migration creating the `FinancialProfile` table, the `"RiskTolerance"` PostgreSQL enum type, and the `userId` FK with `ON DELETE CASCADE`. |
-| `docs/observability/snowflake-sync.md` | Dashboard template (Markdown) describing recommended panels for sync success rate, sync latency, MERGE row counts. |
-| `docs/observability/ai-chat.md` | Dashboard template describing chat-token throughput, first-token latency, tool-call distribution. |
-| `docs/observability/ai-rebalancing.md` | Dashboard template for rebalancing latency, recommendation count, warnings rate. |
-| `docs/decisions/agent-action-plan-decisions.md` | Decision log per Explainability rule. |
-| `blitzy-deck/agent-action-plan.html` | reveal.js executive presentation per Executive Presentation rule. |
-| `CODE_REVIEW.md` | Segmented PR review document at repo root (created when the review is initiated). |
-
-#### 0.2.4.4 New Frontend Source Files
-
-| File | Purpose |
-|------|---------|
-| `apps/client/src/app/components/chat-panel/chat-panel.component.ts` | Standalone Angular component; SSE client using `EventSource`; renders messages token-by-token; `errorMessage` state and reconnect button (Rule 6). |
-| `apps/client/src/app/components/chat-panel/chat-panel.component.html` | Template with conditional `<button>` for reconnect when `errorMessage` is truthy. |
-| `apps/client/src/app/components/chat-panel/chat-panel.component.scss` | Component styles. |
-| `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.ts` | Standalone modal dialog component; on open calls `GET /api/v1/user/financial-profile`; pre-populates fields if 200, shows empty form on 404; client-side validation `retirementTargetAge > currentUserAge` before submit; `PATCH` on save. |
-| `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.html` | Material Design 3 dialog form template. |
-| `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.scss` | Component styles. |
-| `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.ts` | Standalone routed component; `loadComponent()` target for `/portfolio/rebalancing`; renders `RebalancingResponse` with each `rationale` expanded by default. |
-| `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.html` | Page template. |
-| `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.scss` | Page styles. |
-| `apps/client/src/app/services/ai-chat.service.ts` | Client-side service wrapping `EventSource` lifecycle for chat. |
-| `apps/client/src/app/services/rebalancing.service.ts` | Client-side service wrapping `HttpClient` POST for rebalancing. |
-| `apps/client/src/app/services/financial-profile.service.ts` | Client-side service wrapping `HttpClient` GET / PATCH for financial profile. |
-
-#### 0.2.4.5 New Frontend Test Files
-
-| File | Purpose |
-|------|---------|
-| `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts` | Component test: SSE error sets `errorMessage` to non-empty string; reconnect button rendered conditionally. |
-| `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.spec.ts` | Component test: 404 from GET shows empty form; validation rejects `retirementTargetAge < currentAge`. |
-| `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.spec.ts` | Component test: every recommendation renders `rationale` and `goalReference`. |
-
-#### 0.2.4.6 New Shared Library Additions
-
-| File | Purpose |
-|------|---------|
-| `libs/common/src/lib/permissions.ts` | **Additive** — five new constants appended (`readAiChat`, `readAiRebalancing`, `readFinancialProfile`, `updateFinancialProfile`, `triggerSnowflakeSync`). Existing constants are preserved verbatim. |
-| `libs/common/src/lib/interfaces/financial-profile.interface.ts` | Shared TypeScript interface for `FinancialProfile` consumed by both server controllers/services and Angular client services. |
-| `libs/common/src/lib/interfaces/rebalancing-response.interface.ts` | Shared `RebalancingResponse` interface (the contract from `§ 0.1.2.4`). |
-| `libs/common/src/lib/interfaces/chat-message.interface.ts` | Shared chat message envelope for the SSE protocol. |
-
-The `libs/common/src/lib/interfaces/index.ts` barrel is updated **additively** to re-export the three new interfaces; this is a wiring-only change identical in spirit to the `AppModule` imports addition and is captured by the additive-only mandate.
+| New File | Purpose |
+|----------|---------|
+| `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.ts` | Standalone Angular canvas component; embeds `<gridster>` with 12-col fixed-row config; manages grid item lifecycle; subscribes to gridster change callbacks; calls `UserDashboardLayoutService.save(...)` debounced at 500 ms; on init calls `UserDashboardLayoutService.load()`, on 404 opens the catalog programmatically |
+| `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.html` | Template with `<gridster>` host plus the catalog overlay slot |
+| `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.scss` | Material 3 token-driven styling (var(--mat-sys-…, fallback)) |
+| `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.spec.ts` | Unit tests: blank canvas on first visit, layout-driven render on returning user, catalog auto-open on 404, save fires within 500 ms debounce on drag/resize/add/remove |
+| `apps/client/src/app/dashboard/module-registry.service.ts` | `providedIn: 'root'` registry exposing `register/getAll/getByName`; rejects duplicate names; enforces minimum cell dimensions on registration |
+| `apps/client/src/app/dashboard/module-registry.service.spec.ts` | Unit tests: registration, duplicate-name rejection, minimum-dimensions validation, retrieval |
+| `apps/client/src/app/dashboard/module-registry.tokens.ts` | Type definitions: `ModuleMetadata`, `ModuleName`, `RegisteredModule` |
+| `apps/client/src/app/dashboard/module-catalog/module-catalog.component.ts` | Standalone component listing registered modules; search-by-name; emits `(addModule)` event consumed by the canvas |
+| `apps/client/src/app/dashboard/module-catalog/module-catalog.component.html` | Template with search input and module list |
+| `apps/client/src/app/dashboard/module-catalog/module-catalog.component.scss` | Material 3 token-driven styling |
+| `apps/client/src/app/dashboard/module-catalog/module-catalog.component.spec.ts` | Unit tests: list rendering, search filter, click-to-add behavior |
+| `apps/client/src/app/dashboard/services/user-dashboard-layout.service.ts` | `HttpClient` wrapper for `GET` and `PATCH /api/v1/user/layout`; returns Observable of layout data |
+| `apps/client/src/app/dashboard/services/user-dashboard-layout.service.spec.ts` | Unit tests: GET/PATCH calls, 404 handling, error propagation |
+| `apps/client/src/app/dashboard/modules/portfolio-overview/portfolio-overview-module.component.ts` | Module wrapper rendering existing `GfHomeOverviewComponent` inside grid chrome (header, drag handle, remove button) |
+| `apps/client/src/app/dashboard/modules/portfolio-overview/portfolio-overview-module.component.{html,scss,spec.ts}` | Template, styles, spec |
+| `apps/client/src/app/dashboard/modules/holdings/holdings-module.component.{ts,html,scss,spec.ts}` | Module wrapper rendering existing `GfHomeHoldingsComponent` |
+| `apps/client/src/app/dashboard/modules/transactions/transactions-module.component.{ts,html,scss,spec.ts}` | Module wrapper rendering existing activities/transactions presentation component |
+| `apps/client/src/app/dashboard/modules/analysis/analysis-module.component.{ts,html,scss,spec.ts}` | Module wrapper rendering existing analysis presentation component |
+| `apps/client/src/app/dashboard/modules/chat/chat-module.component.{ts,html,scss,spec.ts}` | Module wrapper rendering existing `ChatPanelComponent` (DEVIATION POINT — formerly embedded at `portfolio-page.html:32`) |
+| `apps/client/src/app/dashboard/modules/module-host.directive.ts` | Optional structural directive providing a consistent header chrome contract for all module wrappers |
+| `apps/client/src/app/dashboard/dashboard.providers.ts` | Optional `EnvironmentProviders` factory wiring the registry's bootstrap registrations |
+| `apps/api/src/app/user/user-dashboard-layout.controller.ts` | NestJS controller declaring `GET /user/layout` and `PATCH /user/layout`, both protected by `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` and decorated with `@HasPermission(...)`; sets `X-Correlation-ID`; mirrors `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` |
+| `apps/api/src/app/user/user-dashboard-layout.controller.spec.ts` | Controller spec mirroring `user-financial-profile.controller.spec.ts`: route metadata, guard registration, GET/PATCH delegation, 401 propagation, NotFoundException on missing layout |
+| `apps/api/src/app/user/user-dashboard-layout.service.ts` | NestJS service exposing `findByUserId(userId, correlationId?)` and `upsertForUser(userId, dto, correlationId?)`; wraps `PrismaService.userDashboardLayout` calls; idempotent upsert keyed on `userId` |
+| `apps/api/src/app/user/user-dashboard-layout.service.spec.ts` | Service spec mirroring `user-financial-profile.service.spec.ts`: user-scoped lookup, null-on-missing, upsert vs create semantics, DTO field passthrough |
+| `apps/api/src/app/user/user-dashboard-layout.module.ts` | NestJS module registering controller + service + `PrismaModule` import; exports `UserDashboardLayoutService` so future modules can read the layout if needed |
+| `apps/api/src/app/user/dtos/dashboard-layout.dto.ts` | Request DTO for PATCH; uses `class-validator` decorators (`@IsArray`, `@ValidateNested`, `@IsObject`, `@MaxLength`); explicitly omits `userId` per Engineering Rule 5 (Decision D-012) |
+| `prisma/migrations/<timestamp>_add_user_dashboard_layout/migration.sql` | Generated by `npx prisma migrate dev --name add-user-dashboard-layout`; creates `UserDashboardLayout` table with `userId UUID PRIMARY KEY` and FK to `User(id) ON DELETE CASCADE`, plus `layoutData jsonb`, `createdAt timestamptz`, `updatedAt timestamptz` |
+| `apps/client/src/app/dashboard/interfaces/grid-item.interface.ts` | TypeScript interface extending `GridsterItem` with the discriminator `name: ModuleName` and any module-specific config |
+| `apps/client/src/app/dashboard/interfaces/dashboard-layout.interface.ts` | TypeScript interface for the persisted layout payload: `{ items: GridItem[]; updatedAt: string }` |
+| `libs/common/src/lib/interfaces/dashboard-layout.interface.ts` | Shared interface available to both API and client (mirrors the persisted shape) |
+| `docs/observability/user-dashboard-layout.md` | Observability runbook (project rule mandate): structured-log fields, metrics catalog, dashboard JSON template, alert rules |
+| `blitzy-deck/dashboard-refactor-deck.html` | Single-file reveal.js executive presentation (project rule mandate): 12–18 slides, brand palette, Mermaid diagrams, Lucide icons |
 
 
 ## 0.3 Dependency Inventory
 
-### 0.3.1 Private and Public Packages
+### 0.3.1 Public Packages
 
-The complete inventory of packages relevant to this work is enumerated below. New additions are explicitly tagged; all unchanged versions reflect the **exact** strings already present in the Ghostfolio v3.0.0 `package.json` lockfile.
+The Blitzy platform identifies the new public dependency required by the refactor and confirms every existing dependency that the new code consumes. Versions are taken from the user's prompt where specified and from the existing `package.json` otherwise; no placeholder versions are used.
 
-#### 0.3.1.1 New Public Packages (added to `package.json`)
+| Package | Registry | Version | Purpose |
+|---------|----------|---------|---------|
+| `angular-gridster2` | npm (`https://www.npmjs.com/package/angular-gridster2`) | `21.0.1` | NEW — drag-and-drop grid engine; standalone-only Angular API; provides `Gridster`, `GridsterItemComponent`, `GridsterConfig`, `GridsterItem` exports; version explicitly pinned by the prompt and confirmed compatible with Angular 21.x |
+| `@angular/core` | npm | `21.2.7` | EXISTING — used by all new standalone components and services |
+| `@angular/common` | npm | `21.2.7` | EXISTING — `CommonModule` directives consumed by module wrappers and catalog |
+| `@angular/router` | npm | `21.2.7` | EXISTING — `RouterModule.forRoot(...)` invocation preserved verbatim; the new single root route is registered through it |
+| `@angular/forms` | npm | `21.2.7` | EXISTING — `FormsModule` consumed by the catalog search input |
+| `@angular/platform-browser` | npm | `21.2.7` | EXISTING |
+| `@angular/animations` | npm | `21.2.7` | EXISTING |
+| `@angular/material` | npm | `21.2.5` | EXISTING — `MatButtonModule`, `MatIconModule`, `MatFormFieldModule`, `MatInputModule` consumed by catalog and module headers |
+| `@angular/cdk` | npm | `21.2.5` | EXISTING — overlay/portal primitives may back the catalog if a Material `MatDialog`/`MatBottomSheet` is not used |
+| `@angular/service-worker` | npm | `21.2.7` | EXISTING — `ServiceWorkerModule.register(...)` preserved verbatim |
+| `rxjs` | npm | `7.8.1` | EXISTING — `Subject`, `BehaviorSubject`, `debounceTime`, `takeUntilDestroyed` for grid-state save pipeline |
+| `zone.js` | npm | `0.16.1` | EXISTING — host platform is zone-based via `provideZoneChangeDetection()` |
+| `ionicons` | npm | `8.0.13` | EXISTING — module header icons consume registered Ionicons |
+| `@nestjs/common` | npm | `11.1.19` | EXISTING — controller decorators (`@Controller`, `@Get`, `@Patch`, `@UseGuards`, `@HttpCode`) for the new layout controller |
+| `@nestjs/core` | npm | `11.1.19` | EXISTING — `REQUEST` token injection for `RequestWithUser` |
+| `@nestjs/passport` | npm | `11.0.5` | EXISTING — `AuthGuard('jwt')` import |
+| `@nestjs/jwt` | npm | `11.0.2` | EXISTING — JWT validation underpinning the auth guard |
+| `@prisma/client` | npm | `7.7.0` | EXISTING — generated `userDashboardLayout` delegate consumed by the new service |
+| `@prisma/adapter-pg` | npm | `7.7.0` | EXISTING — PostgreSQL adapter for the operational store |
+| `prisma` | npm (devDep) | `7.7.0` | EXISTING — CLI used to generate the new migration |
+| `class-validator` | npm | `0.15.1` | EXISTING — DTO validation decorators (`@IsArray`, `@IsObject`, `@MaxLength`, `@ValidateNested`) on the layout PATCH body |
+| `class-transformer` | npm | `0.5.1` | EXISTING — `@Type(() => ...)` decorator for nested array validation |
+| `passport-jwt` | npm | `4.0.1` | EXISTING — JWT bearer strategy used by the auth guard |
+| `http-status-codes` | npm | `2.3.0` | EXISTING — `StatusCodes` constants used in controller error paths |
+| `jest` | npm (devDep) | `30.2.0` | EXISTING — unit-test runner for both API and client; used for new specs |
+| `jest-preset-angular` | npm (devDep) | `16.0.0` | EXISTING — Angular Jest preset configured in `apps/client/jest.config.ts` |
+| `@nx/angular` | npm (devDep) | `22.6.5` | EXISTING — Angular Nx executor used for `nx build client` and `nx test client` |
+| `@nx/nest` | npm (devDep) | `22.6.5` | EXISTING — NestJS Nx executor used for `nx build api` and `nx test api` |
+| `nx` | npm (devDep) | `22.6.5` | EXISTING — workspace orchestrator |
+| `typescript` | npm (devDep) | `5.9.2` | EXISTING — language toolchain |
 
-| Registry | Name | Version | Purpose |
-|----------|------|---------|---------|
-| npm | `@anthropic-ai/sdk` | `^1.0.0` | Anthropic TypeScript SDK; constructs `new Anthropic({ apiKey })` client; exposes `messages.stream(...)` for Feature B and `messages.create(...)` with `tools` array for Feature C (Rule 4). Per-user prompt. |
-| npm | `snowflake-sdk` | `^1.14.0` | Official Snowflake Node.js driver; constructs the connection in `SnowflakeClientFactory`; provides `connection.execute({ sqlText, binds, complete })` with `?` bind-variable placeholders (Rule 2). Per-user prompt. |
-| npm | `@types/snowflake-sdk` | `^1.6.24` | DefinitelyTyped declarations for `snowflake-sdk`; required because the SDK ships JS without bundled `.d.ts`. Added under `devDependencies`. |
+### 0.3.2 Private Packages and Internal Cross-Workspace Imports
 
-The user's prompt explicitly stipulates the `^1.0.0` and `^1.14.0` semver caret constraints for `@anthropic-ai/sdk` and `snowflake-sdk` respectively; the Blitzy platform uses these constraints verbatim in `package.json`. After `npm install` the actual resolved versions will be the latest minor/patch releases that satisfy each caret range — a behavior consistent with how Ghostfolio already pins all its other dependencies.
+The repository ships internal libraries via Nx path aliases declared in `tsconfig.base.json`. The new code consumes the following internal entry points without modifying them:
 
-#### 0.3.1.2 Existing Packages Reused (Unchanged)
+| Internal Path Alias | Source | Consumed By |
+|---------------------|--------|-------------|
+| `@ghostfolio/api/services/prisma/prisma.service` | `apps/api/src/services/prisma/prisma.service.ts` | New `UserDashboardLayoutService` |
+| `@ghostfolio/api/decorators/has-permission.decorator` | `apps/api/src/decorators/has-permission.decorator.ts` | New `UserDashboardLayoutController` for the `@HasPermission(...)` decorator |
+| `@ghostfolio/api/guards/has-permission.guard` | `apps/api/src/guards/has-permission.guard.ts` | New `UserDashboardLayoutController` for `@UseGuards(..., HasPermissionGuard)` |
+| `@ghostfolio/common/permissions` | `libs/common/src/lib/permissions.ts` | New permission constants `permissions.readUserDashboardLayout` / `permissions.updateUserDashboardLayout` are added here and referenced by the controller |
+| `@ghostfolio/common/types` | `libs/common/src/lib/types/...` | `RequestWithUser` type for the controller's `@Inject(REQUEST)` parameter |
+| `@ghostfolio/client/core/auth.guard` | `apps/client/src/app/core/auth.guard.ts` | The single new root route uses `canActivate: [AuthGuard]` |
+| `@ghostfolio/client/components/chat-panel/chat-panel.component` | `apps/client/src/app/components/chat-panel/chat-panel.component.ts` | New `ChatModuleComponent` wrapper imports it as the inner content |
+| `@ghostfolio/client/components/home-overview/home-overview.component` | `apps/client/src/app/components/home-overview/home-overview.component.ts` | New `PortfolioOverviewModuleComponent` wrapper |
+| `@ghostfolio/client/components/home-holdings/home-holdings.component` | `apps/client/src/app/components/home-holdings/home-holdings.component.ts` | New `HoldingsModuleComponent` wrapper |
+| `@ghostfolio/client/services/...` | All existing client services (PortfolioService, AiChatService, etc.) | Module wrappers consume these unchanged |
 
-The following packages — already present in `apps`-level `package.json` — are imported by the new code and are **not** modified or upgraded. The work explicitly avoids transitive-dependency churn.
+### 0.3.3 Dependency Updates (Import Updates)
 
-| Name | Existing Version | Why It Is Reused |
-|------|------------------|-------------------|
-| `@nestjs/common` | `11.1.19` | New controllers, services, and modules use the standard `@Module`, `@Controller`, `@Injectable`, `@Get`, `@Post`, `@Patch`, `@Sse`, `@UseGuards` decorators. |
-| `@nestjs/core` | `11.1.19` | NestFactory bootstrap is unchanged; new modules slot into the existing application context. |
-| `@nestjs/config` | `4.0.4` | New services inject `ConfigService` to read `ANTHROPIC_API_KEY` and the six `SNOWFLAKE_*` variables (Rule 3). |
-| `@nestjs/passport` | `11.0.5` | New controllers reuse `AuthGuard('jwt')`. |
-| `@nestjs/event-emitter` | `3.0.1` | `SnowflakeSyncService` adds an `@OnEvent(PortfolioChangedEvent.getName())` listener on the existing globally-registered `EventEmitter2`. |
-| `@nestjs/schedule` | `6.1.3` | `SnowflakeSyncService` adds a `@Cron(...)` method on the existing scheduler registered via `ScheduleModule.forRoot()` in `app.module.ts`. |
-| `@prisma/client` | `7.7.0` | New services use `PrismaService.financialProfile.upsert(...)`, `findUnique(...)`, etc. |
-| `prisma` | `7.7.0` | CLI used to generate the new migration via `npx prisma migrate dev --name add_financial_profile` and to run `prisma generate`. |
-| `class-validator` | `0.15.1` | New DTOs use `@IsString`, `@IsNumber`, `@IsInt`, `@Min`, `@IsEnum`, `@ArrayMaxSize`, `@ValidateNested`, etc. |
-| `class-transformer` | `0.5.1` | DTO transformation alongside `class-validator`. |
-| `passport-jwt` | `4.0.1` | Underlying JWT strategy package; reused via the existing `JwtStrategy`. |
-| `rxjs` | `7.8.2` | `AiChatService` returns `Observable<MessageEvent>` for the `@Sse()` SSE endpoint. |
-| `tablemark` | `4.1.0` | Optional reuse if AI services emit Markdown tables (matching the precedent in the existing `AiService`). |
-| `@angular/core` | `21.2.7` | New standalone Angular components. |
-| `@angular/material` | `21.2.5` | `MatDialog`, `MatFormField`, `MatInput`, `MatSelect`, `MatButton`, `MatProgressBar` for the three new components. |
-| `@angular/common` | `21.2.7` | `HttpClient` for client-side service wrappers. |
+#### 0.3.3.1 Files Requiring Import Additions (Wildcard Patterns)
 
-#### 0.3.1.3 Existing Packages Explicitly NOT Used
+| Pattern | Update |
+|---------|--------|
+| `apps/client/src/app/dashboard/**/*.ts` | NEW imports: `import { Gridster, GridsterItemComponent } from 'angular-gridster2';` and `import type { GridsterConfig, GridsterItem } from 'angular-gridster2';` in dashboard component files |
+| `apps/api/src/app/user/user-dashboard-layout.controller.ts` (CREATE) | Import `AuthGuard` from `@nestjs/passport`, `HasPermissionGuard` from `@ghostfolio/api/guards/has-permission.guard`, `HasPermission` from `@ghostfolio/api/decorators/has-permission.decorator`, `permissions` from `@ghostfolio/common/permissions`, `PrismaService` from `@ghostfolio/api/services/prisma/prisma.service` (transitively via service), `RequestWithUser` type from `@ghostfolio/common/types` |
+| `apps/api/src/app/user/user-dashboard-layout.service.ts` (CREATE) | Import `Injectable`, `Logger` from `@nestjs/common`; `PrismaService` from `@ghostfolio/api/services/prisma/prisma.service`; `Prisma` namespace from `@prisma/client` for typed input |
+| `apps/api/src/app/user/user-dashboard-layout.module.ts` (CREATE) | Import `Module` from `@nestjs/common`; `PrismaModule` from `@ghostfolio/api/services/prisma/prisma.module`; new controller and service from sibling files |
+| `apps/api/src/app/app.module.ts` (MODIFY) | Add `import { UserDashboardLayoutModule } from './user/user-dashboard-layout.module';` and add the symbol to the `imports: [...]` array of `@Module({...})` |
+| `libs/common/src/lib/permissions.ts` (MODIFY) | Add the two new permission key/value entries to the existing `permissions` constant export and to the role-permission grant logic for `ADMIN` and `USER` roles |
+| `apps/client/src/app/app.routes.ts` (MODIFY) | Replace existing imports with `import { GfDashboardCanvasComponent } from './dashboard/dashboard-canvas/dashboard-canvas.component';` plus retained `import { AuthGuard } from './core/auth.guard';` |
+| `apps/client/src/app/app.component.ts` (MODIFY) | Remove `import { GfFooterComponent } from './components/footer/footer.component';` and `import { GfHeaderComponent } from './components/header/header.component';` lines |
 
-To preserve the additive-only mandate and to avoid deviation from current Ghostfolio conventions, the following existing packages are deliberately **not** introduced into the new code paths:
+#### 0.3.3.2 External Reference Updates
 
-- **`ai` (Vercel AI SDK, version `4.3.16`)** and **`@openrouter/ai-sdk-provider` (`0.7.2`)** — these power the existing `AiService` (F-020). The user's prompt mandates direct Anthropic SDK usage (`@anthropic-ai/sdk`) for both Feature B and Feature C, so the new code does not import either package.
-- **`bull` (`4.16.5`)** — the new code does not introduce a new Bull queue. The Snowflake sync runs synchronously inside the cron / event handler with retry built into the MERGE-on-failure path, avoiding new queue infrastructure.
+| Reference Type | File Pattern | Update |
+|----------------|--------------|--------|
+| Configuration files | `package.json` | Add `"angular-gridster2": "21.0.1"` to `dependencies` block |
+| Documentation | `docs/decisions/agent-action-plan-decisions.md` (APPEND) | Append new D-### rows for the chat-panel deviation, gridster engine selection, single-route reduction, layout persistence model, debounce window |
+| Documentation | `docs/observability/user-dashboard-layout.md` (CREATE) | Per Observability project rule |
+| Build files | `apps/client/project.json`, `apps/api/project.json` | UNCHANGED |
+| CI/CD | `.github/workflows/*.yml` | UNCHANGED — existing workflows already invoke `nx build` / `nx test` / `nx lint` |
+| TypeScript path mapping | `tsconfig.base.json` | UNCHANGED unless a new alias such as `@ghostfolio/client/dashboard/*` is added; existing aliases already cover `apps/client/src/app/...` paths through relative imports inside the client project |
 
-### 0.3.2 Dependency Updates
+#### 0.3.3.3 Summary Build Steps (Verbatim from Prompt)
 
-This work is purely additive and does **not** trigger any version bump, removal, or transitive-dependency change in the existing Ghostfolio package set. The only `package.json` modifications are the three additions enumerated in `§ 0.3.1.1`.
+The Blitzy platform preserves the prompt's BUILD STEPS verbatim and the order in which they must execute:
 
-#### 0.3.2.1 Import Updates
-
-Because no existing module is modified beyond the wiring points in `§ 0.6.2`, no existing import path is rewritten. The new modules introduce only **new** import lines into **new** files. The categories below describe the import statements added in new files; they intentionally do not edit existing files.
-
-- **In new backend files** under `apps/api/src/app/snowflake-sync/**/*.ts`, `apps/api/src/app/ai-chat/**/*.ts`, `apps/api/src/app/rebalancing/**/*.ts`, and `apps/api/src/app/user-financial-profile/**/*.ts`:
-  - `import { Module, Controller, Injectable, Logger } from '@nestjs/common';`
-  - `import { ConfigService } from '@nestjs/config';`
-  - `import { AuthGuard } from '@nestjs/passport';`
-  - `import { OnEvent } from '@nestjs/event-emitter';`
-  - `import { Cron } from '@nestjs/schedule';`
-  - `import Anthropic from '@anthropic-ai/sdk';` (only in `ai-chat.service.ts` and `rebalancing.service.ts`)
-  - `import * as snowflake from 'snowflake-sdk';` (only in `snowflake-client.factory.ts` and `snowflake-sync.service.ts`)
-  - `import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';` (path may differ; the agent must use the exact existing alias)
-  - `import { PortfolioService } from '@ghostfolio/api/app/portfolio/portfolio.service';`
-  - `import { SymbolService } from '@ghostfolio/api/app/symbol/symbol.service';`
-  - `import { PortfolioChangedEvent } from '@ghostfolio/api/events/portfolio-changed.event';`
-  - `import { permissions } from '@ghostfolio/common/permissions';`
-  - `import { RequestWithUser } from '@ghostfolio/common/types';`
-
-- **In new frontend files** under `apps/client/src/app/components/{chat-panel,financial-profile-form}/` and `apps/client/src/app/pages/portfolio/rebalancing/`:
-  - `import { Component, ChangeDetectionStrategy, signal, inject } from '@angular/core';`
-  - `import { MatDialogRef, MatDialogModule } from '@angular/material/dialog';`
-  - `import { HttpClient } from '@angular/common/http';`
-  - `import { ChatMessage, RebalancingResponse, FinancialProfile } from '@ghostfolio/common/interfaces';`
-
-These imports are consistent with how every existing Ghostfolio backend module already imports `@nestjs/common`, `@nestjs/config`, etc. They confirm Rule 1 holds: every cross-module reference resolves through a public `exports` array — `PortfolioService` (exported from `PortfolioModule`), `SymbolService` (exported from `SymbolModule`), `PrismaService` (exported from the global `PrismaModule`), and `UserFinancialProfileService` (exported from the new `UserFinancialProfileModule`).
-
-#### 0.3.2.2 External Reference Updates
-
-The following non-source files are updated additively. None of these is "modified" in the sense of altering existing content — entries are appended.
-
-| File | Change | Specific Additive Content |
-|------|--------|----------------------------|
-| `package.json` | ADD three lines under `dependencies` and `devDependencies` | `"@anthropic-ai/sdk": "^1.0.0"`, `"snowflake-sdk": "^1.14.0"` (under `dependencies`); `"@types/snowflake-sdk": "^1.6.24"` (under `devDependencies`). |
-| `package-lock.json` | Regenerated by `npm install` | Lockfile auto-updates; no manual edits. |
-| `.env.example` | APPEND seven placeholder lines | `SNOWFLAKE_ACCOUNT=`, `SNOWFLAKE_USER=`, `SNOWFLAKE_PASSWORD=`, `SNOWFLAKE_DATABASE=`, `SNOWFLAKE_WAREHOUSE=`, `SNOWFLAKE_SCHEMA=`, `ANTHROPIC_API_KEY=`. |
-| `apps/api/src/app/app.module.ts` | ADD four new entries to `imports` array | `SnowflakeSyncModule, AiChatModule, RebalancingModule, UserFinancialProfileModule`. |
-| `apps/client/src/app/app.routes.ts` | ADD one route entry | `{ path: 'portfolio/rebalancing', loadComponent: () => import('./pages/portfolio/rebalancing/rebalancing-page.component').then(m => m.RebalancingPageComponent) }` (or equivalent lazy-load expression matching existing patterns). |
-| `apps/client/src/app/pages/portfolio/portfolio-page.html` | ADD one element | `<app-chat-panel></app-chat-panel>` in the sidebar slot. |
-| `prisma/schema.prisma` | APPEND model + enum | The `FinancialProfile` model and `RiskTolerance` enum exactly as specified in `§ 0.1.2.4`. |
-| `libs/common/src/lib/permissions.ts` | APPEND five constants | `readAiChat`, `readAiRebalancing`, `readFinancialProfile`, `updateFinancialProfile`, `triggerSnowflakeSync`. |
-| `libs/common/src/lib/interfaces/index.ts` | APPEND three re-exports | `export * from './financial-profile.interface';`, `export * from './rebalancing-response.interface';`, `export * from './chat-message.interface';`. |
-
-No CI/CD workflow file is modified. No `Dockerfile`, `docker-compose*.yml`, `nx.json`, `tsconfig*.json`, or `eslint.config.cjs` is modified. The new modules are picked up automatically by the existing Nx project graph because they live under `apps/api/src/app/**`, which is already covered by the `api` Nx target's source globs.
+1. `npm install angular-gridster2@21.0.1`
+2. After confirming `schema.prisma` path (confirmed: `prisma/schema.prisma`) and adding the `UserDashboardLayout` model: `npx prisma migrate dev --name add-user-dashboard-layout`
+3. Verify: `npx nx build client && npx nx build api`
 
 
 ## 0.4 Integration Analysis
 
 ### 0.4.1 Existing Code Touchpoints
 
-The new code intersects existing Ghostfolio source at exactly the wiring points enumerated below. Each touchpoint is described by file, integration kind, and the precise additive change required.
+The Blitzy platform enumerates every existing file that the dashboard refactor touches, the precise nature of each touch, and its anchor location. Touch types are: MODIFY (existing file edited), READ-ONLY (existing file consumed without modification), or REMOVED (existing file deleted as part of the route-shell collapse).
 
 #### 0.4.1.1 Direct Modifications Required
 
-| File | Integration Kind | Specific Change |
-|------|------------------|-----------------|
-| `apps/api/src/app/app.module.ts` | `imports` array — module registration | Append four new imports — `SnowflakeSyncModule`, `AiChatModule`, `RebalancingModule`, `UserFinancialProfileModule` — in the import statement block at the top of the file, and append the matching four module classes to the `imports: [ ... ]` array of the `@Module({})` decorator. The order of existing entries is not altered. No existing import is removed. |
-| `prisma/schema.prisma` | Schema definition | Append a `model FinancialProfile { ... }` block (8 fields per `§ 0.1.2.4`, plus `createdAt` / `updatedAt`) and an `enum RiskTolerance { LOW MEDIUM HIGH }` block. The `User` model is **not** edited; Prisma resolves the back-relation implicitly via the explicit relation declared on `FinancialProfile.userId @id`. |
-| `apps/client/src/app/app.routes.ts` | Angular routes array | Insert exactly one route entry under the appropriate `internalRoutes`-protected branch — `{ path: 'portfolio/rebalancing', canActivate: [AuthGuard], loadComponent: () => import('./pages/portfolio/rebalancing/rebalancing-page.component').then(m => m.RebalancingPageComponent) }`. The existing path `'portfolio'` and its children remain untouched. |
-| `apps/client/src/app/pages/portfolio/portfolio-page.html` | Template — sidebar slot | Insert `<app-chat-panel></app-chat-panel>` inside the sidebar layout cell. The new component is registered as a standalone Angular component whose `selector` is `app-chat-panel`. |
-| `apps/client/src/app/pages/user-account/user-account-page.ts` | Dialog trigger | Add an additional menu item / button handler that calls `MatDialog.open(FinancialProfileFormComponent, {...})`. **The existing `user-account-settings.component.ts` template is not edited.** Dialog opening is initiated from the page-level component which already orchestrates child tabs, consistent with the existing dialog-opening pattern (e.g., `LoginWithAccessTokenDialog`). |
-| `.env.example` | Environment placeholder list | Append seven new lines for the six `SNOWFLAKE_*` variables and `ANTHROPIC_API_KEY`. |
-| `libs/common/src/lib/permissions.ts` | Permission registry | Append five new permission string constants — `readAiChat`, `readAiRebalancing`, `readFinancialProfile`, `updateFinancialProfile`, `triggerSnowflakeSync`. The agent must follow whatever existing literal-vs-object pattern the file currently uses. |
-| `libs/common/src/lib/interfaces/index.ts` | Barrel re-exports | Append three `export * from './...'` lines. |
+| File | Modification | Anchor / Approximate Location |
+|------|--------------|-------------------------------|
+| `apps/client/src/app/app.routes.ts` | Replace 22-entry `routes` array with one entry: `{ path: '', component: GfDashboardCanvasComponent, canActivate: [AuthGuard], title: 'Dashboard' }` plus a wildcard `{ path: '**', redirectTo: '', pathMatch: 'full' }` | Entire file body (lines 7–146 of current version) |
+| `apps/client/src/app/app.component.ts` | Remove `GfFooterComponent` and `GfHeaderComponent` from `imports: []` array; remove their `import` statements | Lines 36–37 (imports) and inside the `@Component` decorator's `imports: [...]` array |
+| `apps/client/src/app/app.component.html` | Remove `<gf-header>` and `<gf-footer>` references; reduce template to `<router-outlet />` plus optional info-message banner that may be retained | Whole template body |
+| `apps/client/src/app/app.component.scss` | Remove header/footer-specific positioning rules; retain `:host { display: block; height: 100vh; }` style rules; remove `.has-info-message` chrome offset if no longer needed | Selected rules |
+| `apps/api/src/app/app.module.ts` | Add `import { UserDashboardLayoutModule } from './user/user-dashboard-layout.module';`; add `UserDashboardLayoutModule` to `@Module({ imports: [...] })` array adjacent to `UserFinancialProfileModule` | Line ~66 (imports) and line ~182 (imports list) |
+| `prisma/schema.prisma` | Append new `model UserDashboardLayout { ... }` after the `FinancialProfile` model; add `userDashboardLayout UserDashboardLayout?` back-relation to the `User` model (Prisma 7.x explicit-back-relation requirement per Decision D-013) | Lines 261–290 (User model) for the back-relation; new content appended after line 376 |
+| `libs/common/src/lib/permissions.ts` | Add `readUserDashboardLayout` and `updateUserDashboardLayout` to the `permissions` constant; grant them to `ADMIN` and `USER` roles via the role-permission resolution function (DEMO and INACTIVE explicitly excluded per Decision D-005 pattern) | Two additions: the constant declaration, and the role grant block |
+| `package.json` | Add `"angular-gridster2": "21.0.1"` to `dependencies` block alphabetically | Line ~63 area (after `@angular/router` section, dependency-block alphabetical order) |
+| `package-lock.json` | Auto-regenerated by `npm install angular-gridster2@21.0.1` | All lines affected by lockfile update |
 
-These eight files account for the **only** edits applied to existing source. Every other existing file is read-only.
+#### 0.4.1.2 Routing-Infrastructure Preservation Anchors
 
-#### 0.4.1.2 Dependency Injections
+Per the prompt's BOUNDARIES & PRESERVATION section, the following code is explicitly preserved verbatim and is NOT modified:
 
-The wiring of services across module boundaries is summarized in the table below. Every cross-module dependency resolves through a public `exports` array, satisfying Rule 1.
+| File | Preserved Symbol | Anchor |
+|------|------------------|--------|
+| `apps/client/src/main.ts` | `RouterModule.forRoot(routes, { anchorScrolling: 'enabled', preloadingStrategy: ModulePreloadService, scrollPositionRestoration: 'top' })` | Lines 70–74 |
+| `apps/client/src/main.ts` | `ServiceWorkerModule.register('ngsw-worker.js', { enabled: environment.production, registrationStrategy: 'registerImmediately' })` | Lines 75–78 |
+| `apps/client/src/main.ts` | `provideZoneChangeDetection()` | Line 87 |
+| `apps/client/src/main.ts` | `{ provide: TitleStrategy, useClass: PageTitleStrategy }` | Lines 102–104 |
+| `apps/client/src/main.ts` | `ModulePreloadService` provider | Line 81 |
+| `apps/client/src/app/services/page-title.strategy.ts` | Entire file | Whole file |
+| `apps/client/src/app/core/module-preload.service.ts` | Entire file | Whole file |
+| `apps/client/src/app/core/auth.guard.ts` | Entire file (consumed by the new single root route as `canActivate: [AuthGuard]`) | Whole file |
+| `apps/client/src/app/core/auth.interceptor.ts` | Entire file (auto-attaches JWT bearer to layout endpoint requests) | Whole file |
+| `apps/client/src/app/core/http-response.interceptor.ts` | Entire file | Whole file |
+| `apps/client/src/app/core/layout.service.ts` | Entire file | Whole file |
+| `apps/client/src/app/core/language.service.ts` | Entire file | Whole file |
+| `apps/api/src/app/user/user.controller.ts` | Pattern reference only — the new layout controller follows its `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` + `@HasPermission(...)` decorator stack (lines 60, 76 etc.) but does not modify the existing controller | Lines 60–80 (auth pattern reference) |
+| `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` | Pattern reference only — structural template for `user-dashboard-layout.controller.ts` (X-Correlation-ID header, idempotent PATCH, 404 on missing GET) | Whole file as reference |
+| `apps/api/src/services/prisma/prisma.service.ts` | Consumed via DI by the new service; not modified | Whole file |
 
-| Consumer | Provider | Source Module | Resolution |
-|----------|----------|---------------|------------|
-| `SnowflakeSyncService` | `ConfigService` | `@nestjs/config` (global) | Constructor injection. |
-| `SnowflakeSyncService` | `PrismaService` | `PrismaModule` (global, already exported) | Constructor injection. Reads `Order`, `Account`, portfolio-snapshot related entities to build sync payloads. |
-| `SnowflakeSyncService` | `PortfolioService` | `PortfolioModule` (`exports: [PortfolioService]`) | Constructor injection. Calls existing public methods (`getDetails`, `getPerformance`) to compute the snapshots and metrics rows. |
-| `SnowflakeSyncService` | `EventEmitter2` | `@nestjs/event-emitter` (global) | Implicit via `@OnEvent` decorator on the listener method. |
-| `SnowflakeSyncController` | `SnowflakeSyncService` | Same module | Constructor injection. |
-| `SnowflakeSyncController` | `REQUEST` | `@nestjs/core` | Per-request injection token to read `request.user.id` from the JWT, in line with the precedent in `apps/api/src/app/endpoints/ai/ai.controller.ts`. |
-| `AiChatService` | `ConfigService` | `@nestjs/config` | Reads `ANTHROPIC_API_KEY`. |
-| `AiChatService` | `PortfolioService` | `PortfolioModule` (exported) | For `get_current_positions` and `get_performance_metrics` tool dispatch. |
-| `AiChatService` | `SymbolService` | `SymbolModule` (`exports: [SymbolService]`) | For `get_market_data` tool dispatch. |
-| `AiChatService` | `SnowflakeSyncService` | `SnowflakeSyncModule` (must be added to `exports`) | For `query_history` tool dispatch (delegates to `SnowflakeSyncService.queryHistory(userId, sql, binds)`). |
-| `AiChatService` | `UserFinancialProfileService` | `UserFinancialProfileModule` (`exports: [UserFinancialProfileService]`) | For per-request system-prompt personalization. |
-| `AiChatController` | `AiChatService` | Same module | Constructor injection. |
-| `RebalancingService` | `ConfigService` | `@nestjs/config` | Reads `ANTHROPIC_API_KEY`. |
-| `RebalancingService` | `PortfolioService` | `PortfolioModule` (exported) | For current allocation snapshot. |
-| `RebalancingService` | `UserFinancialProfileService` | `UserFinancialProfileModule` (exported) | For goal data referenced in each `goalReference`. |
-| `RebalancingController` | `RebalancingService` | Same module | Constructor injection. |
-| `UserFinancialProfileService` | `PrismaService` | `PrismaModule` (global) | Sole writer/reader of `FinancialProfile` rows. |
-| `UserFinancialProfileController` | `UserFinancialProfileService` | Same module | Constructor injection. |
+#### 0.4.1.3 Dependency Injections
 
-`SnowflakeSyncModule` and `UserFinancialProfileModule` add their internal services to their respective `exports` arrays so cross-module consumption is permitted by Rule 1; `AiChatModule` and `RebalancingModule` export nothing — they are pure leaf modules.
+| File | DI Wiring |
+|------|-----------|
+| `apps/api/src/app/user/user-dashboard-layout.module.ts` (CREATE) | Declares `@Module({ controllers: [UserDashboardLayoutController], providers: [UserDashboardLayoutService], imports: [PrismaModule], exports: [UserDashboardLayoutService] })` |
+| `apps/api/src/app/app.module.ts` (MODIFY) | Adds `UserDashboardLayoutModule` to the root module's `imports: [...]` array |
+| `apps/client/src/app/dashboard/module-registry.service.ts` (CREATE) | Declared with `@Injectable({ providedIn: 'root' })`; auto-discoverable across the dashboard tree without explicit registration |
+| `apps/client/src/app/dashboard/services/user-dashboard-layout.service.ts` (CREATE) | Declared with `@Injectable({ providedIn: 'root' })`; injects `HttpClient` |
+| `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.ts` (CREATE) | Standalone component; injects `ModuleRegistryService`, `UserDashboardLayoutService`, `DestroyRef`; all injected via Angular's DI without explicit module registration |
 
-#### 0.4.1.3 Database / Schema Updates
+#### 0.4.1.4 Database / Schema Updates
 
-| File | Change |
+| Artifact | Change |
+|----------|--------|
+| `prisma/schema.prisma` (MODIFY) | Append new `model UserDashboardLayout` block; add back-relation field on `User` model |
+| `prisma/migrations/<timestamp>_add_user_dashboard_layout/migration.sql` (CREATE) | Auto-generated by `npx prisma migrate dev --name add-user-dashboard-layout`; creates the table with `userId UUID PRIMARY KEY` referencing `User(id)` with `ON DELETE CASCADE ON UPDATE CASCADE`, `layoutData jsonb NOT NULL`, `createdAt timestamptz NOT NULL DEFAULT now()`, `updatedAt timestamptz NOT NULL` |
+| `prisma/migrations/migration_lock.toml` | UNCHANGED — already pinned to `provider = "postgresql"` |
+
+#### 0.4.1.5 Permission Registry Update
+
+| File | Update |
 |------|--------|
-| `prisma/schema.prisma` | Append `FinancialProfile` model and `RiskTolerance` enum (verbatim from `§ 0.1.2.4`). |
-| `prisma/migrations/<timestamp>_add_financial_profile/migration.sql` | New migration generated by `npx prisma migrate dev --name add_financial_profile`. The generated SQL creates the PostgreSQL `"RiskTolerance"` enum type, the `FinancialProfile` table, the primary key on `userId`, the foreign-key `userId → "User"."id" ON DELETE CASCADE`, and the `createdAt` / `updatedAt` defaults. |
-| Snowflake schema | Three new tables created **outside** the Ghostfolio Prisma schema, inside the configured Snowflake `SNOWFLAKE_DATABASE.SNOWFLAKE_SCHEMA`. Bootstrap DDL is delivered as a one-time SQL script committed at `apps/api/src/app/snowflake-sync/sql/bootstrap.sql` and executed by `SnowflakeSyncService.bootstrap()` on first startup if the tables are missing. The DDL creates `portfolio_snapshots`, `orders_history`, and `performance_metrics` with the unique constraints documented in `§ 0.5.1`. |
+| `libs/common/src/lib/permissions.ts` | Add the two new permission constants and grant them to `ADMIN` and `USER` roles only |
 
-The new migration is **strictly additive** — it adds one table and one enum to PostgreSQL. No existing column, constraint, or index is altered.
+The grant matrix mirrors the existing `readFinancialProfile` / `updateFinancialProfile` precedent (§ 5.4.4.1 of the existing tech spec):
 
-### 0.4.2 Integration Topology
+| Permission Constant | ADMIN | USER | DEMO | INACTIVE |
+|---------------------|:-----:|:----:|:----:|:--------:|
+| `permissions.readUserDashboardLayout` | ✓ | ✓ | ✗ | ✗ |
+| `permissions.updateUserDashboardLayout` | ✓ | ✓ | ✗ | ✗ |
 
-The following Mermaid diagram summarizes the integration topology between new modules (highlighted) and existing Ghostfolio surfaces.
-
-```mermaid
-graph LR
-    subgraph Client["Angular Client (apps/client)"]
-        ChatPanel["ChatPanelComponent<br/>(new)"]:::new
-        RebalPage["RebalancingPageComponent<br/>(new)"]:::new
-        ProfileForm["FinancialProfileFormComponent<br/>(new)"]:::new
-        ExistingPortfolio["Portfolio Page<br/>(existing)"]:::existing
-        ExistingAccount["User Account Page<br/>(existing)"]:::existing
-    end
-
-    subgraph API["NestJS API (apps/api)"]
-        AiChatCtrl["AiChatController<br/>POST /api/v1/ai/chat<br/>(new, SSE)"]:::new
-        RebalCtrl["RebalancingController<br/>POST /api/v1/ai/rebalancing<br/>(new)"]:::new
-        ProfileCtrl["UserFinancialProfileController<br/>GET/PATCH /api/v1/user/financial-profile<br/>(new)"]:::new
-        SyncCtrl["SnowflakeSyncController<br/>POST /api/v1/snowflake-sync/trigger<br/>(new, admin)"]:::new
-
-        AiChatSvc["AiChatService<br/>(new)"]:::new
-        RebalSvc["RebalancingService<br/>(new)"]:::new
-        ProfileSvc["UserFinancialProfileService<br/>(new, exported)"]:::new
-        SyncSvc["SnowflakeSyncService<br/>(new, cron + listener)"]:::new
-
-        ExistingPortSvc["PortfolioService<br/>(existing, exported)"]:::existing
-        ExistingSymSvc["SymbolService<br/>(existing, exported)"]:::existing
-        ExistingActSvc["ActivitiesService<br/>(existing, emits PortfolioChangedEvent)"]:::existing
-        ExistingPrisma["PrismaService<br/>(existing, global)"]:::existing
-    end
-
-    subgraph External["External Services"]
-        Anthropic["Anthropic API<br/>messages.stream / messages.create"]:::external
-        Snowflake["Snowflake<br/>3 analytical tables"]:::external
-        Postgres["PostgreSQL<br/>FinancialProfile (new table)"]:::existing
-    end
-
-    ChatPanel -- "EventSource SSE" --> AiChatCtrl
-    RebalPage -- "HttpClient.post" --> RebalCtrl
-    ProfileForm -- "HttpClient.get/patch" --> ProfileCtrl
-    ExistingPortfolio -- "embeds" --> ChatPanel
-    ExistingAccount -- "MatDialog.open" --> ProfileForm
-
-    AiChatCtrl --> AiChatSvc
-    RebalCtrl --> RebalSvc
-    ProfileCtrl --> ProfileSvc
-    SyncCtrl --> SyncSvc
-
-    AiChatSvc --> ExistingPortSvc
-    AiChatSvc --> ExistingSymSvc
-    AiChatSvc --> SyncSvc
-    AiChatSvc --> ProfileSvc
-    AiChatSvc -- "messages.stream + 4 tools" --> Anthropic
-
-    RebalSvc --> ExistingPortSvc
-    RebalSvc --> ProfileSvc
-    RebalSvc -- "messages.create + tool_use" --> Anthropic
-
-    ProfileSvc --> ExistingPrisma
-    ExistingPrisma --> Postgres
-
-    SyncSvc --> ExistingPortSvc
-    SyncSvc --> ExistingPrisma
-    SyncSvc -- "MERGE (binds)" --> Snowflake
-    ExistingActSvc -- "PortfolioChangedEvent" --> SyncSvc
-
-    classDef new fill:#94FAD5,stroke:#2D1C77,stroke-width:2px,color:#1A105F
-    classDef existing fill:#F4EFF6,stroke:#999999,color:#333333
-    classDef external fill:#F2F0FE,stroke:#5B39F3,stroke-width:2px,color:#2D1C77
-```
-
-### 0.4.3 Event-Driven Sync Flow
-
-The Snowflake sync listener subscribes to the existing `PortfolioChangedEvent`, which is already emitted by `ActivitiesService` on every Order CRUD operation (verified at lines 92, 235, 244, 270, 318, 900 of `apps/api/src/app/activities/activities.service.ts`). The flow is:
+#### 0.4.1.6 Component Communication Diagram
 
 ```mermaid
-sequenceDiagram
-    participant User as User
-    participant ActivitiesController as ActivitiesController<br/>(existing)
-    participant ActivitiesService as ActivitiesService<br/>(existing)
-    participant EventEmitter as EventEmitter2<br/>(existing)
-    participant SyncListener as SnowflakeSyncService<br/>@OnEvent (new)
-    participant Snowflake as Snowflake
+flowchart TB
+    subgraph client["apps/client (Angular 21.2.7 + angular-gridster2 21.0.1)"]
+        AppShell["GfAppComponent (gf-root)<br/>chrome reduced"]
+        Router["RouterModule.forRoot()<br/>preserved verbatim"]
+        Route["app.routes.ts<br/>single root route /"]
+        Canvas["GfDashboardCanvasComponent<br/>standalone + OnPush"]
+        Registry["ModuleRegistryService<br/>providedIn: root"]
+        Catalog["GfModuleCatalogComponent<br/>overlay/sidebar"]
+        Wrappers["Module wrappers<br/>portfolio-overview, holdings,<br/>transactions, analysis, chat"]
+        ChatExisting["ChatPanelComponent<br/>(existing, reused)"]
+        OverviewExisting["GfHomeOverviewComponent<br/>(existing, reused)"]
+        ClientLayoutSvc["UserDashboardLayoutService<br/>(client, HttpClient)"]
+    end
 
-    User->>ActivitiesController: POST /api/v1/order
-    ActivitiesController->>ActivitiesService: createActivity(...)
-    ActivitiesService->>ActivitiesService: prisma.order.create(...)
-    ActivitiesService->>EventEmitter: emit('portfolio.changed', event)
-    EventEmitter-->>SyncListener: PortfolioChangedEvent
-    Note over SyncListener: 5s debounce (per pattern)
-    SyncListener->>SyncListener: syncOrders(userId)
-    SyncListener->>Snowflake: MERGE INTO orders_history<br/>USING (?) ON ... WHEN MATCHED ...
-    Note over Snowflake: Bind variables only<br/>(Rule 2)
-    Snowflake-->>SyncListener: rows merged
-    SyncListener->>SyncListener: log structured event with correlationId
+    subgraph api["apps/api (NestJS 11.1.19)"]
+        AppMod["app.module.ts<br/>imports UserDashboardLayoutModule"]
+        Controller["UserDashboardLayoutController<br/>GET / PATCH /api/v1/user/layout"]
+        Service["UserDashboardLayoutService<br/>findByUserId / upsertForUser"]
+        Guards["AuthGuard('jwt') + HasPermissionGuard<br/>existing"]
+        Prisma["PrismaService (singleton)"]
+    end
+
+    subgraph data["Persistence"]
+        DB[("PostgreSQL 15<br/>UserDashboardLayout table")]
+    end
+
+    AppShell --> Route
+    Route --> Canvas
+    Router -.preserved.- Route
+    Canvas --> Registry
+    Canvas --> Catalog
+    Canvas --> Wrappers
+    Wrappers --> ChatExisting
+    Wrappers --> OverviewExisting
+    Canvas --> ClientLayoutSvc
+    ClientLayoutSvc -- "GET /api/v1/user/layout<br/>PATCH /api/v1/user/layout<br/>JWT bearer auto-attached" --> Controller
+    Controller --> Guards
+    Controller --> Service
+    Service --> Prisma
+    Prisma --> DB
+    AppMod --> Controller
 ```
 
-The cron fallback runs `0 2 * * *` UTC daily and re-mirrors the previous day's data for **all** users; idempotency (Rule 7) guarantees no duplicate rows are created.
-
-
-## 0.5 Technical Implementation
-
-### 0.5.1 File-by-File Execution Plan
-
-CRITICAL: Every file listed below MUST be created or modified exactly once. Files marked **CREATE** are new; files marked **MODIFY** receive only the additive change described in `§ 0.4.1.1`. Each entry maps a deliverable artifact to a one-line description of its content.
-
-#### 0.5.1.1 Group 1 — Core Feature Files (Backend)
-
-**Snowflake Sync Layer (Feature A):**
-
-- CREATE: `apps/api/src/app/snowflake-sync/snowflake-sync.module.ts` — Defines `SnowflakeSyncModule`; imports `ConfigModule`, `PrismaModule`, `PortfolioModule`; declares `SnowflakeSyncService` and `SnowflakeClientFactory` as providers and `SnowflakeSyncController` as a controller; **exports `SnowflakeSyncService`** so `AiChatModule` can inject it for the `query_history` tool.
-- CREATE: `apps/api/src/app/snowflake-sync/snowflake-client.factory.ts` — Wraps `snowflake-sdk.createConnection({...})` reading all six `SNOWFLAKE_*` values from `ConfigService`; exposes `getConnection(): Promise<snowflake.Connection>` with lazy init and a single shared connection pool consistent with the SDK's `keepAlive` semantics.
-- CREATE: `apps/api/src/app/snowflake-sync/snowflake-sync.service.ts` — Implements the cron, the event listener, the four sync routines (`syncSnapshots`, `syncOrders`, `syncMetrics`, `bootstrap`), and the `queryHistory(userId, sql, binds)` method consumed by the chat agent. All SQL is executed through bound parameters; no template literal contains a SQL fragment.
-- CREATE: `apps/api/src/app/snowflake-sync/snowflake-sync.controller.ts` — Single `@Post('trigger')` endpoint guarded by `AuthGuard('jwt')` + `HasPermissionGuard` with `@HasPermission(permissions.triggerSnowflakeSync)`; body validated by `ManualTriggerDto`; thin delegation only.
-- CREATE: `apps/api/src/app/snowflake-sync/dtos/manual-trigger.dto.ts` — Validates optional `date` and optional `userId` (admin override).
-- CREATE: `apps/api/src/app/snowflake-sync/interfaces/snowflake-rows.interface.ts` — Three TypeScript interfaces matching the three Snowflake table columns.
-- CREATE: `apps/api/src/app/snowflake-sync/sql/bootstrap.sql` — Three `CREATE TABLE IF NOT EXISTS` statements with the unique constraints from the user prompt:
-  - `portfolio_snapshots(snapshot_date DATE, user_id STRING, asset_class STRING, allocation_pct FLOAT, total_value_usd FLOAT)` — `UNIQUE(snapshot_date, user_id, asset_class)`
-  - `orders_history(order_id STRING, user_id STRING, date DATE, type STRING, ticker STRING, quantity FLOAT, unit_price FLOAT, fee FLOAT, currency STRING, synced_at TIMESTAMP_NTZ)` — `UNIQUE(order_id)`
-  - `performance_metrics(metric_date DATE, user_id STRING, twr FLOAT, volatility FLOAT, sharpe_ratio FLOAT)` — `UNIQUE(metric_date, user_id)`
-
-**AI Portfolio Chat Agent (Feature B):**
-
-- CREATE: `apps/api/src/app/ai-chat/ai-chat.module.ts` — Imports `ConfigModule`, `PortfolioModule`, `SymbolModule`, `UserFinancialProfileModule`, `SnowflakeSyncModule`; declares `AiChatService` and `AiChatController`; no exports.
-- CREATE: `apps/api/src/app/ai-chat/ai-chat.service.ts` — Constructs `new Anthropic({ apiKey: configService.get('ANTHROPIC_API_KEY') })` once at module init. Defines the four tool schemas listed in `§ 0.5.1.5`. Builds a personalized system prompt by reading `UserFinancialProfileService.findByUserId(userId)` and `PortfolioService.getDetails({ ... })` per request. Returns an `Observable<MessageEvent>` that streams Claude SDK message events to the SSE controller. Tool dispatch is implemented as a switch on the `tool_use.name` content block.
-- CREATE: `apps/api/src/app/ai-chat/ai-chat.controller.ts` — `@Controller('ai/chat')`; `@Post()` `@Sse()` returning `Observable<MessageEvent>`; uses `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` and `@HasPermission(permissions.readAiChat)`; body validated by `ChatRequestDto`; method body delegates to service in ≤ 10 lines (Rule 8).
-- CREATE: `apps/api/src/app/ai-chat/dtos/chat-request.dto.ts` — Validates `messages: ChatMessageDto[]` with `@ArrayMaxSize(5)` (4 prior turns + new user turn).
-- CREATE: `apps/api/src/app/ai-chat/interfaces/chat-tool.interface.ts` — Tool input/output type definitions.
+#### 0.4.1.7 Removed Integration Surfaces
+
+The route-driven page tree is the largest removal surface. The following table enumerates the component / page integration surfaces that vanish, with the corresponding new module-wrapper that absorbs the user-facing capability.
+
+| Removed Integration Surface | Anchor | Absorbed By |
+|------------------------------|--------|-------------|
+| Tab-based portfolio shell | `apps/client/src/app/pages/portfolio/portfolio-page.{component.ts,html,scss,routes.ts}` | The portfolio child pages each become standalone modules in the catalog; the shell itself disappears |
+| Embedded chat panel mount | `apps/client/src/app/pages/portfolio/portfolio-page.html` line 32 (`<app-chat-panel></app-chat-panel>`) | Replaced by the new `ChatModuleComponent` wrapper at `apps/client/src/app/dashboard/modules/chat/chat-module.component.ts` (DEVIATION POINT — intentional, recorded in the decision log) |
+| Tab-based home shell | `apps/client/src/app/pages/home/home-page.{component.ts,html,scss,routes.ts}` | The home child views become independent modules; the shell disappears |
+| Header chrome | `apps/client/src/app/components/header/` | Removed entirely; any user/account controls migrate into module-level chrome or a slim utility bar within the canvas (out of scope unless explicitly required) |
+| Footer chrome | `apps/client/src/app/components/footer/` | Removed entirely |
+| Lazy-loaded route children for `portfolio/{activities,allocations,analysis,fire,rebalancing,x-ray}` | `apps/client/src/app/pages/portfolio/{activities,allocations,analysis,fire,rebalancing,x-ray}/` | The presentation components remain available and are wrapped as modules where the prompt's required module list demands |
+| Lazy-loaded route children for accounts, admin, FAQ, etc. | `apps/client/src/app/pages/{accounts,admin,faq,resources,user-account,zen,markets,about,...}/` | Removed; not in the required module list (portfolio overview, holdings, transactions, analysis, AI chat) |
+| Sub-route nav links | `mat-tab-nav-bar` instances in `home-page.html`, `portfolio-page.html`, `admin-page.html`, etc. | Removed alongside the page shells |
+
+> The prompt explicitly limits the module catalog to "every existing UI feature (portfolio overview, holdings, transactions, analysis, AI chat)". Components not listed (admin, FAQ, accounts, public/landing pages) are removed from the route table; their underlying business-logic services are retained per the BOUNDARIES preservation list. If a future task re-introduces them, they can be re-added as new modules without further routing work.
+
+
+## 0.5 Design System Compliance
+
+### 0.5.1 System Identification
+
+| Attribute | Value |
+|-----------|-------|
+| Library (primary design system) | Angular Material |
+| Version installed | 21.2.5 (matches Angular core 21.2.7 within the 21.x line) |
+| Status | Installed — declared in `package.json` as `@angular/material`, `@angular/cdk`, `@angular/material-moment-adapter` |
+| Package registry | npm |
+| Source inspected | `package.json` (root), `apps/client/src/styles/material.scss`, `apps/client/src/styles/styles.scss`, `apps/client/src/app/components/chat-panel/chat-panel.component.scss` (canonical reference for Material 3 token usage), `docs/decisions/agent-action-plan-decisions.md` Decision D-020 |
+| Library (secondary) | Angular CDK 21.2.5 — drag-and-drop primitives, overlay primitives, and a11y primitives (consumed via `@angular/cdk/drag-drop`, `@angular/cdk/overlay`, `@angular/cdk/a11y`) |
+| Library (tertiary) | Bootstrap 4.6.2 — retained only for legacy grid utilities in non-canvas surfaces; the dashboard canvas does NOT depend on Bootstrap |
+| Icon system | Ionicons 8.0.13 (loaded globally via `defineCustomElements` and consumed as `<ion-icon name="...">`) |
+| Grid engine (added) | angular-gridster2 21.0.1 — see § 0.3 Dependency Inventory |
+| Token system | Material Design 3 design tokens via the `--mat-sys-*` CSS custom-property family, fallback-protected per Decision D-020 |
+
+The dashboard refactor MUST consume Material 3 tokens through the `var(--mat-sys-<token>, <hardcoded-fallback>)` pattern so that components remain renderable when global theming has not yet evaluated. This is the canonical pattern enforced across `chat-panel.component.scss`, `rebalancing-page.component.scss`, and the new dashboard surfaces.
+
+### 0.5.2 Component Mapping
+
+The dashboard chrome (canvas, module wrappers, catalog overlay, dialogs) maps to Angular Material components. Module content slots reuse existing Ghostfolio presentation components (e.g., `GfHoldingsTableComponent`, `ChatPanelComponent`, `GfHomeOverviewComponent`) that already comply with the design system; their internal markup is NOT modified by this refactor.
+
+| UI Element | Library Component | Import Path | Props / Variant | Notes |
+|------------|-------------------|-------------|-----------------|-------|
+| Module header bar (drag handle, title, kebab actions) | `MatToolbar` (`color="primary"` variant disabled — Material 3 surface tokens) | `@angular/material/toolbar` | `color`, `density` | Apply `--mat-sys-surface-container` background; drag-handle cursor is provided by gridster `draggable.handle` selector |
+| Module remove button | `MatIconButton` | `@angular/material/button` | `aria-label="Remove module"` | Icon child via `<ion-icon name="close-outline">` |
+| Module overflow / kebab menu | `MatMenu` + `MatMenuTrigger` | `@angular/material/menu` | `[matMenuTriggerFor]` | Per-module action menu (e.g., "Reset", "Settings") |
+| Module catalog trigger button | `MatButton` (`mat-flat-button`) or `MatFab` | `@angular/material/button` | `color="primary"`, `extended` | Floating button on canvas to open catalog |
+| Module catalog overlay | `MatDialog` (modal variant) OR `MatSidenav` (drawer variant) | `@angular/material/dialog` / `@angular/material/sidenav` | `MatDialogConfig`: `width: '720px'`, `maxHeight: '80vh'` | Decision recorded in `docs/decisions/agent-action-plan-decisions.md`: choose `MatDialog` for desktop modal feel; use `cdk-overlay-pane` styling tokens |
+| Module catalog search input | `MatFormField` + `MatInput` | `@angular/material/form-field`, `@angular/material/input` | `appearance="outline"`, `<mat-label>Search modules</mat-label>` | Debounced via rxjs `debounceTime(150)` |
+| Module catalog list rows | `MatList` + `MatListItem` | `@angular/material/list` | `<mat-list-item (click)="add(module)">` | Each row: leading icon (`ion-icon`), title (mat-line), subtitle (mat-line), trailing add-button |
+| Module catalog row Add button | `MatIconButton` with `add-outline` ion-icon | `@angular/material/button` | `aria-label="Add module to canvas"` | Click adds to next available cell |
+| Empty-canvas hint card | `MatCard` | `@angular/material/card` | `appearance="outlined"` | Shown only when canvas is empty AND catalog has not been opened yet |
+| Layout-save toast | `MatSnackBar` | `@angular/material/snack-bar` | `duration: 2000` | Confirms layout persistence to user; suppressed in test scenarios |
+| Confirm-remove dialog | `MatDialog` | `@angular/material/dialog` | Reuses existing `GfConfirmationDialog` if present in `libs/ui/src/lib/confirmation-dialog/` | Optional — module removal can be immediate without confirmation; this is a configuration choice |
+| Tooltip on chrome controls | `MatTooltip` | `@angular/material/tooltip` | `matTooltip="Drag to reposition"` | Applied to drag handle and resize handle areas |
+| Loading skeleton on initial GET | `MatProgressBar` (indeterminate) | `@angular/material/progress-bar` | `mode="indeterminate"` | Shown for ≤ 300 ms p95 (target SLO) |
+| Layout container primitive (canvas wrapper) | Plain `<div>` styled with system tokens (no Material container component required) | n/a | n/a | The gridster engine is responsible for layout primitives at the cell level; outer chrome is plain block element |
+| Drag/drop primitives | `angular-gridster2` (NOT Material's `cdk/drag-drop`) | `angular-gridster2` | `<gridster [options]>` + `<gridster-item>` | Material CDK drag-drop is intentionally NOT used inside the canvas — gridster owns drag state; CDK drag-drop is reserved for module catalog reordering if needed |
+| Catalog drag-from-source primitive | `@angular/cdk/drag-drop` (`cdkDrag`) | `@angular/cdk/drag-drop` | Drag-from-catalog → drop-to-canvas integration via gridster's drag-and-drop API | Bridges CDK drag start with gridster `addItem` |
+| Page heading typography | `mat-typography` system | `@angular/material/typography` | `class="mat-headline-medium"`, `class="mat-body-medium"` | Use system typography tokens — NEVER raw `<h1 style="font-size:...">` |
+| Buttons (general) | `MatButton` family | `@angular/material/button` | `mat-button`, `mat-flat-button`, `mat-stroked-button`, `mat-icon-button` | NEVER use raw `<button>` for chrome controls |
+| Form controls (general) | `MatFormField` family | `@angular/material/form-field` | `appearance="outline"` | NEVER use raw `<input>` for catalog search |
+
+### 0.5.3 Token Mapping
+
+Every CSS property value emitted by the dashboard refactor MUST resolve to a Material 3 system token via the `var(--mat-sys-<token>, <fallback>)` pattern. The fallback values below mirror Angular Material 21's default Material 3 light-theme values and are confirmed against the existing `chat-panel.component.scss` and other SCSS sources within the repository.
+
+#### 0.5.3.1 Color Tokens
+
+| Token | Fallback Value | Use in Dashboard |
+|-------|----------------|------------------|
+| `--mat-sys-surface` | `#fffbfe` | Canvas background — root `<gridster>` container |
+| `--mat-sys-surface-container` | `#f3edf7` | Module wrapper background (resting state) |
+| `--mat-sys-surface-container-high` | `#ece6f0` | Module wrapper background (hover/dragging state) |
+| `--mat-sys-surface-container-highest` | `#e6e0e9` | Module catalog overlay background |
+| `--mat-sys-surface-variant` | `#e7e0ec` | Drop-zone placeholder fill |
+| `--mat-sys-on-surface` | `#1d1b20` | Module title and primary chrome text |
+| `--mat-sys-on-surface-variant` | `#49454f` | Module subtitle and secondary chrome text |
+| `--mat-sys-primary` | `#6750a4` | Catalog open FAB; primary action accent |
+| `--mat-sys-on-primary` | `#ffffff` | Text/icon color on primary-filled buttons |
+| `--mat-sys-primary-container` | `#eaddff` | Drag-active highlight on resize handle |
+| `--mat-sys-on-primary-container` | `#21005d` | Text color over `primary-container` surfaces |
+| `--mat-sys-secondary` | `#625b71` | Resize-handle stroke when active |
+| `--mat-sys-secondary-container` | `#e8def8` | Tooltip background (Material default) |
+| `--mat-sys-tertiary` | `#7d5260` | Reserved (BUY semantic per Decision D-020) — not used in dashboard chrome |
+| `--mat-sys-tertiary-container` | `#ffd8e4` | Reserved (BUY semantic per Decision D-020) — not used in dashboard chrome |
+| `--mat-sys-error` | `#b3261e` | Failed-save toast background (semantic error) |
+| `--mat-sys-on-error` | `#ffffff` | Text on error toast |
+| `--mat-sys-error-container` | `#f9dedc` | Failed-save banner background |
+| `--mat-sys-outline` | `#79747e` | Module wrapper 1px border, divider lines |
+| `--mat-sys-outline-variant` | `#cac4d0` | Subtle dividers between catalog rows |
+| `--mat-sys-shadow` | `#000000` | Shadow color for `box-shadow` on modules |
+| `--mat-sys-scrim` | `#000000` | Catalog dialog backdrop |
+
+#### 0.5.3.2 Spacing / Sizing Tokens
+
+Angular Material 3 does not standardize spacing tokens to the same degree as colors; spacing uses a 4-px / 8-px / 16-px / 24-px scale via component density tokens and `--mat-sys-*-shape` for radius. Dashboard surfaces consume the following:
+
+| Conceptual Token | Value | Use |
+|------------------|-------|-----|
+| `--gf-canvas-row-height` | `64px` (constant) | Gridster `fixedRowHeight` (per spec § 0.1) |
+| `--gf-canvas-cell-padding` | `4px` (constant) | Gridster `margin: 4` (gap between cells) |
+| `--gf-canvas-min-cell-cols` | `2` | Gridster `minItemCols` (per spec) |
+| `--gf-canvas-min-cell-rows` | `2` | Gridster `minItemRows` (per spec) |
+| `--gf-canvas-cols` | `12` | Gridster `minCols`/`maxCols` (per spec) |
+| Module padding | `16px` | Internal module wrapper padding (Material 3 base spacing × 2) |
+| Module header height | `40px` | Aligned to Material `mat-toolbar` density-2 |
+| Catalog dialog width | `720px` | Material 3 dialog `medium` size |
+| Catalog row height | `56px` | Material 3 list 2-line item |
 
-**Explainable Rebalancing Engine (Feature C):**
+#### 0.5.3.3 Shape (Radius) Tokens
 
-- CREATE: `apps/api/src/app/rebalancing/rebalancing.module.ts` — Imports `ConfigModule`, `PortfolioModule`, `UserFinancialProfileModule`, `SnowflakeSyncModule`; declares `RebalancingService` and `RebalancingController`.
-- CREATE: `apps/api/src/app/rebalancing/rebalancing.service.ts` — Single `recommend(userId, requestPayload)` method. Calls `messages.create({ model, max_tokens, system, messages, tools: [rebalancingTool], tool_choice: { type: 'tool', name: 'rebalancing_recommendations' } })`. Reads structured response **only** from `response.content.find(c => c.type === 'tool_use')?.input`. Validates the resulting object against the `RebalancingResponse` shape via a runtime schema (e.g., simple structural assertions); throws `BadGatewayException` if Anthropic returns an unexpected shape. Never inspects `response.content[i].text`.
-- CREATE: `apps/api/src/app/rebalancing/rebalancing.controller.ts` — `@Controller('ai/rebalancing')`; `@Post()` returning `RebalancingResponse`; same guard / permission decorators; thin delegation.
-- CREATE: `apps/api/src/app/rebalancing/dtos/rebalancing-request.dto.ts` — Optional override fields (e.g., `targetAllocation`).
-- CREATE: `apps/api/src/app/rebalancing/interfaces/rebalancing-response.interface.ts` — `RebalancingResponse` interface verbatim from `§ 0.1.2.4`.
+| Token | Fallback Value | Use |
+|-------|----------------|-----|
+| `--mat-sys-corner-extra-small` | `4px` | Module wrapper corner radius |
+| `--mat-sys-corner-small` | `8px` | Catalog row hover-state corner |
+| `--mat-sys-corner-medium` | `12px` | Catalog dialog corner |
+| `--mat-sys-corner-large` | `16px` | Catalog FAB corner (extended) |
 
-**User Financial Profile (shared dependency for B and C):**
+#### 0.5.3.4 Elevation / Shadow Tokens
 
-- CREATE: `apps/api/src/app/user-financial-profile/user-financial-profile.module.ts` — Imports `PrismaModule`; declares `UserFinancialProfileService`; **exports `UserFinancialProfileService`**.
-- CREATE: `apps/api/src/app/user-financial-profile/user-financial-profile.service.ts` — Three public methods: `findByUserId(userId): Promise<FinancialProfile | null>`, `upsertForUser(userId, dto): Promise<FinancialProfile>`, and a Prisma-bound private wrapper. Every Prisma call includes `where: { userId }` (Rule 5). Returns `null` (not `throw`) when no row is found; the controller maps `null` to HTTP 404.
-- CREATE: `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` — `@Controller('user/financial-profile')`; `@Get()` returns 200 or `throw new NotFoundException()`; `@Patch()` validates `FinancialProfileDto`; both use `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` with appropriate permissions and read `userId` from `request.user.id`. **No** Prisma call appears in the controller (Rule 8).
-- CREATE: `apps/api/src/app/user-financial-profile/dtos/financial-profile.dto.ts` — `class-validator` schema with `@IsInt() @Min(18) @Max(100) retirementTargetAge`, `@IsNumber() @Min(0) retirementTargetAmount`, `@IsInt() @Min(1) timeHorizonYears`, `@IsEnum(RiskTolerance) riskTolerance`, `@IsNumber() @Min(0) monthlyIncome`, `@IsNumber() @Min(0) monthlyDebtObligations`, `@IsArray() @ValidateNested({ each: true }) investmentGoals: InvestmentGoalDto[]`. Server-side validation is the authoritative gate for `retirementTargetAge`; the client mirrors it for UX.
+| Token | Use |
+|-------|-----|
+| `--mat-sys-level1` | Module resting elevation |
+| `--mat-sys-level2` | Module hover/dragging elevation |
+| `--mat-sys-level3` | Catalog dialog elevation |
 
-#### 0.5.1.2 Group 2 — Supporting Infrastructure (Backend)
+#### 0.5.3.5 Typography Tokens
 
-- MODIFY: `apps/api/src/app/app.module.ts` — Append four new imports (top of file) and four new `imports` array entries; no other change.
-- MODIFY: `prisma/schema.prisma` — Append `model FinancialProfile { ... }` and `enum RiskTolerance { LOW MEDIUM HIGH }`.
-- CREATE: `prisma/migrations/<timestamp>_add_financial_profile/migration.sql` — Generated by `npx prisma migrate dev --name add_financial_profile`; commits the resulting SQL verbatim.
-- MODIFY: `.env.example` — Append seven placeholder lines under a new `# AI / Snowflake (added by Agent Action Plan)` comment header.
-- MODIFY: `libs/common/src/lib/permissions.ts` — Append five constants: `readAiChat`, `readAiRebalancing`, `readFinancialProfile`, `updateFinancialProfile`, `triggerSnowflakeSync`.
-- MODIFY: `libs/common/src/lib/interfaces/index.ts` — Append three `export * from './...'` lines for the new shared interfaces.
-- CREATE: `libs/common/src/lib/interfaces/financial-profile.interface.ts` — TypeScript interface mirroring the Prisma model (used by the Angular form).
-- CREATE: `libs/common/src/lib/interfaces/rebalancing-response.interface.ts` — Verbatim from `§ 0.1.2.4`.
-- CREATE: `libs/common/src/lib/interfaces/chat-message.interface.ts` — Shared chat message envelope.
-- CREATE: `apps/api/src/app/health/snowflake-health.indicator.ts` — Issues a lightweight `SELECT 1` against Snowflake on `/api/v1/health/snowflake` (registered additively in the existing `HealthModule`).
-- CREATE: `apps/api/src/app/health/anthropic-health.indicator.ts` — Verifies the Anthropic SDK can be constructed without making a paid API call (configuration probe only).
-- CREATE: `apps/api/src/app/metrics/metrics.module.ts`, `metrics.service.ts`, `metrics.controller.ts` — Lightweight in-process counter / histogram registry exposed at `/api/v1/metrics` (per the Observability rule).
+| Token | Use |
+|-------|-----|
+| `--mat-sys-title-medium` | Module title |
+| `--mat-sys-body-medium` | Module subtitle / catalog row description |
+| `--mat-sys-label-large` | Catalog FAB label |
+| `--mat-sys-label-medium` | Tooltip text |
 
-#### 0.5.1.3 Group 3 — Frontend Components, Routes, and Templates
+#### 0.5.3.6 Canonical Pattern (Verbatim per Decision D-020)
 
-- CREATE: `apps/client/src/app/components/chat-panel/chat-panel.component.ts` — Standalone Angular component; signal-based state (`messages`, `isStreaming`, `errorMessage`, `inputText`); on submit calls `aiChatService.openStream(messages)`; on stream `error` sets `errorMessage` to a non-empty string and renders the reconnect button.
-- CREATE: `apps/client/src/app/components/chat-panel/chat-panel.component.html` — Template with `*ngIf="errorMessage()"` block containing the reconnect `<button>` (Rule 6).
-- CREATE: `apps/client/src/app/components/chat-panel/chat-panel.component.scss` — Component-scoped styles.
-- CREATE: `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.ts` — Standalone modal dialog component using `MatDialogRef`. On `ngOnInit`, calls `financialProfileService.get()`. On HTTP 200, pre-populates `FormGroup`. On HTTP 404, leaves the form empty. Submit calls `PATCH`. Client-side validator rejects `retirementTargetAge ≤ currentUserAge` before the HTTP call.
-- CREATE: `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.html` — Material Design 3 dialog form with reactive form bindings and a `RiskTolerance` `<mat-select>` whose options are sourced from a shared enum.
-- CREATE: `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.scss` — Component-scoped styles.
-- CREATE: `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.ts` — Standalone routed component; on `ngOnInit` calls `rebalancingService.getRecommendations()`; renders each recommendation with `rationale` expanded by default; surfaces `summary` and `warnings`.
-- CREATE: `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.html` — Page template.
-- CREATE: `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.scss` — Page styles.
-- CREATE: `apps/client/src/app/services/ai-chat.service.ts` — Wraps `EventSource` lifecycle (open, message, error, close). Exposes a typed RxJS `Subject<ChatMessage>` consumed by the panel.
-- CREATE: `apps/client/src/app/services/rebalancing.service.ts` — Wraps `HttpClient.post<RebalancingResponse>('/api/v1/ai/rebalancing', body)`.
-- CREATE: `apps/client/src/app/services/financial-profile.service.ts` — Wraps `HttpClient.get<FinancialProfile>('/api/v1/user/financial-profile')` and `HttpClient.patch<FinancialProfile>(...)`.
-- MODIFY: `apps/client/src/app/app.routes.ts` — Append one route entry for `/portfolio/rebalancing`.
-- MODIFY: `apps/client/src/app/pages/portfolio/portfolio-page.html` — Insert `<app-chat-panel>` in the sidebar slot.
-- MODIFY: `apps/client/src/app/pages/user-account/user-account-page.ts` — Add a menu/button handler that calls `MatDialog.open(FinancialProfileFormComponent)`.
+All chrome SCSS in the dashboard MUST follow this pattern (snippet kept short per spec instruction):
 
-#### 0.5.1.4 Group 4 — Tests and Documentation
+```scss
+.gf-module-wrapper {
+    background-color: var(--mat-sys-surface-container, #f3edf7);
+    border: 1px solid var(--mat-sys-outline, #79747e);
+}
+```
 
-- CREATE: `apps/api/src/app/snowflake-sync/snowflake-sync.service.spec.ts` — Unit tests covering: cron registration via `SchedulerRegistry`, event handler invocation, MERGE bind-variable usage (regex assertion that no `${...}` template appears within the SQL strings), idempotency (running the sync twice does not increase row counts in the mocked Snowflake driver), and `query_history` parameter validation.
-- CREATE: `apps/api/src/app/snowflake-sync/snowflake-sync.controller.spec.ts` — Tests: 200 with admin permission, 401 unauth, 403 without `triggerSnowflakeSync`.
-- CREATE: `apps/api/src/app/ai-chat/ai-chat.service.spec.ts` — Tests: tool schema completeness (the `tools` array passed to the Anthropic SDK contains all four expected tool names), `ConfigService` is the only credential source (mock asserts `process.env.ANTHROPIC_API_KEY` is never read), tool-dispatch routing for each of the four tools.
-- CREATE: `apps/api/src/app/ai-chat/ai-chat.controller.spec.ts` — Integration test: response `Content-Type` includes `text/event-stream`, first SSE chunk arrives within the 3 s budget on a mocked Anthropic client, error path emits an SSE error frame and sets a useful message.
-- CREATE: `apps/api/src/app/rebalancing/rebalancing.service.spec.ts` — Tests: structured output sourced **only** from `tool_use` content (Rule 4); rejects responses lacking a `tool_use` block; per-recommendation `goalReference` is non-empty.
-- CREATE: `apps/api/src/app/rebalancing/rebalancing.controller.spec.ts` — Tests: 200 with valid body, 401 unauth, 400 invalid body shape.
-- CREATE: `apps/api/src/app/user-financial-profile/user-financial-profile.service.spec.ts` — Tests: every Prisma call observed contains `where: { userId }`; user-1 cannot read user-2's row; upsert is idempotent.
-- CREATE: `apps/api/src/app/user-financial-profile/user-financial-profile.controller.spec.ts` — Tests: 200 after PATCH, 404 (not 500) when no record exists, 400 when `retirementTargetAge < currentAge`, 401 unauth.
-- CREATE: `apps/client/src/app/components/chat-panel/chat-panel.component.spec.ts` — Tests: stream error sets `errorMessage` truthy, reconnect button rendered when `errorMessage` truthy.
-- CREATE: `apps/client/src/app/components/financial-profile-form/financial-profile-form.component.spec.ts` — Tests: 404 leaves form empty, 200 pre-populates fields, validator rejects invalid `retirementTargetAge`.
-- CREATE: `apps/client/src/app/pages/portfolio/rebalancing/rebalancing-page.component.spec.ts` — Tests: every recommendation renders `rationale` and `goalReference`, summary shown, warnings shown.
-- CREATE: `docs/observability/snowflake-sync.md`, `docs/observability/ai-chat.md`, `docs/observability/ai-rebalancing.md` — Dashboard templates per Observability rule.
-- CREATE: `docs/decisions/agent-action-plan-decisions.md` — Decision log per Explainability rule.
-- CREATE: `blitzy-deck/agent-action-plan.html` — Reveal.js executive deck per Executive Presentation rule.
-- CREATE (when review begins): `CODE_REVIEW.md` at repo root per Segmented PR Review rule.
-- MODIFY: `README.md` — **No edit unless the agent observes that an "AI features" section is contextually appropriate.** The default plan is to leave `README.md` untouched and to document AI usage in dedicated `docs/observability/*.md` files.
+Direct use of `--mat-sys-*` tokens without a fallback is prohibited (Decision D-020). Hardcoded literal colors that do NOT trace to a token are also prohibited; the only allowed literal values are `0`, `none`, `auto`, `inherit`, `currentColor`, `transparent`, and the spacing/sizing constants enumerated in § 0.5.3.2.
 
-#### 0.5.1.5 Chat-Agent Tool Schemas (verbatim mapping)
+### 0.5.4 Gaps Inventory
 
-Each Anthropic tool definition is registered inside `AiChatService.buildTools()` and matches the user's tool list one-to-one.
+| Gap | Library Element Missing | Resolution |
+|-----|--------------------------|------------|
+| Resize handle visual | Material 3 has no canonical "grid resize handle" component | Use gridster's built-in `resizable.enabled = true` and style its default handle with `--mat-sys-outline` border + `--mat-sys-primary-container` fill on `:hover`/`:active`; document in chrome SCSS with the var/fallback pattern |
+| Drop-zone placeholder | Material has no canonical "drop-zone fill" component | Plain `<div>` styled with `--mat-sys-surface-variant` background and `--mat-sys-outline` 2px dashed border; gridster renders this via its `swap` and `pushItems` rendering primitives |
+| 12-column responsive grid | Material's `MatGridList` is a fixed-cell grid but does NOT support drag/resize/persist | NOT a gap for this feature — `angular-gridster2` 21.0.1 is the explicit replacement (see § 0.3 Dependency Inventory) |
+| Module-of-modules registry UI | No Material primitive for "module catalog" | Composed of `MatDialog` + `MatList` + `MatFormField`/`MatInput` (search) — no gap |
+| Layout persistence indicator | Material has no "auto-save status" pill | Use `MatSnackBar` (success) and inline `<mat-progress-spinner mode="indeterminate" diameter="16">` during save; both are Material primitives |
+| Module-failed (error boundary) UI | No Material `ErrorBoundary` analog | Use `<mat-card appearance="outlined">` with `--mat-sys-error-container` background and `<ion-icon name="alert-circle-outline">`; mark this as a deliberate composition rather than a gap |
+
+No gap requires a new dependency beyond `angular-gridster2`. The Material + CDK + gridster combination satisfies 100 % of dashboard chrome needs. The decision log entry in `docs/decisions/agent-action-plan-decisions.md` records this composition rationale.
+
+### 0.5.5 Compliance Summary
+
+The dashboard refactor consumes Angular Material 21.2.5 (already installed), Angular CDK 21.2.5 (already installed), Ionicons 8.0.13 (already installed) for icons, and adds `angular-gridster2 21.0.1` as the only new dependency. Every chrome surface — module wrappers, catalog overlay, search field, snack-bar, dialog, FAB — resolves to an existing Material primitive. Every CSS property value resolves to a `--mat-sys-*` token via the var/fallback pattern mandated by Decision D-020. Zero hardcoded color literals appear in the chrome SCSS; constant numeric values are limited to spacing/sizing tokens explicitly enumerated in § 0.5.3.2 (row height, cell margin, min cell dimensions, dialog width, header height) which are layout grid configuration rather than visual style. There are no gaps that require external libraries or custom design tokens. The two semantic-color reservations from Decision D-020 (BUY = tertiary, SELL = error, HOLD = outline+surface-variant) remain reserved for the rebalancing module's content and are NOT consumed by the dashboard chrome itself.
+
+
+## 0.6 Technical Implementation
+
+### 0.6.1 File-by-File Execution Plan
+
+This sub-section enumerates every file that the Blitzy platform creates or modifies, grouped by execution order. Each row is binding: the agent MUST emit exactly the listed artifact at the listed path using the patterns described.
+
+#### 0.6.1.1 Group 1 — Database Schema and Migration
+
+| Action | Path | Purpose |
+|--------|------|---------|
+| MODIFY | `prisma/schema.prisma` | Append `model UserDashboardLayout` block; add back-relation field on `User` model |
+| CREATE | `prisma/migrations/<timestamp>_add_user_dashboard_layout/migration.sql` | Auto-generated by `npx prisma migrate dev --name add-user-dashboard-layout`; creates table, FK with cascade, default timestamps |
+
+The new model follows the `FinancialProfile` template at `prisma/schema.prisma` line 364 — `userId` is the primary key and the FK target, the relation is `onDelete: Cascade` and `onUpdate: Cascade`, and the User model gets an explicit back-relation field per Decision D-013 (Prisma 7.x explicit back-relation requirement).
+
+```prisma
+model UserDashboardLayout {
+    userId String @id
+    layoutData Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}
+```
+
+The User model gains:
+
+```prisma
+userDashboardLayout UserDashboardLayout?
+```
+
+The `layoutData` JSON shape is documented in § 0.6.1.5 below; PostgreSQL stores it as `jsonb` automatically (Prisma maps `Json` to `jsonb` when running on PostgreSQL).
+
+#### 0.6.1.2 Group 2 — Permissions Registry
+
+| Action | Path | Purpose |
+|--------|------|---------|
+| MODIFY | `libs/common/src/lib/permissions.ts` | Add `readUserDashboardLayout` and `updateUserDashboardLayout` constants; grant to ADMIN and USER roles |
+
+The grant pattern follows the existing `readFinancialProfile` / `updateFinancialProfile` precedent. DEMO and INACTIVE roles MUST NOT receive the new permissions (mirrors Decision D-005 pattern that reserved write capabilities for non-demo roles).
+
+#### 0.6.1.3 Group 3 — NestJS Layout Module (Backend)
+
+| Action | Path | Purpose |
+|--------|------|---------|
+| CREATE | `apps/api/src/app/user/user-dashboard-layout.module.ts` | NestJS feature module declaring controller, service, and PrismaModule import |
+| CREATE | `apps/api/src/app/user/user-dashboard-layout.controller.ts` | NestJS controller exposing `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout`; secured by `AuthGuard('jwt')` + `HasPermissionGuard` + `@HasPermission(...)` decorator |
+| CREATE | `apps/api/src/app/user/user-dashboard-layout.service.ts` | NestJS service with `findByUserId(userId)` and `upsertForUser(userId, layoutData)` methods backed by `PrismaService` |
+| CREATE | `apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts` | Class-validator DTO with `@IsObject()` validation for `layoutData` payload (Decision D-023 pattern) |
+| CREATE | `apps/api/src/app/user/dtos/dashboard-layout.dto.ts` | Response DTO shape echoed back from GET / PATCH responses |
+| CREATE | `apps/api/src/app/user/user-dashboard-layout.controller.spec.ts` | Jest unit-tests for controller (auth, 401 paths, payload validation) |
+| CREATE | `apps/api/src/app/user/user-dashboard-layout.service.spec.ts` | Jest unit-tests for service (find, upsert, edge cases) |
+| MODIFY | `apps/api/src/app/app.module.ts` | Add `import { UserDashboardLayoutModule }` and register in root module's `imports: [...]` array adjacent to `UserFinancialProfileModule` |
+
+Controller shape (verbatim auth pattern from `apps/api/src/app/user/user.controller.ts`):
+
+```typescript
+@Controller('user/layout')
+@UseGuards(AuthGuard('jwt'), HasPermissionGuard)
+export class UserDashboardLayoutController { /* GET, PATCH methods */ }
+```
+
+The controller follows JWT-Authoritative Identity (Engineering Constraint Rule 5): `userId` is read from `request.user.id`, NEVER from the request body or DTO. The PATCH method uses Prisma `upsert` (idempotent per Decision D-019). The `X-Correlation-ID` header is generated via `randomUUID()` from `node:crypto` and set on the response headers before the service call (matches `user-financial-profile.controller.ts` precedent).
+
+Service shape (idempotent upsert per Decision D-019):
+
+```typescript
+async upsertForUser(userId: string, layoutData: Prisma.JsonValue) {
+    return this.prisma.userDashboardLayout.upsert({ where: { userId }, create: { userId, layoutData }, update: { layoutData } });
+}
+```
+
+#### 0.6.1.4 Group 4 — Angular Dashboard Feature (Frontend)
+
+| Action | Path | Purpose |
+|--------|------|---------|
+| CREATE | `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.ts` | Standalone, OnPush root canvas component rendered at `/`; hosts `<gridster>` and orchestrates module loading |
+| CREATE | `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.html` | Template with `<gridster [options]="options"><gridster-item *ngFor="let item of layout">...</gridster-item></gridster>` (Angular control-flow `@for` actually used per existing repo convention) |
+| CREATE | `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.scss` | Canvas-level styles using `var(--mat-sys-surface, #fffbfe)` background |
+| CREATE | `apps/client/src/app/dashboard/dashboard-canvas/dashboard-canvas.component.spec.ts` | Karma/Jest unit-tests for canvas init, blank-canvas + auto-open-catalog scenario, returning-user load |
+| CREATE | `apps/client/src/app/dashboard/module-registry.service.ts` | Centralized registry of available module types: `{ id, displayName, component, minCols, minRows, defaultCols, defaultRows, icon }` |
+| CREATE | `apps/client/src/app/dashboard/module-registry.service.spec.ts` | Unit tests for registry registration and lookup |
+| CREATE | `apps/client/src/app/dashboard/services/user-dashboard-layout.service.ts` | Client service wrapping `HttpClient` calls to `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout` |
+| CREATE | `apps/client/src/app/dashboard/services/user-dashboard-layout.service.spec.ts` | Unit tests with `HttpTestingController` |
+| CREATE | `apps/client/src/app/dashboard/services/layout-persistence.service.ts` | rxjs-driven debouncer (`debounceTime(500)`) that listens to grid state-change events and triggers `userDashboardLayoutService.update(...)` |
+| CREATE | `apps/client/src/app/dashboard/services/layout-persistence.service.spec.ts` | Unit tests verifying the 500 ms debounce window, no save on no-op, error path |
+| CREATE | `apps/client/src/app/dashboard/module-catalog/module-catalog.component.ts` | Standalone catalog overlay using `MatDialog` (per § 0.5.2); searchable list of registered modules; auto-opens on first visit when no saved layout exists |
+| CREATE | `apps/client/src/app/dashboard/module-catalog/module-catalog.component.html` | Template with `MatFormField` search, `MatList` rows, and Add buttons |
+| CREATE | `apps/client/src/app/dashboard/module-catalog/module-catalog.component.scss` | Catalog overlay styles using `--mat-sys-surface-container-highest` and shape tokens |
+| CREATE | `apps/client/src/app/dashboard/module-catalog/module-catalog.component.spec.ts` | Unit tests for search filter, click-to-add, drag-from-catalog, auto-open behavior |
+| CREATE | `apps/client/src/app/dashboard/module-wrapper/module-wrapper.component.ts` | Generic chrome wrapper rendered inside each `<gridster-item>`; hosts header (drag handle, title, kebab/remove) and projects content via `<ng-content>` |
+| CREATE | `apps/client/src/app/dashboard/module-wrapper/module-wrapper.component.html` | Wrapper template |
+| CREATE | `apps/client/src/app/dashboard/module-wrapper/module-wrapper.component.scss` | Chrome SCSS strictly using the var/fallback pattern |
+| CREATE | `apps/client/src/app/dashboard/module-wrapper/module-wrapper.component.spec.ts` | Unit tests for header rendering and remove emission |
+| CREATE | `apps/client/src/app/dashboard/modules/portfolio-overview/portfolio-overview-module.component.ts` | Wrapper for the portfolio-overview content; reuses `GfHomeOverviewComponent` (or equivalent existing presentation) |
+| CREATE | `apps/client/src/app/dashboard/modules/holdings/holdings-module.component.ts` | Wrapper around existing `GfHoldingsTableComponent` |
+| CREATE | `apps/client/src/app/dashboard/modules/transactions/transactions-module.component.ts` | Wrapper around existing transactions/activities table component |
+| CREATE | `apps/client/src/app/dashboard/modules/analysis/analysis-module.component.ts` | Wrapper around existing portfolio-analysis content |
+| CREATE | `apps/client/src/app/dashboard/modules/chat/chat-module.component.ts` | Wrapper around the existing `ChatPanelComponent` (DEVIATION POINT — see § 0.7.2) |
+| CREATE | `apps/client/src/app/dashboard/modules/portfolio-overview/portfolio-overview-module.component.spec.ts` | Unit smoke-test |
+| CREATE | `apps/client/src/app/dashboard/modules/holdings/holdings-module.component.spec.ts` | Unit smoke-test |
+| CREATE | `apps/client/src/app/dashboard/modules/transactions/transactions-module.component.spec.ts` | Unit smoke-test |
+| CREATE | `apps/client/src/app/dashboard/modules/analysis/analysis-module.component.spec.ts` | Unit smoke-test |
+| CREATE | `apps/client/src/app/dashboard/modules/chat/chat-module.component.spec.ts` | Unit smoke-test |
+| CREATE | `apps/client/src/app/dashboard/interfaces/dashboard-module.interface.ts` | TypeScript interface describing a registered module entry (`DashboardModuleDescriptor`) |
+| CREATE | `apps/client/src/app/dashboard/interfaces/layout-data.interface.ts` | TypeScript interface describing the persisted JSON shape (`LayoutData`, `LayoutItem`) |
+
+#### 0.6.1.5 Group 5 — Routing Collapse and App Shell
 
-- `get_current_positions` — input schema: `{ userId: string }`. Implementation: `await portfolioService.getDetails({ impersonationId: null, userId })` and shape its `holdings` field for Claude.
-- `get_performance_metrics` — input schema: `{ userId: string, startDate: string, endDate: string }`. Implementation: `await portfolioService.getPerformance({ ... })` with `dateRange` derived from the inputs.
-- `query_history` — input schema: `{ userId: string, sql: string, binds: Array<string|number|boolean|null> }`. Implementation: `await snowflakeSyncService.queryHistory(userId, sql, binds)`. The service rejects any `sql` containing `;` outside string literals (defense-in-depth) and applies a row-count cap. Bind variables are passed through directly — no string interpolation (Rule 2).
-- `get_market_data` — input schema: `{ ticker: string }`. Implementation: `await symbolService.get({ symbol: ticker, dataSource: 'YAHOO' })` (or whichever default the existing service uses), returning the profile fields safe for the model.
+| Action | Path | Purpose |
+|--------|------|---------|
+| MODIFY | `apps/client/src/app/app.routes.ts` | Replace 22-entry `routes` array with single root entry `{ path: '', component: GfDashboardCanvasComponent, canActivate: [AuthGuard], title: 'Dashboard' }` plus the `**` wildcard redirecting to `''` |
+| MODIFY | `apps/client/src/app/app.component.ts` | Remove `GfHeaderComponent` and `GfFooterComponent` imports; remove from component's `imports: [...]` array |
+| MODIFY | `apps/client/src/app/app.component.html` | Reduce template to `<router-outlet />` plus optional info-message banner |
+| MODIFY | `apps/client/src/app/app.component.scss` | Remove header/footer chrome offsets; preserve `:host { display: block; height: 100vh; }` |
 
-The `userId` argument that Claude supplies in each tool input MUST be reconciled against the JWT-authenticated user before dispatch — `AiChatService.dispatchTool(...)` overrides any tool-supplied `userId` with the authenticated value to prevent the agent from acting on behalf of a different user even if the model "asks" to.
+Routing infrastructure in `apps/client/src/main.ts` (lines 70–104) — `RouterModule.forRoot`, `ServiceWorkerModule`, `provideZoneChangeDetection`, `PageTitleStrategy`, `ModulePreloadService` — is preserved verbatim.
 
-### 0.5.2 Implementation Approach per File
+#### 0.6.1.6 Group 6 — Removed Files
 
-The following narrative describes the precise approach for each new file group, framed against existing Ghostfolio conventions:
+| Action | Path Pattern | Purpose |
+|--------|--------------|---------|
+| REMOVE | `apps/client/src/app/components/header/**` | Removed by spec |
+| REMOVE | `apps/client/src/app/components/footer/**` | Removed by spec |
+| REMOVE | `apps/client/src/app/pages/**` | Entire pages namespace removed (route-shell collapse). Files in this folder hold legacy route-driven page shells |
 
-- **Establish feature foundation by creating core modules.** Each of `SnowflakeSyncModule`, `AiChatModule`, `RebalancingModule`, and `UserFinancialProfileModule` is created as a self-contained NestJS feature module mirroring the layout of the existing `apps/api/src/app/endpoints/ai/` precedent (controller + module + service trio). Modules are completely isolated from each other except through their `exports` arrays.
+Components inside `apps/client/src/app/pages/` that contained reusable presentation logic (e.g., portfolio summary, holdings table) MUST first be relocated under `apps/client/src/app/components/` if they were previously declared there or referenced from `libs/ui/`. The page shells themselves (`*-page.component.{ts,html,scss}`, `*-page.routes.ts`) are deleted.
 
-- **Integrate with existing systems by modifying integration points.** The single permitted edit to `apps/api/src/app/app.module.ts` adds the four new module imports. The single permitted edit to `prisma/schema.prisma` appends the new model and enum. The single permitted edit to `apps/client/src/app/app.routes.ts` adds the `/portfolio/rebalancing` route. The single permitted edit to `apps/client/src/app/pages/portfolio/portfolio-page.html` inserts the `<app-chat-panel>` selector. The single permitted edit to `.env.example` appends the seven new placeholder lines. The single permitted edit to `libs/common/src/lib/permissions.ts` appends the five new constants. No other existing file is modified.
+#### 0.6.1.7 Group 7 — Persistence Payload Shape
 
-- **Ensure quality by implementing comprehensive tests.** Every new service has a `.spec.ts` exercising both the happy path and the rule-specific verifications enumerated in `§ 0.7`. Every new controller has a `.spec.ts` exercising guards, validation, and status codes. Every new Angular component has a `.spec.ts` exercising the SSE-error / 404 / validation paths.
+The persisted `layoutData` JSON document is the canonical contract between the client and the API. It MUST be a JSON object of the following shape:
 
-- **Document usage and configuration.** Three Observability dashboard templates are created under `docs/observability/`. The decision log lives at `docs/decisions/agent-action-plan-decisions.md`. The reveal.js executive deck lives at `blitzy-deck/agent-action-plan.html`. Each cross-references the matching feature in this Agent Action Plan.
+```typescript
+interface LayoutData { version: 1; items: LayoutItem[]; }
+interface LayoutItem { moduleId: string; cols: number; rows: number; x: number; y: number; }
+```
 
-- **Figma references.** **No Figma URL is provided in the user prompt.** Accordingly, no `// FIGMA: <url>` annotation is required in any file. Should Figma URLs be supplied in a follow-up, the implementation agent must annotate every Angular component template that derives from each frame with a header comment naming the frame.
+Validation rules enforced server-side (`update-dashboard-layout.dto.ts`):
+- `version` MUST equal `1`.
+- `items` MUST be an array of length 0 .. 50 (defensive cap).
+- Each `LayoutItem.moduleId` MUST be a non-empty string ≤ 100 chars.
+- `cols`, `rows`, `x`, `y` MUST be non-negative integers; `cols ≥ 2`, `rows ≥ 2`, `x + cols ≤ 12`.
 
-### 0.5.3 User Interface Design
+Client-side, the same shape is mirrored in `apps/client/src/app/dashboard/interfaces/layout-data.interface.ts`.
 
-The user's prompt contains explicit UX requirements for each Angular component. They are restated below verbatim and unambiguously to drive code generation:
+#### 0.6.1.8 Group 8 — Configuration Files
 
-- **`ChatPanelComponent`** — Sidebar slot on the existing portfolio page. Renders the SSE stream token-by-token. Sets `errorMessage` (a non-empty string) and renders a visible reconnect button on stream error. The reconnect button, when clicked, re-invokes the same SSE endpoint and clears `errorMessage` on a successful new stream open.
+| Action | Path | Purpose |
+|--------|------|---------|
+| MODIFY | `package.json` | Add `"angular-gridster2": "21.0.1"` to dependencies |
+| MODIFY | `package-lock.json` | Auto-regenerated by `npm install angular-gridster2@21.0.1` |
+| MODIFY | `apps/client/src/styles/styles.scss` | Add `@import 'angular-gridster2/css/gridster.css';` (gridster ships its own base CSS that MUST be loaded so the canvas computes cell positions correctly) |
 
-- **`RebalancingPageComponent`** — Standalone route at `/portfolio/rebalancing`. Displays the full `RebalancingResponse`, with each `rationale` field expanded by default (no "click to expand" — every rationale is visible immediately). Displays the `summary` paragraph above the recommendation list. Displays each entry of the `warnings` array in a visually distinct alert region. Each recommendation renders `action`, `ticker`, `fromPct → toPct`, `rationale`, and a small badge or label showing `goalReference`.
+#### 0.6.1.9 Group 9 — Documentation Files
 
-- **`FinancialProfileFormComponent`** — Modal dialog opened from the user-account page. On open, calls `GET /api/v1/user/financial-profile` to pre-populate fields if a record exists. Displays an empty form for first-time setup if `GET` returns 404. Client-side validates `retirementTargetAge > currentUserAge` **before** submission (i.e., the submit button is disabled or the validator emits an error before the HTTP call is made). The current user's age is computed from the authenticated user profile (e.g., `User.settings.dateOfBirth`) when available, or the validator falls back to a sensible minimum (e.g., `retirementTargetAge ≥ 18`).
+| Action | Path | Purpose |
+|--------|------|---------|
+| CREATE | `docs/observability/dashboard-layout.md` | Observability runbook — metrics emitted, log shapes, correlation-id propagation, dashboards. Pattern follows existing files at `docs/observability/ai-chat.md`, `ai-rebalancing.md`, `snowflake-sync.md` |
+| MODIFY | `docs/decisions/agent-action-plan-decisions.md` | Append decision entries D-NNN for: (a) dashboard refactor scope, (b) chat-panel deviation from § 0.4.1.7, (c) `MatDialog` vs `MatSidenav` overlay choice, (d) gridster v21 vs alternatives |
+| CREATE | `docs/migrations/dashboard-traceability-matrix.md` | Bidirectional traceability matrix (per project Implementation Rule "Explainability") mapping each removed/preserved/added construct to its target — 100 % coverage, no gaps |
+| MODIFY | `README.md` | Append a brief "Dashboard" section pointing at the observability runbook and the new endpoints |
+| CREATE | `blitzy-deck/dashboard-refactor-deck.html` | Self-contained reveal.js executive summary deck per project Implementation Rule "Executive Presentation" (12–18 slides, Blitzy brand theme, Mermaid diagrams initialized with `startOnLoad: false`, Lucide icons, CDN-pinned reveal.js 5.1.0 / Mermaid 11.4.0 / Lucide 0.460.0) |
+| CREATE | `CODE_REVIEW.md` | Pre-flight + segmented PR review artifact per project Implementation Rule "Segmented PR Review" — created at repository root, committed before first phase, re-committed after every phase transition and final verdict |
 
-All three components use Material Design 3 (`@angular/material@21.2.5`) primitives and the existing Ghostfolio SCSS theme. The component selector prefix is `gf` per the existing convention; the user's prompt uses `app-chat-panel` for the sidebar embed, which is the component's HTML element name corresponding to whichever selector convention the agent uses (e.g., `gf-chat-panel` aliased through the component's `selector` metadata, or literal `app-chat-panel`). Either is acceptable as long as the embed in `portfolio-page.html` matches the component's `selector` field.
+#### 0.6.1.10 Group 10 — Observability Wiring
 
+| Action | Path | Purpose |
+|--------|------|---------|
+| MODIFY | `apps/api/src/app/user/user-dashboard-layout.service.ts` | Inject `MetricsService` (existing at `apps/api/src/services/metrics/metrics.service.ts` per repo convention used by `snowflake-sync.service.ts`); register and increment counters: `dashboard_layout_get_total`, `dashboard_layout_patch_total`, `dashboard_layout_save_failures_total`. Register histogram: `dashboard_layout_request_duration_seconds` |
+| MODIFY | `apps/api/src/app/user/user-dashboard-layout.controller.ts` | Generate `correlationId` via `randomUUID()` from `node:crypto`; set `X-Correlation-ID` response header BEFORE the service call; log structured (level, correlationId, userId, route, duration) using existing logger (Pino-based via Nest `Logger`) |
+| CREATE | `apps/client/src/app/dashboard/services/dashboard-telemetry.service.ts` | Lightweight client telemetry — measures gridster drag/resize visual completion latency; emits structured logs to console in dev; SLO target < 100 ms reported in `docs/observability/dashboard-layout.md` |
 
-## 0.6 Scope Boundaries
+### 0.6.2 Implementation Approach Per File
 
-### 0.6.1 Exhaustively In Scope
+#### 0.6.2.1 Backend Approach (Database → Service → Controller → Module)
 
-The following file globs and explicit paths constitute the complete in-scope surface of this Agent Action Plan. Any artifact not matching one of these patterns is out of scope.
+The Blitzy platform implements the backend bottom-up. The migration is generated first with `npx prisma migrate dev --name add-user-dashboard-layout` after the schema edit; this command writes both the migration SQL and regenerates the Prisma client typings. The service is implemented next, consuming `PrismaService` via DI and exposing two methods (`findByUserId`, `upsertForUser`) that wrap `prisma.userDashboardLayout.findUnique` and `prisma.userDashboardLayout.upsert`. The controller is implemented next using the verbatim auth pattern `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` plus `@HasPermission(permissions.readUserDashboardLayout)` on GET and `@HasPermission(permissions.updateUserDashboardLayout)` on PATCH. The module file declares controllers/providers/imports/exports and is added to `app.module.ts`. Observability metrics are registered in the service constructor following the `snowflake-sync.service.ts` pattern (`metricsService.registerHelp(...)` then `metricsService.incrementCounter(...)` per request).
 
-#### 0.6.1.1 New Backend Source
+#### 0.6.2.2 Frontend Approach (Registry → Layout Service → Canvas → Modules → Catalog)
 
-- `apps/api/src/app/snowflake-sync/**/*.ts` — Module, service, controller, factory, DTOs, interfaces.
-- `apps/api/src/app/snowflake-sync/sql/bootstrap.sql` — Snowflake DDL bootstrap script.
-- `apps/api/src/app/ai-chat/**/*.ts` — Module, service, controller, DTOs, interfaces.
-- `apps/api/src/app/rebalancing/**/*.ts` — Module, service, controller, DTOs, interfaces.
-- `apps/api/src/app/user-financial-profile/**/*.ts` — Module, service, controller, DTOs.
-- `apps/api/src/app/health/snowflake-health.indicator.ts` — Additive health probe.
-- `apps/api/src/app/health/anthropic-health.indicator.ts` — Additive health probe.
-- `apps/api/src/app/metrics/**/*.ts` — New metrics module per Observability rule.
+The Blitzy platform implements the frontend by first creating the `ModuleRegistryService` with explicit registration of each of the five required modules (portfolio overview, holdings, transactions, analysis, chat). The client `UserDashboardLayoutService` is implemented next, wrapping `HttpClient.get` and `HttpClient.patch` to the new endpoints with strict typings against `LayoutData`. The `LayoutPersistenceService` is implemented to subscribe to canvas state-change events (drag-stop, resize-stop, item-added, item-removed) and route them through an rxjs `debounceTime(500)` operator before invoking the layout service.
 
-#### 0.6.1.2 New Backend Tests
+The `GfDashboardCanvasComponent` is implemented as a standalone OnPush component. Its `ngOnInit` orchestrates: (1) GET `/api/v1/user/layout` → if `404` or empty `items` → render blank canvas + auto-open `MatDialog` of `GfModuleCatalogComponent`; if items → hydrate the gridster `dashboard` array. Drag/resize events are wired via gridster `itemChangeCallback` and `itemResizeCallback` to a private `Subject<void>` that feeds the persistence service's debounced save.
 
-- `apps/api/src/app/snowflake-sync/**/*.spec.ts` — Service and controller unit tests.
-- `apps/api/src/app/ai-chat/**/*.spec.ts` — Service and controller tests.
-- `apps/api/src/app/rebalancing/**/*.spec.ts` — Service and controller tests.
-- `apps/api/src/app/user-financial-profile/**/*.spec.ts` — Service and controller tests.
+Each module wrapper component (portfolio-overview, holdings, transactions, analysis, chat) is a thin shell that:
+1. Accepts no inputs from the canvas (per Rule 1 — modules MUST NOT reference the grid layer).
+2. Embeds the existing presentation component via its native selector (e.g., `<app-chat-panel>` for chat).
+3. Reuses existing data-fetching services unchanged (PortfolioService, AiChatService, etc. — preserved per spec BOUNDARIES).
+4. Renders inside `GfModuleWrapperComponent` for unified chrome (header, kebab, drag handle).
 
-#### 0.6.1.3 Existing Backend Files Modified (Wiring Only)
+The `GfModuleCatalogComponent` is opened via `MatDialog.open(...)` and renders a `MatFormField` search input + `MatList` of registered modules from `ModuleRegistryService.list()`. Add-clicks emit a `moduleId` back to the canvas which calls `gridster.addItem({ cols: descriptor.defaultCols, rows: descriptor.defaultRows, ... })` at the next available cell.
 
-- `apps/api/src/app/app.module.ts` — Append four `imports` array entries and four matching `import` statements.
-- `prisma/schema.prisma` — Append `FinancialProfile` model and `RiskTolerance` enum.
+Zone-based change detection (per `provideZoneChangeDetection()` at `main.ts:87`) requires careful interaction with angular-gridster2 v21's NgZone calls — the validation criterion in the prompt mandates that the drag/resize visual update completes within 100 ms. The implementation uses `NgZone.runOutsideAngular(...)` for per-frame gridster math and re-enters the zone only at drag-stop/resize-stop boundaries (gridster v21's standalone API exposes the necessary hooks). This matches the gridster v21 NgZone pattern.
 
-#### 0.6.1.4 New Frontend Source
+#### 0.6.2.3 Routing Collapse Approach
+
+The Blitzy platform replaces the `routes` array in `apps/client/src/app/app.routes.ts` with exactly two entries:
+
+```typescript
+export const routes: Routes = [
+  { path: '', component: GfDashboardCanvasComponent, canActivate: [AuthGuard], title: 'Dashboard' },
+  { path: '**', redirectTo: '', pathMatch: 'full' }
+];
+```
+
+`RouterModule.forRoot(routes, { ... })` in `main.ts` (lines 70–74) continues to consume this array. The `PageTitleStrategy` continues to set the document title from the `title` property. `ModulePreloadService` continues to be the preloading strategy (its lazy-load reach simply collapses to a single eager component but the strategy still functions correctly per its existing implementation). `ServiceWorkerModule` continues to handle navigation events, including the implicit redirect from `**`.
+
+#### 0.6.2.4 Permission and Auth Approach
+
+Permissions are added to `libs/common/src/lib/permissions.ts` and granted to ADMIN and USER roles (mirroring the FinancialProfile precedent). The controller decorators are `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` at class level and `@HasPermission(permissions.readUserDashboardLayout)` / `@HasPermission(permissions.updateUserDashboardLayout)` at method level. The Reflector reads `HAS_PERMISSION_KEY` from the handler metadata (existing pattern at `apps/api/src/guards/has-permission.guard.ts`). Unauthenticated requests are rejected with `401 Unauthorized` by `AuthGuard('jwt')` before reaching `HasPermissionGuard`. Authenticated requests for users without the permission are rejected with `403 Forbidden`. The validation criterion "unauthenticated request returns 401" is satisfied without additional code.
+
+### 0.6.3 User Interface Design
+
+The dashboard's UI is a single-canvas modular workspace. Visual hierarchy:
+
+- **Canvas root** — full-viewport block element with `--mat-sys-surface` background; no header, no footer, no sidenav (chrome removed by spec).
+- **Floating Action Button (FAB)** — bottom-right, `MatFab` extended variant with `add-outline` ion-icon and label "Add module"; opens the catalog overlay.
+- **Module wrappers** — each `<gridster-item>` renders `GfModuleWrapperComponent` providing a 40-px header (drag handle on left third, title centered, kebab + remove on right) plus content slot below. Header background `--mat-sys-surface-container`; resting elevation `--mat-sys-level1`; hover/dragging elevation `--mat-sys-level2`.
+- **Drop-zone visual** — emitted by gridster during drag; styled with `--mat-sys-surface-variant` background and 2-px dashed `--mat-sys-outline` border.
+- **Catalog dialog** — `MatDialog`, 720 px wide, header "Module catalog", search bar (`MatFormField` outlined), 2-line `MatList` rows with leading `ion-icon` and trailing add `MatIconButton`. Footer "Close" button.
+- **Layout-saved snack-bar** — `MatSnackBar` 2-second duration, "Layout saved" text, no action button.
+
+The canvas is keyboard-accessible: focus traversal moves through module headers; `Tab` enters a focused module's content; `Shift+Tab` returns to canvas. Module remove and kebab buttons are reachable by keyboard with proper `aria-label`s. The catalog dialog traps focus per Material's default `MatDialog` behavior. Mobile/responsive layout is OUT OF SCOPE per the prompt.
+
+#### 0.6.3.1 Empty Canvas / First Visit Behavior
+
+Per spec validation criterion: "New user (no saved layout): blank canvas rendered; module catalog opens automatically." On `ngOnInit` of `GfDashboardCanvasComponent`:
+
+1. Call `userDashboardLayoutService.get()` (HTTP GET).
+2. If response `404` (no record) OR `LayoutData.items.length === 0`, set canvas state to empty AND immediately call `matDialog.open(GfModuleCatalogComponent, { ... })`.
+3. Otherwise, hydrate `gridster.dashboard` with the persisted items.
+
+#### 0.6.3.2 Returning User Behavior
+
+Per spec validation criterion: "Returning user: saved layout loaded and rendered on app init." On `ngOnInit`:
+
+1. Call `userDashboardLayoutService.get()`.
+2. On `200` with non-empty `items`, hydrate `gridster.dashboard` and render the canvas with the persisted modules at their persisted positions and sizes.
+3. The catalog does NOT auto-open in this path; the FAB remains available for explicit add.
+
+#### 0.6.3.3 Performance Targets (Validation Framework)
+
+| Metric | Target | Mechanism |
+|--------|--------|-----------|
+| Drag/resize visual completion | < 100 ms | Gridster runs layout math `NgZone.runOutsideAngular`; OnPush change detection on canvas; re-enters zone at drag-stop boundary |
+| Layout save (PATCH) after grid state change | ≥ 500 ms debounce | rxjs `debounceTime(500)` in `LayoutPersistenceService` |
+| `GET /api/v1/user/layout` p95 | ≤ 300 ms | Single primary-key lookup on indexed `userId`; response payload < 50 KB; minimal serialization |
+| `PATCH /api/v1/user/layout` p95 | ≤ 500 ms | Single Prisma `upsert` on indexed primary key |
+| Build (`npx nx build client && npx nx build api`) | Zero errors | Verified by CI |
+| Prisma migration | No conflicts | Verified by `npx prisma migrate dev` against existing schema |
+
+
+## 0.7 Scope Boundaries
+
+### 0.7.1 Exhaustively In Scope
+
+The following file globs and integration points form the complete IN-SCOPE surface for this refactor. Every artifact under these globs is MANDATORY for completion of the work item; the agent MUST emit each listed artifact at the listed path.
+
+#### 0.7.1.1 New Source Files (CREATE)
+
+| Path Pattern | Purpose |
+|--------------|---------|
+| `apps/client/src/app/dashboard/dashboard-canvas/**` | Canvas component (`*.component.ts`, `*.component.html`, `*.component.scss`, `*.component.spec.ts`) |
+| `apps/client/src/app/dashboard/module-catalog/**` | Catalog overlay component files |
+| `apps/client/src/app/dashboard/module-wrapper/**` | Generic module chrome wrapper component files |
+| `apps/client/src/app/dashboard/modules/portfolio-overview/**` | Portfolio-overview module wrapper |
+| `apps/client/src/app/dashboard/modules/holdings/**` | Holdings module wrapper |
+| `apps/client/src/app/dashboard/modules/transactions/**` | Transactions module wrapper |
+| `apps/client/src/app/dashboard/modules/analysis/**` | Analysis module wrapper |
+| `apps/client/src/app/dashboard/modules/chat/**` | Chat module wrapper (DEVIATION POINT) |
+| `apps/client/src/app/dashboard/module-registry.service.ts` | Module registry service |
+| `apps/client/src/app/dashboard/module-registry.service.spec.ts` | Registry unit tests |
+| `apps/client/src/app/dashboard/services/user-dashboard-layout.service.ts` | Client-side HTTP wrapper for layout endpoints |
+| `apps/client/src/app/dashboard/services/user-dashboard-layout.service.spec.ts` | Layout service unit tests with `HttpTestingController` |
+| `apps/client/src/app/dashboard/services/layout-persistence.service.ts` | Debounced persistence orchestrator |
+| `apps/client/src/app/dashboard/services/layout-persistence.service.spec.ts` | Persistence service unit tests |
+| `apps/client/src/app/dashboard/services/dashboard-telemetry.service.ts` | Client telemetry for SLO measurement |
+| `apps/client/src/app/dashboard/interfaces/dashboard-module.interface.ts` | `DashboardModuleDescriptor` interface |
+| `apps/client/src/app/dashboard/interfaces/layout-data.interface.ts` | `LayoutData` and `LayoutItem` interfaces |
+| `apps/api/src/app/user/user-dashboard-layout.module.ts` | NestJS feature module |
+| `apps/api/src/app/user/user-dashboard-layout.controller.ts` | REST controller for `GET`/`PATCH /api/v1/user/layout` |
+| `apps/api/src/app/user/user-dashboard-layout.controller.spec.ts` | Controller unit tests |
+| `apps/api/src/app/user/user-dashboard-layout.service.ts` | Service with `findByUserId` / `upsertForUser` |
+| `apps/api/src/app/user/user-dashboard-layout.service.spec.ts` | Service unit tests |
+| `apps/api/src/app/user/dtos/update-dashboard-layout.dto.ts` | PATCH request DTO with class-validator decorators |
+| `apps/api/src/app/user/dtos/dashboard-layout.dto.ts` | Response DTO |
+| `prisma/migrations/<timestamp>_add_user_dashboard_layout/migration.sql` | Migration SQL (auto-generated by `npx prisma migrate dev --name add-user-dashboard-layout`) |
+
+#### 0.7.1.2 Existing Files Modified (MODIFY)
+
+| Path | Modification Summary |
+|------|----------------------|
+| `prisma/schema.prisma` | Append `model UserDashboardLayout`; add back-relation field on `User` model |
+| `libs/common/src/lib/permissions.ts` | Add `readUserDashboardLayout` and `updateUserDashboardLayout` constants; grant to ADMIN and USER roles |
+| `apps/api/src/app/app.module.ts` | Add `UserDashboardLayoutModule` import and registration |
+| `apps/client/src/app/app.routes.ts` | Replace 22-entry routes array with single root entry plus wildcard |
+| `apps/client/src/app/app.component.ts` | Remove `GfHeaderComponent` and `GfFooterComponent` imports |
+| `apps/client/src/app/app.component.html` | Reduce template to `<router-outlet />` plus optional info-message banner |
+| `apps/client/src/app/app.component.scss` | Remove header/footer chrome offsets |
+| `apps/client/src/styles/styles.scss` | Add `@import 'angular-gridster2/css/gridster.css';` |
+| `package.json` | Add `"angular-gridster2": "21.0.1"` to dependencies |
+| `package-lock.json` | Auto-regenerated by `npm install angular-gridster2@21.0.1` |
+| `README.md` | Append brief "Dashboard" section pointing at observability runbook and new endpoints |
+| `docs/decisions/agent-action-plan-decisions.md` | Append decision entries for refactor scope, chat-panel deviation, overlay choice, gridster vs alternatives |
+
+#### 0.7.1.3 Existing Files Removed (REMOVE)
+
+| Path Pattern | Reason |
+|--------------|--------|
+| `apps/client/src/app/components/header/**` | Spec REMOVE: chrome eliminated |
+| `apps/client/src/app/components/footer/**` | Spec REMOVE: chrome eliminated |
+| `apps/client/src/app/pages/**` | Entire pages namespace removed (route-shell collapse). Reusable presentation components inside this tree MUST be relocated under `apps/client/src/app/components/` before deletion if they are not already declared there or in `libs/ui/` |
+
+#### 0.7.1.4 Configuration and Migration
+
+| Path | Action | Purpose |
+|------|--------|---------|
+| `prisma/schema.prisma` | MODIFY | Schema-level change (model addition) |
+| `prisma/migrations/<timestamp>_add_user_dashboard_layout/migration.sql` | CREATE | Generated by `npx prisma migrate dev` |
+| `prisma/migrations/migration_lock.toml` | UNCHANGED | Already pinned to `provider = "postgresql"` |
+| `package.json` | MODIFY | New dependency entry |
+| `package-lock.json` | MODIFY | Auto-regenerated |
+
+#### 0.7.1.5 Documentation Files
+
+| Path | Action | Purpose |
+|------|--------|---------|
+| `docs/observability/dashboard-layout.md` | CREATE | Observability runbook (mirrors `ai-chat.md`, `ai-rebalancing.md`, `snowflake-sync.md`) |
+| `docs/decisions/agent-action-plan-decisions.md` | MODIFY | Append decision entries |
+| `docs/migrations/dashboard-traceability-matrix.md` | CREATE | Bidirectional traceability matrix per Implementation Rule "Explainability" |
+| `README.md` | MODIFY | Brief Dashboard section |
+| `blitzy-deck/dashboard-refactor-deck.html` | CREATE | Self-contained reveal.js executive deck per Implementation Rule "Executive Presentation" |
+| `CODE_REVIEW.md` | CREATE | Pre-flight + segmented PR review artifact at repo root per Implementation Rule "Segmented PR Review" |
+
+#### 0.7.1.6 Build and Verification Commands
+
+The following commands are part of the in-scope build sequence (verbatim from prompt's BUILD STEPS):
+
+```bash
+npm install angular-gridster2@21.0.1
+npx prisma migrate dev --name add-user-dashboard-layout
+npx nx build client && npx nx build api
+```
+
+The build commands MUST complete with zero errors and zero warnings. The Prisma migration MUST run without conflicts against existing schema.
+
+#### 0.7.1.7 Integration Points (Touch List)
+
+| Integration Point | File | Reason |
+|-------------------|------|--------|
+| Root NestJS module imports | `apps/api/src/app/app.module.ts` | Register `UserDashboardLayoutModule` |
+| Permissions registry | `libs/common/src/lib/permissions.ts` | Add new permission constants and role grants |
+| Prisma User model back-relation | `prisma/schema.prisma` (User model body, lines 261–289) | Decision D-013 explicit back-relation |
+| Prisma datasource | `prisma/schema.prisma` (datasource block) | UNCHANGED — used as-is |
+| Prisma config | `.config/prisma.ts` | UNCHANGED — schema/migration paths already configured |
+| Angular root routes | `apps/client/src/app/app.routes.ts` | Collapse to single root |
+| Angular root component | `apps/client/src/app/app.component.{ts,html,scss}` | Remove header/footer wiring |
+| Angular root styles | `apps/client/src/styles/styles.scss` | Import gridster base CSS |
+| Angular bootstrap | `apps/client/src/main.ts` | UNCHANGED — `RouterModule.forRoot`, `ServiceWorkerModule`, `provideZoneChangeDetection`, `PageTitleStrategy`, `ModulePreloadService` preserved verbatim |
+| Auth guard usage | `apps/client/src/app/core/auth.guard.ts` (consumed) | UNCHANGED — applied to new single root route via `canActivate: [AuthGuard]` |
+| HTTP interceptors | `apps/client/src/app/core/{auth.interceptor.ts,http-response.interceptor.ts}` | UNCHANGED — auto-attaches JWT; intercepts 401 etc. |
+| Existing chat panel | `apps/client/src/app/components/chat-panel/**` | UNCHANGED INTERNALLY; selector `app-chat-panel` consumed by chat module wrapper (DEVIATION POINT) |
+| Existing data-fetching services | `apps/client/src/app/services/{portfolio.service.ts, symbol.service.ts, ai-chat.service.ts, rebalancing.service.ts, financial-profile.service.ts}` | UNCHANGED — consumed by reused presentation components |
+| Existing API auth pattern | `apps/api/src/app/user/user.controller.ts` | UNCHANGED — referenced as auth-decorator template |
+| Existing API service template | `apps/api/src/app/user-financial-profile/**` | UNCHANGED — referenced as structural template |
+| Existing PrismaService | `apps/api/src/services/prisma/prisma.service.ts` | UNCHANGED — consumed by new layout service |
+| Existing MetricsService | `apps/api/src/services/metrics/metrics.service.ts` | UNCHANGED — consumed by new layout service for observability |
 
-- `apps/client/src/app/components/chat-panel/**/*` — Component class, template, styles, spec.
-- `apps/client/src/app/components/financial-profile-form/**/*` — Component class, template, styles, spec.
-- `apps/client/src/app/pages/portfolio/rebalancing/**/*` — Page component class, template, styles, spec.
-- `apps/client/src/app/services/ai-chat.service.ts` — SSE client wrapper.
-- `apps/client/src/app/services/rebalancing.service.ts` — POST wrapper.
-- `apps/client/src/app/services/financial-profile.service.ts` — GET / PATCH wrapper.
+### 0.7.2 Intentional Deviation From Tech Spec
 
-#### 0.6.1.5 Existing Frontend Files Modified (Wiring Only)
+The prompt explicitly mandates a single deviation:
 
-- `apps/client/src/app/app.routes.ts` — Insert one route entry for `/portfolio/rebalancing`.
-- `apps/client/src/app/pages/portfolio/portfolio-page.html` — Insert `<app-chat-panel>` in the sidebar slot.
-- `apps/client/src/app/pages/user-account/user-account-page.ts` — Add a single dialog-open handler for the `FinancialProfileFormComponent`.
+> "This refactor explicitly deviates from the tech spec's definition of ChatPanelComponent as embedded within portfolio-page.html:32. The chat panel MUST be treated as a standalone grid module co-equal with all other modules. This deviation is intentional."
 
-#### 0.6.1.6 Shared Library Additions
+The Blitzy platform records this deviation in three places:
 
-- `libs/common/src/lib/permissions.ts` — Append five new permission constants.
-- `libs/common/src/lib/interfaces/index.ts` — Append three new re-export lines.
-- `libs/common/src/lib/interfaces/financial-profile.interface.ts` — New shared interface.
-- `libs/common/src/lib/interfaces/rebalancing-response.interface.ts` — New shared interface.
-- `libs/common/src/lib/interfaces/chat-message.interface.ts` — New shared interface.
+1. **Decision log** — `docs/decisions/agent-action-plan-decisions.md` gains a new entry "D-NNN: ChatPanelComponent treated as standalone grid module" with rationale (Implementation Rule "Explainability" mandates explicit decision-log entries for all deviations).
+2. **Traceability matrix** — `docs/migrations/dashboard-traceability-matrix.md` records `portfolio-page.html:32` as the source mount-point and `apps/client/src/app/dashboard/modules/chat/chat-module.component.ts` as the target.
+3. **Tech spec § 0.4.1.7** — already documents the removed integration surface and the absorbing wrapper.
 
-#### 0.6.1.7 Configuration Files
+The chat panel's internal implementation (selector `app-chat-panel`, the constants `MAX_CLIENT_TRANSMITTED_MESSAGES = 5`, `COLLAPSED_WIDTH_REM = '2.75rem'`, `DEFAULT_EXPANDED_WIDTH_PX = 280`, `MIN_EXPANDED_WIDTH_PX = 200`, `MAX_EXPANDED_WIDTH_PX = 600`, `AiChatService` consumption, SSE handling) is unchanged — only the mount-point host is replaced.
 
-- `package.json` — Append three new dependency entries (two `dependencies`, one `devDependencies`).
-- `package-lock.json` — Regenerated by `npm install` (no manual edits).
-- `.env.example` — Append seven new placeholder lines for `SNOWFLAKE_*` and `ANTHROPIC_API_KEY`.
-- `prisma/migrations/<timestamp>_add_financial_profile/migration.sql` — New auto-generated migration.
+### 0.7.3 Explicitly Out of Scope
 
-#### 0.6.1.8 Documentation
+The following items are explicitly OUT OF SCOPE and MUST NOT be addressed by this refactor:
 
-- `docs/observability/snowflake-sync.md` — Dashboard template.
-- `docs/observability/ai-chat.md` — Dashboard template.
-- `docs/observability/ai-rebalancing.md` — Dashboard template.
-- `docs/decisions/agent-action-plan-decisions.md` — Decision log per Explainability rule.
-- `blitzy-deck/agent-action-plan.html` — Reveal.js executive deck per Executive Presentation rule.
-- `CODE_REVIEW.md` — Repository-root review document per Segmented PR Review rule (created at the moment review begins).
+| Out-of-Scope Item | Rationale |
+|--------------------|-----------|
+| Mobile / responsive layout support | Spec EXCLUDE: "EXCLUDE: mobile/responsive layout support" |
+| Shared layouts across users | Spec EXCLUDE: "EXCLUDE: shared layouts" |
+| Admin-defined default layouts | Spec EXCLUDE: "EXCLUDE: admin-defined defaults" |
+| Multi-user collaboration on a single canvas | Spec EXCLUDE: "EXCLUDE: multi-user collaboration" |
+| New routes beyond `/` | Spec PRESERVE: "no additional routes may be added" |
+| Removal of routing infrastructure | Spec PRESERVE: `RouterModule.forRoot`, `ServiceWorkerModule`, `PageTitleStrategy`, `ModulePreloadService` MUST remain |
+| Re-architecting data-fetching services (PortfolioService, SymbolService, AiChatService, RebalancingService, FinancialProfileService) | Spec PRESERVE: business logic and service contracts unchanged |
+| Changing existing AuthGuard / HasPermissionGuard implementations | Spec PRESERVE: applied to new endpoints unchanged |
+| Changing existing Ghostfolio API integrations or external SaaS interfaces | Spec PRESERVE: Ghostfolio API integrations unchanged |
+| Adding new presentation modules beyond the five required (portfolio overview, holdings, transactions, analysis, AI chat) | Out of required module list per prompt |
+| Re-implementing existing components inside dashboard wrappers | Reuse existing implementations; wrappers are thin shells |
+| Migrating to zoneless change detection | `provideZoneChangeDetection()` preserved verbatim; gridster v21's NgZone.run calls require zone-based hosts |
+| Refactoring the existing FinancialProfile model or its endpoints | Out of scope; only consumed as a structural template reference |
+| Adding new external dependencies beyond `angular-gridster2@21.0.1` | The composition (Material + CDK + gridster) covers all chrome needs (§ 0.5.4) |
+| Performance optimizations beyond the SLOs in § 0.6.3.3 | Targets are explicit; no further optimization required |
+| Theme switching / dark-mode work beyond what `--mat-sys-*` tokens already provide via existing global theme | Theme management is owned by existing infrastructure |
+| Internationalization of catalog / chrome strings beyond what existing `LanguageService` already covers | Existing i18n infrastructure consumed as-is |
+| Backwards-compatible support for the legacy route table (e.g., `/portfolio`, `/account`) outside of the wildcard redirect | Wildcard `**` → `''` is the only legacy-URL handling required |
 
-#### 0.6.1.9 Database Changes
+### 0.7.4 Selector Naming Note
 
-- `prisma/schema.prisma` — Schema additions (the model + enum, additive only).
-- `prisma/migrations/<timestamp>_add_financial_profile/migration.sql` — New migration (additive only).
-- Snowflake tables (`portfolio_snapshots`, `orders_history`, `performance_metrics`) — Created by `SnowflakeSyncService.bootstrap()` against the configured `SNOWFLAKE_DATABASE.SNOWFLAKE_SCHEMA` on first sync run.
+The new dashboard components use the `gf` prefix per Engineering Constraint Selector Naming Convention (configured in `apps/client/project.json` line 6 as `"prefix": "gf"`). Concrete selectors:
 
-### 0.6.2 Explicitly Out of Scope
+| Component | Selector |
+|-----------|----------|
+| `GfDashboardCanvasComponent` | `gf-dashboard-canvas` |
+| `GfModuleCatalogComponent` | `gf-module-catalog` |
+| `GfModuleWrapperComponent` | `gf-module-wrapper` |
+| `GfPortfolioOverviewModuleComponent` | `gf-portfolio-overview-module` |
+| `GfHoldingsModuleComponent` | `gf-holdings-module` |
+| `GfTransactionsModuleComponent` | `gf-transactions-module` |
+| `GfAnalysisModuleComponent` | `gf-analysis-module` |
+| `GfChatModuleComponent` | `gf-chat-module` |
 
-The following items are explicitly **not** in scope and must not be touched by the implementation agent.
+The existing `ChatPanelComponent` retains its current selector `app-chat-panel` (intentionally unprefixed in the existing codebase per § 7.4 of the existing tech spec — this refactor preserves that as-is and consumes the component unchanged within the new chat module wrapper).
 
-#### 0.6.2.1 Source Code
 
-- **Any existing Ghostfolio NestJS module, controller, service, DTO, or interface other than `app.module.ts` and the wiring points enumerated in `§ 0.6.1.3` and `§ 0.6.1.5`.** Specifically untouched: `apps/api/src/app/portfolio/**`, `apps/api/src/app/symbol/**`, `apps/api/src/app/user/**`, `apps/api/src/app/activities/**`, `apps/api/src/app/auth/**`, `apps/api/src/app/admin/**`, `apps/api/src/app/access/**`, `apps/api/src/app/account/**`, `apps/api/src/app/api-keys/**`, `apps/api/src/app/asset/**`, `apps/api/src/app/auth-device/**`, `apps/api/src/app/benchmarks/**`, `apps/api/src/app/cache/**`, `apps/api/src/app/configuration/**`, `apps/api/src/app/cron/**`, `apps/api/src/app/data-provider/**`, `apps/api/src/app/endpoints/ai/**` (the existing `AiModule`), `apps/api/src/app/exchange-rate/**`, `apps/api/src/app/exchange-rate-data/**`, `apps/api/src/app/export/**`, `apps/api/src/app/ghostfolio/**`, `apps/api/src/app/import/**`, `apps/api/src/app/info/**`, `apps/api/src/app/logo/**`, `apps/api/src/app/market-data/**`, `apps/api/src/app/platform/**`, `apps/api/src/app/platforms/**`, `apps/api/src/app/portfolio-snapshot-queue/**`, `apps/api/src/app/property/**`, `apps/api/src/app/public/**`, `apps/api/src/app/redis-cache/**`, `apps/api/src/app/sitemap/**`, `apps/api/src/app/subscription/**`, `apps/api/src/app/symbol-profile/**`, `apps/api/src/app/tags/**`, `apps/api/src/app/watchlist/**`, `apps/api/src/services/**`, `apps/api/src/events/**`.
-- **Any existing Prisma model definition.** Specifically untouched: `Access`, `Account`, `AccountBalance`, `Analytics`, `ApiKey`, `AssetProfileResolution`, `AuthDevice`, `MarketData`, `Order`, `Platform`, `Property`, `Settings`, `SymbolProfile`, `SymbolProfileOverrides`, `Subscription`, `Tag`, `User`. Existing enums (`AccessPermission`, `AssetClass`, `AssetSubClass`, `DataSource`, `MarketDataState`, `Provider`, `Role`, `Type`, `ViewMode`) are not edited; `RiskTolerance` is added as a new top-level enum.
-- **Any existing API route handler or controller class.** No existing route is renamed, removed, or version-bumped.
-- **Any existing Angular page, component, service, or route — except the additive wiring points listed in `§ 0.6.1.5`.** Specifically untouched: every existing component under `apps/client/src/app/components/**` (29+ folders), every existing page under `apps/client/src/app/pages/**` other than the two wiring edits, every existing service under `apps/client/src/app/services/**`. The existing `user-account-settings/` component template is **not** edited; the dialog-open handler lives in the parent user-account-page component.
-- **Existing tests.** No existing `.spec.ts` is modified.
+## 0.8 Rules for Feature Addition
 
-#### 0.6.2.2 Functional Domains
+### 0.8.1 User-Specified Rules (Verbatim Capture)
 
-- **Performance optimizations of existing code.** No refactor or speed-up of the portfolio engine, market-data layer, or queue infrastructure is in scope, even where measurement might suggest improvement.
-- **New AI features beyond the three specified (A, B, C).** Specifically out of scope: an AI-powered email summary, push-notification AI commentary, an AI tax-loss-harvesting feature, an AI portfolio diff/compare feature, or any agentic workflow not described in the user's prompt.
-- **Bidirectional Snowflake-to-Postgres flow.** Snowflake sync is **read-only toward Ghostfolio**. No data is read from Snowflake into PostgreSQL. The chat agent's `query_history` tool reads from Snowflake but writes nothing back; its results are scoped to the LLM's tool-response context.
-- **Server-side chat session persistence.** Chat session state is stateless server-side per the user's prompt. No new Prisma model `ChatSession` or `ChatMessage` is created. The client carries up to four prior turns.
-- **Refactoring of the existing `AiModule` (F-020).** The existing OpenRouter-backed prompt feature continues to operate unchanged.
-- **Replacing `@openrouter/ai-sdk-provider` or `ai` (Vercel AI SDK).** The new code uses `@anthropic-ai/sdk` directly. The Vercel AI SDK remains in `package.json` for the existing prompt feature.
-- **New Bull queues.** No new `STATISTICS_GATHERING_QUEUE`-style queue is introduced.
-- **Multi-tenant Snowflake isolation.** Snowflake credentials are configured per Ghostfolio instance (single-tenant) via `ConfigService`. Per-user Snowflake accounts are out of scope.
-- **Production-grade Snowflake schema management (e.g., dbt models).** The bootstrap DDL is the only schema management; out of scope are DDL versioning, schema evolution beyond the initial three tables, and warehouse sizing tuning.
-- **Chat memory beyond 4 turns.** Long-term memory, retrieval-augmented context, or vector storage are out of scope.
-- **Streaming for the rebalancing endpoint.** Feature C uses `messages.create({...})` (non-streaming) per Rule 4. The rebalancing endpoint returns a single JSON payload; SSE is reserved for Feature B.
-- **Additional Anthropic models or providers.** Only the Anthropic API at `api.anthropic.com` is targeted. No Bedrock, Foundry, or third-party gateway integration is in scope.
-- **Internationalization of the new components beyond default locale.** The chat panel, rebalancing page, and financial-profile dialog use the existing i18n infrastructure if and only if it does not require modifying existing i18n bundles. Translated copy for the 13 supported locales (`ca, de, en, es, fr, it, ko, nl, pl, pt, tr, uk, zh`) is delivered as best-effort English defaults; per-locale translation is out of scope.
-- **Mobile / Ionic-specific layouts for the new components.** The new components inherit the existing responsive grid; no Ionic-specific behavior is added.
-- **Custom auth flows for the four new endpoints.** All four use the existing `AuthGuard('jwt')` + `HasPermissionGuard` pipeline — no new guard is created, no API-key strategy is wired, no impersonation flow is added.
-- **Migration tooling beyond `prisma migrate`.** No third-party schema-migration tool is introduced.
+The user's prompt enumerated ten binding rules under the **RULES** heading. The Blitzy platform reproduces each rule verbatim, attaches a clarifying interpretation in technical terms, and binds it to the verifiable artifact that enforces it. These rules form the non-negotiable baseline for all generated code; any code that violates a rule is treated as a defect and routed back to the code-generation phase by the Segmented PR Review process (per Implementation Rule "Segmented PR Review").
 
+#### 0.8.1.1 Rule 1 — Module Components Must Not Import the Grid Layer
 
-## 0.7 Rules for Feature Addition
+> **Rule 1 (verbatim):** "Module components MUST NOT import from or reference the grid canvas layer; all data flows through existing services only. Scope: all grid module components."
 
-### 0.7.1 User-Specified Engineering Rules (Verbatim, Numbered)
+**Interpretation:** Files under `apps/client/src/app/dashboard/modules/**/*.ts` MUST NOT contain any `import` statement that targets `apps/client/src/app/dashboard/dashboard-canvas/**` or any module-registry symbol that exposes canvas internals. Module wrappers consume application data only via the existing service catalogue (`PortfolioService`, `SymbolService`, `AiChatService`, `RebalancingService`, `FinancialProfileService`) declared in `apps/client/src/app/services/` and `libs/ui/src/lib/services/`.
 
-The following eight rules are reproduced verbatim from the user's prompt and constitute hard, non-negotiable acceptance criteria. Each rule is paired with its scope and verification procedure.
+**Enforcement:** Static check during PR review (Frontend phase) — `grep -rn "from.*dashboard-canvas" apps/client/src/app/dashboard/modules/` MUST produce zero matches.
 
-#### 0.7.1.1 Rule 1 — Module Isolation (Architecture)
+#### 0.8.1.2 Rule 2 — Grid State Is the Single Source of Truth
 
-New NestJS modules MUST NOT import from file paths inside existing Ghostfolio feature module directories. Cross-module access MUST occur only through services explicitly exported in the source module's `exports` array.
+> **Rule 2 (verbatim):** "Grid state MUST be the single source of truth for module positions and sizes; individual module components MUST NOT hold layout state. Scope: all module components and grid canvas component."
 
-- **Scope:** All files under `SnowflakeSyncModule`, `AiChatModule`, `RebalancingModule`, `UserFinancialProfileModule`.
-- **Verification:** No import path in new module files resolves to a non-barrel file inside an existing module's directory.
+**Interpretation:** Position (`x`, `y`) and size (`cols`, `rows`) live exclusively on the gridster `dashboard` array owned by `GfDashboardCanvasComponent`. Module wrapper components MUST NOT declare `@Input()` or `@Output()` properties for layout coordinates, and MUST NOT mutate `this.elementRef.nativeElement.style` for layout properties (`width`, `height`, `transform`, `position`, `top`, `left`).
 
-#### 0.7.1.2 Rule 2 — Parameterized Snowflake Queries (Security)
+**Enforcement:** Static check during PR review — module-wrapper TypeScript files inspected for forbidden inputs/outputs and direct DOM manipulation of layout properties.
 
-All Snowflake SQL execution MUST use `snowflake-sdk` bind variable syntax. String template literals and concatenation operators adjacent to SQL strings are PROHIBITED.
+#### 0.8.1.3 Rule 3 — Module Registry Is the Sole Mechanism for Adding Modules
 
-- **Scope:** All SQL execution in `SnowflakeSyncService` and `AiChatService`.
-- **Verification:** Grep for template literals or `+` operators within 3 lines of any SQL string in new module files returns zero results.
+> **Rule 3 (verbatim):** "The module registry MUST be the only mechanism for introducing new module types; ad-hoc component insertion into the grid is prohibited. Scope: grid canvas layer."
 
-#### 0.7.1.3 Rule 3 — Credential Access via ConfigService (Security)
+**Interpretation:** The canvas obtains module descriptors exclusively from `ModuleRegistryService`. The canvas MUST NOT contain hard-coded `import { GfHoldingsModuleComponent }` or `switch (moduleId) { case 'holdings': return HoldingsComponent; ... }` lookups. Adding a new module type to the catalog requires (a) creating a new wrapper component under `apps/client/src/app/dashboard/modules/<new-module>/` and (b) calling `moduleRegistry.register({ ... })` for that descriptor — typically inside the wrapper's module file or an `APP_INITIALIZER` registration block.
 
-`ANTHROPIC_API_KEY` and all `SNOWFLAKE_*` environment variables MUST be read exclusively via injected `ConfigService`. Direct `process.env` access for these variables is PROHIBITED.
+**Enforcement:** Static check during PR review — canvas component imports inspected; only registry-mediated component resolution (`@angular/core` `viewContainerRef.createComponent(descriptor.component)` or equivalent dynamic instantiation) permitted.
 
-- **Scope:** All new module files.
-- **Verification:** Grep for `process.env.ANTHROPIC` and `process.env.SNOWFLAKE` in new module files returns zero results.
+#### 0.8.1.4 Rule 4 — Persistence Is Triggered Only by Grid State Events
 
-#### 0.7.1.4 Rule 4 — Structured Rebalancing via Tool Use (API Design)
+> **Rule 4 (verbatim):** "Layout persistence MUST be triggered exclusively by grid state change events (drag, resize, add, remove); module components MUST NOT call layout save APIs directly. Scope: all module components."
 
-`RebalancingService` MUST populate `RebalancingResponse` exclusively from a `tool_use` content block returned by the Anthropic SDK. Parsing Claude's text message content to extract structured fields is PROHIBITED.
+**Interpretation:** `UserDashboardLayoutService.update(...)` is called only from `LayoutPersistenceService`, which subscribes to the canvas's `Subject<void>` fed by `itemChangeCallback` (drag stop), `itemResizeCallback` (resize stop), `addItem` invocations, and `removeItem` invocations. Module wrapper components MUST NOT inject `UserDashboardLayoutService` and MUST NOT subscribe to its Observables.
 
-- **Scope:** `RebalancingService` only.
-- **Verification:** `RebalancingService` defines a tool schema matching `RebalancingResponse` and reads output only from content blocks where `type === 'tool_use'`.
+**Enforcement:** Static check — `grep -rn "UserDashboardLayoutService" apps/client/src/app/dashboard/modules/` MUST produce zero matches; runtime test verifies that no PATCH request fires after non-grid module-internal events (e.g., a chat-panel send-message action).
 
-#### 0.7.1.5 Rule 5 — Financial Profile Authorization (Security)
+#### 0.8.1.5 Rule 5 — Angular Router Infrastructure Is Preserved
 
-Every Prisma operation on `FinancialProfile` MUST include `where: { userId: authenticatedUserId }` using the JWT-verified user ID. Unscoped queries against `FinancialProfile` are PROHIBITED.
+> **Rule 5 (verbatim):** "The Angular Router MUST be preserved; routing infrastructure (ServiceWorkerModule navigation, PageTitleStrategy, ModulePreloadService) MUST NOT be removed or degraded; the app MUST reduce to a single root route /. Scope: app routing module."
 
-- **Scope:** All new controllers and services that read or write `FinancialProfile`.
-- **Verification:** Every `prisma.financialProfile` call in new code includes a `userId` filter sourced from the JWT payload, not from the request body.
+**Interpretation:** `apps/client/src/main.ts` lines 70–104 — `RouterModule.forRoot(routes, { ... })`, `ServiceWorkerModule.register('ngsw-worker.js', { ... })`, `provideZoneChangeDetection()`, `{ provide: TitleStrategy, useClass: PageTitleStrategy }`, and the `ModulePreloadService` provider — MUST NOT be modified or removed. `apps/client/src/app/services/page-title.strategy.ts` and `apps/client/src/app/core/module-preload.service.ts` MUST remain unchanged.
 
-#### 0.7.1.6 Rule 6 — SSE Disconnection Handling (Code Quality)
+**Enforcement:** PR review verifies the diff against `main.ts`, `page-title.strategy.ts`, and `module-preload.service.ts` consists only of unchanged content. `app.routes.ts` MUST contain exactly one non-wildcard route.
 
-`ChatPanelComponent` MUST render a non-empty `errorMessage` and a visible reconnect button when the SSE stream terminates with an error. Silent stream failures with no UI state change are PROHIBITED.
+#### 0.8.1.6 Rule 6 — Modules Declare Minimum Cell Dimensions
 
-- **Scope:** `ChatPanelComponent` only.
-- **Verification:** The component template conditionally renders a reconnect button when `errorMessage` is truthy; the error handler sets `errorMessage` to a non-empty string.
+> **Rule 6 (verbatim):** "Each module MUST declare its minimum cell dimensions in the module registry; the grid engine MUST enforce these minimums and reject configurations that violate them. Scope: module registry service and grid canvas."
 
-#### 0.7.1.7 Rule 7 — Snowflake Sync Idempotency (Data Layer)
+**Interpretation:** Every entry passed to `ModuleRegistryService.register(...)` includes `minCols: number` and `minRows: number` (both ≥ 2 per the global grid spec). The canvas applies these per-item via the gridster `<gridster-item [minItemCols]="descriptor.minCols" [minItemRows]="descriptor.minRows">` bindings. The gridster engine rejects resize/move attempts that would shrink an item below its minimum, and the catalog Add flow refuses to add an item whose default size is below its declared minimum.
 
-All Snowflake write operations in `SnowflakeSyncService` MUST use MERGE (upsert) statements keyed on the unique constraints defined in Section 3 of the user prompt (and reproduced in `§ 0.5.1.1`). INSERT-only statements that produce duplicate rows on re-run are PROHIBITED.
+**Enforcement:** Unit test in `module-registry.service.spec.ts` verifies that registry entries with `minCols < 2` or `minRows < 2` throw at registration time. Integration test verifies the validation criterion "module placement below minimum cell dimensions is rejected by grid engine."
 
-- **Scope:** `SnowflakeSyncService` only.
-- **Verification:** Running the sync twice for the same date range leaves row counts unchanged across all 3 Snowflake tables.
+#### 0.8.1.7 Rule 7 — Material 3 Token Pattern With Fallbacks
 
-#### 0.7.1.8 Rule 8 — Controller Thinness (Architecture)
+> **Rule 7 (verbatim):** "Grid chrome components (module headers, resize handles, drop-zone indicators) MUST use the var(--mat-sys-<token>, <hardcoded-fallback>) pattern for all Material Design 3 styling per Decision D-020; direct use of --mat-sys-* tokens without fallbacks is prohibited. Scope: all grid chrome SCSS/CSS."
 
-New controllers MUST contain zero business logic and zero Prisma calls. Controllers MUST only extract the authenticated user, validate the request shape, delegate to the module service, and return the result.
+**Interpretation:** All SCSS files under `apps/client/src/app/dashboard/**/*.scss` MUST use the `var(--mat-sys-<token>, <fallback>)` pattern. The fallback values are enumerated in § 0.5.3 of this Action Plan and mirror Angular Material 21's default Material 3 light-theme values. Hard-coded color literals (other than the allow-list `0`, `none`, `auto`, `inherit`, `currentColor`, `transparent`) and unwrapped `--mat-sys-*` references are prohibited.
 
-- **Scope:** All new NestJS controllers.
-- **Verification:** No new controller method body exceeds 10 lines. No `prisma.*` calls appear in new controller files.
+**Enforcement:** Static check (regex during PR review) — any SCSS line under `apps/client/src/app/dashboard/` that matches `var\(--mat-sys-[a-z-]+\)` (no comma + fallback) is a violation. Decision log records D-020 as the canonical authority.
 
-### 0.7.2 Project-Level Implementation Rules
+#### 0.8.1.8 Rule 8 — Layout Endpoints Protected By Existing Auth Guards
 
-The following four user-supplied project-level rules apply to this Agent Action Plan in addition to the eight numbered rules above. Each is included verbatim by reference and operationalized into deliverables.
+> **Rule 8 (verbatim):** "Layout API endpoints MUST be protected by existing Ghostfolio auth guards; unauthenticated layout requests MUST return 401. Scope: layout controller."
 
-- **Observability** — The application is not complete until it is observable. Every deliverable MUST include structured logging with correlation IDs, distributed tracing across service boundaries, a metrics endpoint, health/readiness checks, and a dashboard template, and all observability MUST be exercised in the local development environment. **Operationalization:** structured `Logger` calls with a per-request `correlationId` injected at controller boundary, three dashboard templates under `docs/observability/`, two new health probes (`/api/v1/health/snowflake`, `/api/v1/health/anthropic`), and a new `/api/v1/metrics` endpoint via the new `MetricsModule`.
+**Interpretation:** The new `UserDashboardLayoutController` MUST apply `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` at class scope (mirrors `apps/api/src/app/user/user.controller.ts` line 60 pattern). Each method MUST also apply `@HasPermission(permissions.<...>)` (read on GET, update on PATCH). No alternative auth strategy is permitted.
 
-- **Explainability** — Every non-trivial implementation decision MUST be documented with rationale in a Markdown decision-log table at `docs/decisions/agent-action-plan-decisions.md`, alongside a bidirectional traceability matrix when relevant. **Operationalization:** the decision log records, at minimum, the four version reconciliation entries (Angular 19 → 21.2.7, Prisma 6 → 7.7.0), the stateless-chat decision, the `tool_use`-only structured-output decision (Rule 4), the `PortfolioChangedEvent` reuse decision (vs. creating a new `OrderCreatedEvent`), the `JwtAuthGuard` resolution to `AuthGuard('jwt')`, the `PortfolioService.getPositions()` → `getDetails()` resolution, and the snowflake-sync cron-vs-event coexistence rationale. The traceability matrix maps each Feature A/B/C requirement to the file(s) implementing it.
+**Enforcement:** Integration test fires `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout` without a Bearer token and asserts `401 Unauthorized` (validation criterion). Authenticated request without permission asserts `403 Forbidden`.
 
-- **Executive Presentation** — Every deliverable MUST include an executive summary as a single self-contained reveal.js HTML file (12–18 slides, target 16) using the Blitzy theme, four slide types (Title, Section Divider, Content, Closing), Mermaid diagrams initialized with `startOnLoad: false`, Lucide icons (no emoji), CDN-pinned versions (reveal.js 5.1.0, Mermaid 11.4.0, Lucide 0.460.0), and the `1920×1080` reveal.js config. **Operationalization:** `blitzy-deck/agent-action-plan.html` is delivered alongside the source code, structured per the slide-ordering convention (Title, Headline, Architecture, alternating Section Dividers + Content, Closing) and covering the five mandated topics (scope, business value, architectural change, risks, onboarding).
+#### 0.8.1.9 Rule 9 — Locate schema.prisma Before Writing Migration
 
-- **Segmented PR Review** — Code changes MUST pass a sequential, multi-phase pre-approval review before a PR is opened, captured in `CODE_REVIEW.md` at the repo root with YAML frontmatter (phase, status, file count), Executive Summary, per-domain Expert Agent phases, and a final Principal Reviewer phase that consolidates findings and verifies alignment with this Agent Action Plan. **Operationalization:** `CODE_REVIEW.md` is created when the review is initiated. Domain phases: Infrastructure/DevOps (the `docker-compose`, `package.json`, `.env.example` edits), Security (`@anthropic-ai/sdk` and `snowflake-sdk` integration, Rules 2/3/5), Backend Architecture (the four NestJS modules, Rules 1/4/7/8), QA/Test Integrity (the new `.spec.ts` files), Business/Domain (alignment with F-020 and the user-stated 10-minute demo narrative), Frontend (the three Angular components, Rule 6), and Other SME (Snowflake-specific review).
+> **Rule 9 (verbatim):** "schema.prisma MUST be located and read before writing the UserDashboardLayout migration; the migration MUST NOT conflict with existing User and FinancialProfile models. Scope: database migration."
 
-### 0.7.3 Feature-Specific Engineering Constraints
+**Interpretation:** The schema file is located at `prisma/schema.prisma` (workspace root, NOT under `apps/api/prisma/` or `libs/`). The Blitzy platform has confirmed this location during context gathering. The new `model UserDashboardLayout` block is appended after the `FinancialProfile` model (line 376) and uses the same User-side back-relation pattern (Decision D-013). The migration generated by `npx prisma migrate dev --name add-user-dashboard-layout` MUST NOT conflict with the existing User table (no column rename, no FK alteration on User), the existing FinancialProfile table (no naming collision), or any of the other 16 entities already in the schema.
 
-Beyond the eight numbered rules and four project-level rules, the user's prompt encodes additional implicit engineering constraints that the implementation agent must honor:
+**Enforcement:** Pre-migration grep confirms the schema path; post-migration `npx prisma migrate dev` exit code 0 confirms no conflicts. Validation criterion: "Prisma migration runs without conflicts against existing schema."
 
-- **Cron schedule literal.** The Snowflake daily sync cron is `0 2 * * *` with `timeZone: 'UTC'`. The `@Cron` options object must specify both fields explicitly so that operator changes to system time zone do not silently shift the schedule.
-- **Stateless chat protocol — 4-turn limit.** The chat client carries at most 4 prior turns plus the current user turn (5 entries total in the messages array). The DTO `@ArrayMaxSize(5)` enforces this.
-- **JWT-derived `userId` is authoritative.** In every service method that touches `FinancialProfile`, `Order`, or any Snowflake row, the `userId` parameter is sourced from `request.user.id` — **not** from the request body, query string, or tool-call argument. The `AiChatService.dispatchTool(...)` method overrides any `userId` that Claude provides in a tool input.
-- **Anthropic SDK model selection.** The implementation uses a Claude model identifier configurable via `ConfigService`-readable env var `ANTHROPIC_MODEL` (defaulting to a current production-grade model identifier published by Anthropic). Hardcoding a specific model ID in source is discouraged because Anthropic's model catalog evolves over time; a default is acceptable provided it is overridable.
-- **`messages.stream` for chat, `messages.create` for rebalancing.** Feature B is streaming; Feature C is non-streaming. The rebalancing endpoint returns a single JSON object after the model has emitted the `tool_use` content block.
-- **`snowflake-sdk` callback bridge.** The Snowflake SDK exposes a callback-based `connection.execute({...})` API. The service wraps each call in a `Promise` to fit the NestJS async/await idiom, but the wrapping is implemented inline inside the service (no `snowflake-promise` external package is introduced).
-- **DDL bootstrap idempotency.** `SnowflakeSyncService.bootstrap()` runs `CREATE TABLE IF NOT EXISTS ...` and is safe to invoke on every application start.
-- **Rate-limiting and back-off.** The Anthropic SDK includes built-in retries with exponential backoff. The Snowflake driver also includes its own retry semantics. The new code does **not** add additional retry wrappers; it relies on the SDK defaults to avoid double-retry storms.
-- **Logging redaction.** The structured logger redacts `ANTHROPIC_API_KEY`, `SNOWFLAKE_PASSWORD`, and any `binds: [...]` entry that resembles a credential before emission.
+#### 0.8.1.10 Rule 10 — Catalog Auto-Opens on First Visit
 
-### 0.7.4 Cross-Cutting Conventions
+> **Rule 10 (verbatim):** "The module catalog MUST auto-open on first visit when no saved layout exists for the authenticated user. Scope: grid canvas initialization logic."
 
-- **Component selector prefix.** Existing Ghostfolio components use the `gf` selector prefix per `eslint.config.cjs` and the precedent across `apps/client/src/app/components/**`. New components follow the same prefix unless their template embed in an existing file (e.g., `<app-chat-panel>`) requires a different selector. The implementation agent reconciles selector naming such that the embed exactly matches the component's `selector` metadata.
-- **i18n locale coverage.** New user-facing strings ship in English. Per-locale translations are best-effort and may be added in a separate, follow-up PR.
-- **Logger format.** All new code uses the NestJS `Logger` class (from `@nestjs/common`) with a per-class log context, identical to the existing pattern across `apps/api/src/app/**/*.service.ts`.
-- **Error mapping.** Service errors are translated to NestJS HTTP exceptions in controllers (`NotFoundException`, `BadRequestException`, `BadGatewayException` for upstream Anthropic/Snowflake failures). Controllers do not catch arbitrary errors — they delegate to the global exception filter that already exists in Ghostfolio.
+**Interpretation:** `GfDashboardCanvasComponent.ngOnInit` calls `userDashboardLayoutService.get()`. On `404 Not Found` OR `200 OK` with `LayoutData.items.length === 0`, the canvas MUST immediately invoke `matDialog.open(GfModuleCatalogComponent, { ... })`. On `200 OK` with non-empty items, the catalog MUST NOT auto-open.
 
-### 0.7.5 Validation Gates (User-Supplied Acceptance Tests)
+**Enforcement:** Unit test in `dashboard-canvas.component.spec.ts` verifies the auto-open path; unit test verifies the no-auto-open path for returning users; validation criterion "New user (no saved layout): blank canvas rendered; module catalog opens automatically" maps directly.
 
-The following acceptance gates are reproduced from the user's "Validation Framework" section. They are pass/fail and must each be exercised before the work is considered complete.
+### 0.8.2 Project-Level Implementation Rules (Composite)
 
-#### 0.7.5.1 Universal Gates
+Three project-level rules apply globally to this work item via the `User specified implementation rules` configuration. Each is summarized below with its concrete dashboard-refactor anchor; the canonical text lives in the project's rule registry and MUST be honored verbatim.
 
-- **Gate 1 — Build integrity:** `npm run build` completes with zero TypeScript errors after all changes.
-- **Gate 2 — Regression safety:** `npm run test` passes with zero failures against the pre-existing test suite.
-- **Gate 8 — Integration sign-off:** All four new API endpoints return non-500 HTTP responses when called with a valid JWT and correctly shaped request body against a running local instance.
-- **Gate 9 — Wiring verification:** `SnowflakeSyncModule`, `AiChatModule`, `RebalancingModule`, and `UserFinancialProfileModule` appear in `AppModule` imports; `/portfolio/rebalancing` resolves in the Angular router; `<app-chat-panel>` renders in the portfolio-page sidebar.
-- **Gate 10 — Env var binding:** Application starts successfully with all 7 new env vars present; application emits a descriptive startup error (not an unhandled exception) when any required env var is absent.
-- **Gate 12 — Config propagation:** All seven new env vars are present in `.env.example` with placeholder values; `ConfigService.get(...)` resolves each at runtime without returning `undefined`.
-- **Gate 13 — Registration-invocation pairing:** Every provider in each new module's `providers` array is injected and called by at least one controller or service in that module; no dead providers are declared.
+#### 0.8.2.1 Observability Rule
 
-#### 0.7.5.2 Feature-Specific Gates
+The dashboard refactor is not complete until it is observable. Concrete deliverables:
 
-- **Snowflake sync gate:** Cron registration appears in NestJS scheduler logs at startup; an Order create event triggers the sync within the same request lifecycle (allowing for the listener debounce window); running the sync twice for the same date range leaves row counts unchanged across all three Snowflake tables (Rule 7).
-- **Chat agent gate:** `POST /api/v1/ai/chat` response has `Content-Type: text/event-stream`; the first SSE token arrives within 3 seconds on localhost with valid credentials; all four tools are present in the `tools` array submitted to the Anthropic SDK.
-- **Rebalancing engine gate:** `POST /api/v1/ai/rebalancing` returns JSON matching the `RebalancingResponse` interface; every item in `recommendations` has a non-empty `rationale` and `goalReference`; the response is sourced from a `tool_use` content block (Rule 4).
-- **Financial profile gate:** `GET /api/v1/user/financial-profile` returns HTTP 200 with the persisted record after a successful PATCH and HTTP 404 (not 500) when no record exists for the user; `PATCH` with `retirementTargetAge < currentAge` returns HTTP 400; a valid upsert creates a new row on the first call and updates (does not duplicate) on the second call.
-- **Security sweep gate:** Grep for `process.env.ANTHROPIC` and `process.env.SNOWFLAKE` in new modules returns zero results (Rule 3); grep for SQL string concatenation in new modules returns zero results (Rule 2); all four new endpoints return HTTP 401 without a valid JWT.
+- **Structured logging with correlation IDs** — `UserDashboardLayoutController` generates `correlationId` via `randomUUID()` from `node:crypto`, sets the `X-Correlation-ID` response header BEFORE the service call, and logs via Nest's `Logger` with the correlationId field. Frontend telemetry adds the same correlationId to `ai-chat`-style structured console logs in dev.
+- **Distributed tracing across service boundaries** — The `correlationId` propagates from controller → service → Prisma query log via Nest's request-scoped logger.
+- **Metrics endpoint** — Counters and histograms emitted via the existing `MetricsService` (`apps/api/src/services/metrics/metrics.service.ts` per repo convention used by `snowflake-sync.service.ts`): `dashboard_layout_get_total`, `dashboard_layout_patch_total`, `dashboard_layout_save_failures_total`, `dashboard_layout_request_duration_seconds`. Existing `/metrics` endpoint exposes them.
+- **Health/readiness checks** — Existing health endpoints under `apps/api/src/app/health/` cover the API's readiness; the new module does not add a separate health check because it depends only on Prisma (already health-checked) and authenticated identity (already health-checked).
+- **Dashboard template** — `docs/observability/dashboard-layout.md` describes the metrics, log shapes, sample queries, alert thresholds, and grafana panel specifications.
+- **Local verification** — All observability is exercisable in the local dev environment via `npx nx serve api` + curl probes documented in the runbook.
 
-The agent must additionally exercise the rules-as-tests embedded in `§ 0.7.1` — each "Verification" sub-bullet is a concrete grep, lint, or assertion that can be implemented as a CI check. These are surfaced verbatim into `CODE_REVIEW.md` as Phase entry criteria.
+#### 0.8.2.2 Explainability Rule
 
+Every non-trivial decision is captured in `docs/decisions/agent-action-plan-decisions.md` as a Markdown table row: what was decided, what alternatives existed, why this choice was made, what risks it carries. The new entries appended for this refactor cover (a) chat-panel deviation (mandatory per spec), (b) `MatDialog` vs `MatSidenav` for the catalog overlay, (c) gridster v21 vs `@angular/cdk/drag-drop` vs alternatives, (d) JSON `layoutData` shape vs normalized table, (e) `upsert` vs `update` for PATCH. A bidirectional traceability matrix at `docs/migrations/dashboard-traceability-matrix.md` maps every removed/preserved/added construct to its target with 100 % coverage.
 
-## 0.8 References
+Rationale is NOT embedded in code comments; the decision log is the single source of truth for "why."
 
-### 0.8.1 Repository Files and Folders Inspected
+#### 0.8.2.3 Executive Presentation Rule
 
-The following files and folders were retrieved during context gathering for this Agent Action Plan. They constitute the evidence base for every technical claim made in `§ 0.1` through `§ 0.7`.
+The deliverable includes a self-contained reveal.js HTML deck at `blitzy-deck/dashboard-refactor-deck.html` honoring all canvas-section requirements: 12–18 slides (target 16), four slide types (`slide-title`, `slide-divider`, default content, `slide-closing`), every slide includes at least one non-text visual (Mermaid, KPI card, styled table, or Lucide SVG), zero emoji, no fenced code blocks. CDN dependencies pinned to reveal.js 5.1.0, Mermaid 11.4.0, Lucide 0.460.0. Mermaid initialized with `startOnLoad: false` and re-run on `slidechanged`. Lucide icons re-rendered on `slidechanged`. The Blitzy brand palette and typography (Inter, Space Grotesk, Fira Code) are loaded via Google Fonts.
 
-#### 0.8.1.1 Root and Configuration
+#### 0.8.2.4 Segmented PR Review Rule
 
-- `/` (root) — Inspected via `get_source_folder_contents`; confirmed Nx monorepo with `apps/`, `libs/`, `prisma/`, `.config/`, `.github/`, `docker/`, `test/`, `tools/`, plus `package.json`, `nx.json`, `tsconfig.base.json`, `eslint.config.cjs`, `Dockerfile`, `.env.example`, `.env.dev`.
-- `package.json` — Read in full. Source for: Ghostfolio v3.0.0, Node `>=22.18.0`, NestJS `11.1.19`, Angular `21.2.7`, Prisma `7.7.0`, `@nestjs/event-emitter@3.0.1`, `@nestjs/schedule@6.1.3`, `@nestjs/config@4.0.4`, `@nestjs/passport@11.0.5`, `class-validator@0.15.1`, `passport-jwt@4.0.1`, `tablemark@4.1.0`, existing `ai@4.3.16` and `@openrouter/ai-sdk-provider@0.7.2`. Confirmed neither `@anthropic-ai/sdk` nor `snowflake-sdk` is currently installed.
-- `.env.example` — Read in full. Source for the existing env-var list (`COMPOSE_PROJECT_NAME`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `ACCESS_TOKEN_SALT`, `DATABASE_URL`, `JWT_SECRET_KEY`).
-- `.config/` — Inspected via `get_source_folder_contents`. Source for `.config/prisma.ts` (Prisma config pointing to `prisma/schema.prisma`).
-- `prisma/` — Inspected via `get_source_folder_contents`. Confirmed `migrations/` subfolder with timestamped subdirectories.
-- `prisma/schema.prisma` — Read across multiple ranges. Source for: model line numbers (`Access:11`, `Account:28`, `AccountBalance:52`, `Analytics:67`, `ApiKey:80`, `AssetProfileResolution:91`, `AuthDevice:105`, `MarketData:118`, `Order:136`, `Platform:164`, `Property:173`, `Settings:178`, `SymbolProfile:185`, `SymbolProfileOverrides:225`, `Subscription:238`, `Tag:250`, `User:261`); enum line numbers (`AccessPermission:290`, `AssetClass:295`, `AssetSubClass:304`, `DataSource:318`, `MarketDataState:330`, `Provider:335`, `Role:342`, `Type:349`, `ViewMode:358`); the full `User` and `Order` model definitions.
+`CODE_REVIEW.md` is created at the repository root during the pre-flight gate and committed before the first review phase. It partitions every changed file into exactly one sequential domain phase (Infrastructure/DevOps, Security, Backend Architecture, QA/Test Integrity, Business/Domain, Frontend, Other SME) and is owned by exactly one specialist reviewer per phase. Each phase resolves to exactly `APPROVED` or `BLOCKED` (no qualifiers); `BLOCKED` returns the work item to code generation with a full restart from pre-flight. The final reviewer issues exactly `APPROVED` or `BLOCKED` after every domain phase is `APPROVED`.
 
-#### 0.8.1.2 Backend Source
+### 0.8.3 Performance and Scalability Considerations
 
-- `apps/api/src/` — Inspected. Source for the bootstrap layout: `dependencies.ts`, `main.ts`, `app/`, `services/`, `events/`, `guards/`, `interceptors/`, `middlewares/`, `models/`, `helper/`, `decorators/`, `environments/`, `assets/`.
-- `apps/api/src/app/app.module.ts` — Read in full. Source for: existing `imports` array (25+ feature modules), `EventEmitterModule.forRoot()`, `ScheduleModule.forRoot()`, `ConfigModule.forRoot()`, conditional `BullBoardModule`, `HtmlTemplateMiddleware` usage. Confirmed it is the file that receives the four new module imports.
-- `apps/api/src/app/endpoints/ai/ai.controller.ts` — Read. Source for the existing AI controller pattern (`@Controller('ai')`, `@HasPermission(permissions.readAiPrompt)`, `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)`).
-- `apps/api/src/app/endpoints/ai/ai.module.ts` — Read. Source for the existing module-import set used by `AiModule`.
-- `apps/api/src/app/endpoints/ai/ai.service.ts` — Read. Source for the existing `tablemark` and OpenRouter pattern.
-- `apps/api/src/app/auth/` — Inspected. Source for the six Passport strategies (`api-key.strategy.ts`, `jwt.strategy.ts`, `google.strategy.ts`, `oidc.strategy.ts`, plus WebAuthn) and `auth.service.ts`. Confirmed `JWT_SECRET_KEY` is read from `process.env` for JWT signing in the existing service.
-- `apps/api/src/events/` — Inspected. Source for `portfolio-changed.event.ts`, `portfolio-changed.listener.ts`, `asset-profile-changed.event.ts`, `asset-profile-changed.listener.ts`, `events.module.ts`. Source for the 5 s debounce convention and the `@OnEvent(EventClass.getName())` pattern.
-- `apps/api/src/services/cron/cron.service.ts` — Inspected. Source for the `@Cron` decorator pattern (six existing scheduled jobs). Confirmed `@nestjs/schedule` is operational at the application level.
-- `apps/api/src/app/portfolio/portfolio.service.ts` — Inspected with grep. Source for public method line numbers (`getAccounts:121`, `getAccountsWithAggregations:250`, `getDividends:323`, `getHoldings:348`, `getInvestments:387`, `getDetails:467`, `getHolding:767`, `getPerformance:991`, `getReport:1095`).
-- `apps/api/src/app/portfolio/portfolio.controller.ts` — Inspected with grep. Confirmed eight `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` usages — the canonical guard pattern.
-- `apps/api/src/app/portfolio/portfolio.module.ts` — Confirmed `exports: [PortfolioService]`.
-- `apps/api/src/app/symbol/symbol.service.ts` — Inspected with grep. Source for `get:23`, `getForDate:71`, `lookup:98`.
-- `apps/api/src/app/symbol/symbol.module.ts` — Confirmed `exports: [SymbolService]`.
-- `apps/api/src/app/user/user.module.ts` — Confirmed `exports: [UserService]`; JWT module locally registered with 30-day expiration.
-- `apps/api/src/app/activities/activities.service.ts` — Inspected with grep. Confirmed `PortfolioChangedEvent` emission at lines 92, 235, 244, 270, 318, 900 across CRUD operations.
+| Concern | Target | Mitigation |
+|---------|--------|------------|
+| Drag/resize latency | < 100 ms visual completion | Gridster math runs `NgZone.runOutsideAngular`; canvas is `ChangeDetectionStrategy.OnPush`; per-frame work bypasses zone overhead while drag-stop re-enters zone for state updates |
+| Layout save overhead | ≥ 500 ms debounce | rxjs `debounceTime(500)` in `LayoutPersistenceService` collapses bursts (e.g., a multi-step drag-and-resize sequence) into a single PATCH |
+| GET p95 | ≤ 300 ms | Single primary-key lookup on `userId` (PostgreSQL primary-key index); response payload typically < 5 KB; minimal JSON serialization |
+| PATCH p95 | ≤ 500 ms | Single `upsert` on indexed primary key; upsert is one round-trip in PostgreSQL via `INSERT ... ON CONFLICT (userId) DO UPDATE` |
+| Initial canvas render | ≤ 1 s | Single GET; gridster initializes synchronously with the hydrated `dashboard` array; module content components lazy-render via gridster's per-item life-cycle |
+| Maximum module count | 50 per user | Defensive cap in PATCH DTO validation; mitigates pathological JSON payload sizes |
+| Layout JSON size | < 50 KB typical, < 500 KB hard cap | Defensive PATCH-body size limit at NestJS `app.use(json({ limit: '512kb' }))` (existing Nest default body-parser config, sufficient for the 50-item cap) |
 
-#### 0.8.1.3 Frontend Source
+### 0.8.4 Security Considerations
 
-- `apps/client/src/` — Inspected. Source for `index.html`, `main.ts` (bootstraps `GfAppComponent` from `/api/v1/info`), `polyfills.ts`, `styles.scss`, `test-setup.ts`, `app/`, `assets/`, `environments/`, `styles/`.
-- `apps/client/src/app/app.routes.ts` — Read in full. Source for the 22 existing routes using lazy `loadChildren` / `loadComponent` patterns and the `internalRoutes` / `publicRoutes` reference.
-- `apps/client/src/app/components/` — Inspected. Confirmed 30+ component folders including `chat`-adjacent contexts (`access-table`, `account-detail-dialog`, `admin-jobs`, `admin-market-data`, `header`, `holding-detail-dialog`, `home-holdings`, `home-overview`, `home-summary`, `home-watchlist`, `login-with-access-token-dialog`, `portfolio-performance`, `portfolio-summary`, `rule`, `rules`, `user-account-access`, `user-account-membership`, `user-account-settings`, `user-detail-dialog`).
-- `apps/client/src/app/components/user-account-settings/` — Confirmed the three-file (`*.component.ts`, `*.html`, `*.scss`) layout.
-- `apps/client/src/app/pages/portfolio/` — Inspected. Source for the existing portfolio page layout containing five subsections.
-- `apps/client/src/app/pages/user-account/` — Inspected. Source for the existing tabbed shell with settings / membership / access tabs.
+| Concern | Mitigation |
+|---------|------------|
+| JWT-Authoritative Identity (Engineering Rule 5) | `userId` ALWAYS read from `request.user.id`; NEVER from request body or DTO |
+| Cross-user layout read | Service `findByUserId(userId)` is parameterized exclusively from `request.user.id`; no cross-user query path exists |
+| Cross-user layout write | Service `upsertForUser(userId, layoutData)` keys exclusively from `request.user.id`; the Prisma `upsert.where.userId` value is set by the controller, never echoed from the DTO |
+| Permission-based access | DEMO and INACTIVE roles do NOT receive `readUserDashboardLayout` or `updateUserDashboardLayout`; HasPermissionGuard returns 403 |
+| Unauthenticated access | `AuthGuard('jwt')` returns 401 before the request reaches `HasPermissionGuard` |
+| JSON injection / payload tampering | Class-validator DTO enforces shape (`version === 1`, `items` length 0..50, `cols`/`rows` bounded integers, `moduleId` length-bounded string) |
+| Cascade delete on user deletion | Prisma `onDelete: Cascade` on the User FK ensures layout rows are removed automatically when the user is deleted (mirrors FinancialProfile pattern) |
+| Dependency supply-chain | `angular-gridster2 21.0.1` is an established Angular community package; no new transitive dependencies introduced beyond what npm registry resolves |
+| Secret leakage | No new secrets, env vars, or external service credentials are introduced |
 
-#### 0.8.1.4 Shared Library
+### 0.8.5 Testing Requirements (Verbatim From Prompt)
 
-- `libs/common/src/lib/` — Inspected. Source for `permissions.ts`, `routes/routes.ts`, `types/`, `interfaces/`, `dtos/`, `enums/`, `helper.ts`, `personal-finance-tools.ts`, `validator-constraints/`, `validators/`.
-- `libs/common/src/lib/routes/routes.ts` — Inspected (lines 121–148). Source for the `portfolio` route family entries.
-- `libs/common/src/lib/types/request-with-user.type.ts` — Read. Source for `export type RequestWithUser = Request & { user: UserWithSettings };`.
-- `libs/common/src/lib/permissions.ts` — Confirmed presence of `permissions.readAiPrompt` and similar 80+ permission constants — the pattern that the five new permission constants follow.
+Per the prompt's TESTING REQUIREMENTS section:
 
-#### 0.8.1.5 Verification Greps
+- **Unit test coverage:** ≥ 80 % line coverage for module registry service, layout persistence service, and grid canvas component.
+- **Test types:** unit tests for module registry and grid canvas initialization; integration tests for `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout`.
+- **Required scenarios:**
+    - new user → blank canvas renders, catalog auto-opens
+    - returning user → saved layout renders on init
+    - layout save fires on drag/resize/add/remove within 500 ms debounce
+    - unauthenticated GET and PATCH return 401
+    - module placement below minimum cell dimensions is rejected by grid engine
+- **File placement:** Follow existing nx workspace test file placement conventions (co-located `*.spec.ts` files next to source).
 
-- `find / -name ".blitzyignore"` — No results; no ignore patterns active.
-- `ls /tmp/environments_files` — No results; no user-attached files.
-- `grep -rn "@anthropic-ai/sdk\|snowflake-sdk"` across the repository — No results, confirming neither package is currently installed.
-- `grep -n "@OnEvent" -r apps/api/src` — Confirmed both event listeners use `@OnEvent(EventClass.getName())`.
+### 0.8.6 Validation Framework (Verbatim From Prompt)
 
-### 0.8.2 Technical Specification Sections Consulted
+- All existing Ghostfolio feature components appear as selectable modules in the catalog, including AI chat panel from embedded-ai-v1 branch.
+- Adding a module from catalog places it on the canvas at the next available grid position.
+- Grid drag/resize MUST complete visual update within 100 ms (measured against zone-based Angular setup; validate zone/zoneless interaction with angular-gridster2 v21's NgZone calls).
+- Layout saves to DB within 500 ms debounce after any grid state change.
+- `GET /api/v1/user/layout` returns saved layout in ≤ 300 ms (p95); unauthenticated request returns 401.
+- `PATCH /api/v1/user/layout` persists layout and returns 200; unauthenticated request returns 401.
+- New user (no saved layout): blank canvas rendered; module catalog opens automatically.
+- Returning user: saved layout loaded and rendered on app init.
+- Angular Router infrastructure remains functional: ServiceWorkerModule navigation handling, PageTitleStrategy, ModulePreloadService all operational after refactor.
+- `npx nx build client && npx nx build api` completes without errors.
+- Prisma migration runs without conflicts against existing schema.
 
-The following sections of the parent Technical Specification were retrieved through `get_tech_spec_section` and provided architectural context for this Agent Action Plan:
 
-- **§ 1.1 Executive Summary** — context on Ghostfolio's positioning and current AI capabilities.
-- **§ 2.1 Feature Catalog** — confirmation that the existing `AiModule` corresponds to feature **F-020 (AI Prompt Generation)** with `portfolio` and `analysis` modes; that **F-005 Activity Management** emits `PortfolioChangedEvent`; that **F-008 Portfolio Performance Engine** publishes ROAI / TWR / MWR / ROI metrics; and that **F-027–F-029** are the three Bull queues currently registered.
-- **§ 3.2 Frameworks & Libraries** — confirmation of the stack versions: NestJS 11.1.19, Angular 21.2.7, Material Design 3, Ionic Angular 8.8.1, Prisma 7.7.0, six Passport strategies, Bull (Redis-backed) for the three queues.
-- **§ 3.3 Open Source Dependencies** — confirmation of npm registry usage and AGPL-3.0 license; zero React in production runtime path.
-- **§ 3.4 Third-Party Services** — confirmation of nine market-data providers under `apps/api/src/services/data-provider/`; existing AI services using OpenRouter via `@openrouter/ai-sdk-provider 0.7.2` with the API key stored in `PROPERTY_API_KEY_OPENROUTER`; Stripe `20.4.1` for subscriptions; default `REQUEST_TIMEOUT = 3000ms`; 5,000 ms event-bus debounce.
-- **§ 5.1 High-Level Architecture** — confirmation of layered modular monolith in Nx monorepo, single Node.js process for self-hosters, 17 Prisma models, 25+ feature modules, permission-based RBAC with 80+ permissions, cache-then-queue pattern, event-driven cache invalidation with 5,000 ms debounce, three Bull queues, Redis-backed cache, 13 i18n locales, `gf` component selector prefix.
+## 0.9 References
 
-### 0.8.3 External References (Web Search)
+### 0.9.1 Files Examined During Context Gathering
 
-The following external references inform the implementation approach. Each resource was consulted to ground the new code in current upstream behavior.
+The Blitzy platform examined the following existing files in the repository to derive the conclusions in this Action Plan. Every file is listed by absolute path from the workspace root with a one-line summary of why it informed the plan.
 
-- **Anthropic TypeScript SDK** — `npmjs.com/package/@anthropic-ai/sdk`. Used to confirm the SDK's existence on the npm registry, the recommended `messages.create({...})` and `messages.stream({...})` APIs, the `tools` / `tool_choice` parameter shape for forced tool invocation (Rule 4 baseline), and the `MIT` license.
-- **Snowflake Node.js driver** — `npmjs.com/package/snowflake-sdk`. Used to confirm the driver's existence on the npm registry, the bind-variable execution API (`connection.execute({ sqlText, binds, complete })`), the callback semantics, and the upstream support matrix.
-- **DefinitelyTyped `@types/snowflake-sdk`** — `npmjs.com/package/@types/snowflake-sdk`. Used to confirm the typings package version `1.6.24` for the `devDependencies` entry.
-- **Snowflake Node.js driver release notes** — `docs.snowflake.com/en/release-notes/clients-drivers/`. Used to confirm Node.js 22 support (added in late 2024) and to validate that the user-pinned `^1.14.0` constraint still has driver support against current Snowflake servers.
-- **NestJS Server-Sent Events documentation** — `docs.nestjs.com/techniques/server-sent-events`. Used to validate the `@Sse()` decorator returning `Observable<MessageEvent>` and the `Content-Type: text/event-stream` response header behavior.
-- **NestJS Schedule documentation** — `docs.nestjs.com/techniques/task-scheduling`. Used to validate the `@Cron('0 2 * * *', { timeZone: 'UTC' })` syntax.
-- **NestJS Event Emitter documentation** — `docs.nestjs.com/techniques/events`. Used to validate the `@OnEvent('event.name')` decorator semantics.
+#### 0.9.1.1 Repository Root Configuration
 
-### 0.8.4 User-Provided Attachments
+| File | Why Examined |
+|------|--------------|
+| `package.json` | Confirm Angular 21.2.7, Material 21.2.5, NestJS 11.1.19, Prisma 7.7.0; Node engine ≥ 22.18.0; existing test/build dependencies |
+| `nx.json` | Confirm Nx workspace configuration and component-prefix conventions |
+| `tsconfig.base.json` | TypeScript path aliases for `@ghostfolio/*` imports |
+| `.config/prisma.ts` | Confirm Prisma config points to `prisma/schema.prisma` and `prisma/migrations` (centralized schema location, not split per-app) |
 
-**No file attachments were provided by the user.**
+#### 0.9.1.2 Prisma Schema and Models
 
-- `find / -name ".blitzyignore"` returned no results.
-- `ls /tmp/environments_files` returned no results.
-- The user's instructions did not reference any uploaded file by name.
+| File | Why Examined |
+|------|--------------|
+| `prisma/schema.prisma` (382 lines, full file) | Locate User model (line 261), FinancialProfile model (line 364) as structural template; confirm no naming collision; identify enums (AccessPermission, AssetClass, AssetSubClass, DataSource, MarketDataState, Provider, Role, Type, ViewMode, RiskTolerance) |
+| `prisma/migrations/migration_lock.toml` | Confirm `provider = "postgresql"` is pinned |
 
-### 0.8.5 User-Provided Figma URLs
+#### 0.9.1.3 NestJS Backend (apps/api)
 
-**No Figma URLs were provided by the user.**
+| File | Why Examined |
+|------|--------------|
+| `apps/api/src/app/app.module.ts` | Locate `UserFinancialProfileModule` import (line 66) and registration (line 182) — template for `UserDashboardLayoutModule` placement |
+| `apps/api/src/app/user/user.controller.ts` (lines 1–80) | Auth pattern verbatim: `@UseGuards(AuthGuard('jwt'), HasPermissionGuard)` + `@HasPermission(...)` |
+| `apps/api/src/app/user/user.module.ts` | Existing user module structure |
+| `apps/api/src/app/user/user.service.ts` | Existing user service patterns |
+| `apps/api/src/app/user-financial-profile/user-financial-profile.controller.ts` | Structural template for new layout controller (correlation-id, idempotent PATCH, 404-on-missing GET) |
+| `apps/api/src/app/user-financial-profile/user-financial-profile.service.ts` | Service template for `findByUserId` / `upsertForUser` patterns |
+| `apps/api/src/app/user-financial-profile/user-financial-profile.module.ts` | Module declaration template (controller + service + PrismaModule import) |
+| `apps/api/src/app/user-financial-profile/dtos/financial-profile.dto.ts` | class-validator DTO pattern (Decision D-023) |
+| `apps/api/src/guards/has-permission.guard.ts` | Permission enforcement via Reflector reading `HAS_PERMISSION_KEY` |
+| `apps/api/src/decorators/has-permission.decorator.ts` | `@HasPermission(...)` decorator implementation |
+| `apps/api/src/services/prisma/prisma.service.ts` | Singleton Prisma client consumed by new layout service |
+| `apps/api/src/services/metrics/metrics.service.ts` (referenced via repo convention) | Metrics counter/histogram registration pattern used by `snowflake-sync.service.ts` |
+| `apps/api/src/app/snowflake-sync/snowflake-sync.service.ts` | Observability template — `metricsService.registerHelp(...)` + `metricsService.incrementCounter(...)` pattern |
 
-The user's prompt does not reference any Figma frame, file, library, or screen URL. Accordingly:
+#### 0.9.1.4 Angular Frontend (apps/client)
 
-- No Figma frame metadata is captured in this section.
-- No `// FIGMA: <url>` annotation is required in any new file.
-- No Token Manifest is derived (the Design System Compliance protocol does not apply because no design system or component library is named in the user's prompt).
+| File | Why Examined |
+|------|--------------|
+| `apps/client/src/main.ts` (107 lines, full file) | Confirm preserved infrastructure: `RouterModule.forRoot` (lines 70–74), `ServiceWorkerModule` (75–78), `provideZoneChangeDetection()` (87), `PageTitleStrategy` (102–103), `ModulePreloadService` (81) |
+| `apps/client/src/app/app.routes.ts` (147 lines) | Identify 22 lazy-loaded route entries to be collapsed |
+| `apps/client/src/app/app.component.ts` | Header/footer imports (lines 36–37) to be removed |
+| `apps/client/src/app/app.component.html` | Template chrome to be reduced to `<router-outlet />` |
+| `apps/client/src/app/app.component.scss` | Chrome styles to be trimmed |
+| `apps/client/project.json` (line 6) | Component selector prefix `gf` |
+| `apps/client/src/styles/styles.scss` | Global stylesheet — gridster CSS import target |
+| `apps/client/src/styles/material.scss` | Material 3 theme bootstrap |
+| `apps/client/src/app/components/chat-panel/chat-panel.component.ts` (lines 1–50) | Chat selector `app-chat-panel`, constants for collapsed/expanded width |
+| `apps/client/src/app/components/chat-panel/chat-panel.component.scss` | Canonical Material 3 var/fallback pattern reference |
+| `apps/client/src/app/components/header/` (folder summary) | Header component to be removed |
+| `apps/client/src/app/components/footer/` (folder summary) | Footer component to be removed |
+| `apps/client/src/app/components/home-overview/` (folder summary) | Existing presentation component reused inside portfolio-overview module wrapper |
+| `apps/client/src/app/components/home-holdings/` (folder summary) | Existing presentation component candidate for reuse |
+| `apps/client/src/app/components/home-summary/` (folder summary) | Existing presentation component candidate for reuse |
+| `apps/client/src/app/components/home-watchlist/` (folder summary) | Existing presentation component candidate for reuse |
+| `apps/client/src/app/components/home-market/` (folder summary) | Existing presentation component candidate for reuse |
+| `apps/client/src/app/components/holdings-table/` (folder summary) | Existing presentation component reused inside holdings module wrapper |
+| `apps/client/src/app/components/portfolio-summary/` (folder summary) | Existing presentation component candidate for reuse |
+| `apps/client/src/app/components/portfolio-performance/` (folder summary) | Existing presentation component candidate for reuse |
+| `apps/client/src/app/pages/portfolio/portfolio-page.html` (line 32) | Chat-panel mount-point (DEVIATION POINT) |
+| `apps/client/src/app/pages/portfolio/portfolio-page.routes.ts` | 6-child portfolio sub-routing structure to be collapsed |
+| `apps/client/src/app/pages/` (folder summary, 22+ subfolders) | Page namespace to be removed |
+| `apps/client/src/app/core/auth.guard.ts` | Preserved guard applied to new single root route |
+| `apps/client/src/app/core/auth.interceptor.ts` | Preserved JWT attachment for layout endpoint requests |
+| `apps/client/src/app/core/http-response.interceptor.ts` | Preserved global response handling |
+| `apps/client/src/app/core/language.service.ts` | Preserved i18n service |
+| `apps/client/src/app/core/layout.service.ts` | Preserved core layout helper service |
+| `apps/client/src/app/core/module-preload.service.ts` | Preserved router preload strategy |
+| `apps/client/src/app/services/page-title.strategy.ts` (referenced via main.ts:102–103) | Preserved title strategy |
+| `apps/client/src/app/services/portfolio.service.ts` (referenced via spec) | Preserved data-fetching service |
+| `apps/client/src/app/services/symbol.service.ts` (referenced via spec) | Preserved data-fetching service |
+| `apps/client/src/app/services/ai-chat.service.ts` (referenced via spec) | Preserved data-fetching service |
+| `apps/client/src/app/services/rebalancing.service.ts` (referenced via spec) | Preserved data-fetching service |
+| `apps/client/src/app/services/financial-profile.service.ts` (referenced via spec) | Preserved data-fetching service |
 
-The new Angular components inherit the existing Ghostfolio Material Design 3 visual language and theme tokens; their visual design is described narratively in `§ 0.5.3` rather than referenced from external design assets.
+#### 0.9.1.5 Shared Libraries (libs/)
 
-### 0.8.6 Coverage Summary
+| File | Why Examined |
+|------|--------------|
+| `libs/common/src/lib/permissions.ts` | Add new permission constants and ADMIN/USER role grants |
+| `libs/common/src/lib/routes/routes.ts` (lines 1–80) | Centralized route constants to be reduced/preserved |
+| `libs/ui/` (folder summary) | Shared UI components and services (preserved) |
 
-The Blitzy platform's context gathering for this Agent Action Plan touched:
+#### 0.9.1.6 Documentation and Decisions
 
-- 1 root folder + 9 sub-folders inspected for structure.
-- 6 backend feature modules read at the source level (`endpoints/ai`, `auth`, `events`, `services/cron`, `portfolio`, `symbol`, `user`, `activities`).
-- 3 frontend feature areas inspected (`pages/portfolio`, `pages/user-account`, `components/`).
-- 1 Prisma schema read across multiple line ranges (17 models, 9 enums confirmed).
-- 5 Technical Specification sections retrieved.
-- 2 npm registry pages cross-referenced for SDK availability.
-- 0 `.blitzyignore` files, 0 user attachments, 0 Figma URLs.
+| File | Why Examined |
+|------|--------------|
+| `docs/decisions/agent-action-plan-decisions.md` | Decision D-005 (DEMO permission grants), D-013 (Prisma 7.x explicit back-relation), D-019 (idempotent upsert), D-020 (Material 3 var/fallback pattern), D-023 (class-validator MaxLength) |
+| `docs/observability/ai-chat.md` | Observability runbook template |
+| `docs/observability/ai-rebalancing.md` | Observability runbook template |
+| `docs/observability/snowflake-sync.md` | Observability runbook template |
 
-Every claim in `§ 0.1` through `§ 0.7` traces back to one of the above sources.
+#### 0.9.1.7 Folders Surveyed
+
+| Folder | Why Surveyed |
+|--------|--------------|
+| `` (repository root) | Overall monorepo layout |
+| `apps/` | Confirm `api/` and `client/` workspaces |
+| `apps/api/src/app/` | Identify 25+ NestJS feature modules |
+| `apps/api/src/app/user/` | Existing user module structure |
+| `apps/api/src/app/user-financial-profile/` | Structural template directory |
+| `apps/client/src/app/` | Top-level Angular folders (pages, components, services, util, core, directives, adapter, interfaces) |
+| `apps/client/src/app/components/` | Existing component catalogue |
+| `apps/client/src/app/pages/` | Page namespace to be removed |
+| `apps/client/src/app/core/` | Core services preserved |
+| `apps/client/src/app/services/` | Data-fetching services preserved |
+| `prisma/` | Schema and migrations location |
+| `prisma/migrations/` | Existing migration history |
+| `libs/common/` | Shared cross-cutting library |
+| `libs/ui/` | Shared UI library |
+| `.config/` | Centralized config files (prisma config, etc.) |
+| `docs/` | Decision logs, observability runbooks |
+| `docs/decisions/` | Decision-log location |
+| `docs/observability/` | Observability runbook templates |
+| `blitzy-deck/` | Reveal.js deck location (per Implementation Rule "Executive Presentation") |
+
+### 0.9.2 New Files To Be Created
+
+The complete inventory is enumerated in § 0.6.1 and § 0.7.1.1. Aggregate counts for cross-reference:
+
+| Category | Count |
+|----------|------:|
+| Angular standalone components (TS + HTML + SCSS + spec, 4 files each) | 6 components × 4 files = 24 |
+| Angular services (TS + spec) | 4 services × 2 files = 8 |
+| Angular interfaces | 2 |
+| NestJS module + controller + service + 2 DTOs + 2 specs | 7 |
+| Prisma migration | 1 |
+| Documentation files | 3 (`docs/observability/dashboard-layout.md`, `docs/migrations/dashboard-traceability-matrix.md`, `blitzy-deck/dashboard-refactor-deck.html`) |
+| Repo-root review artifact | 1 (`CODE_REVIEW.md`) |
+| **Total NEW files** | **46** |
+
+### 0.9.3 Existing Files Modified or Removed
+
+| Category | Count |
+|----------|------:|
+| MODIFY (configuration, registry, module roots, app shell) | 12 (`prisma/schema.prisma`, `libs/common/src/lib/permissions.ts`, `apps/api/src/app/app.module.ts`, `apps/client/src/app/app.routes.ts`, `apps/client/src/app/app.component.ts`, `apps/client/src/app/app.component.html`, `apps/client/src/app/app.component.scss`, `apps/client/src/styles/styles.scss`, `package.json`, `package-lock.json`, `README.md`, `docs/decisions/agent-action-plan-decisions.md`) |
+| REMOVE (entire folder trees) | 3 patterns (`apps/client/src/app/components/header/**`, `apps/client/src/app/components/footer/**`, `apps/client/src/app/pages/**`) |
+
+### 0.9.4 Web Search Research Conducted
+
+The Blitzy platform anchored the dependency choice on the user-prescribed `angular-gridster2 21.0.1` and the version-compatibility note "(version-compatible with Angular 21)". The following research areas were anchored to the user's explicit version pins; no out-of-band research was required because the prompt fixed all key versions:
+
+- **angular-gridster2 v21.0.1 standalone API and NgZone semantics** — confirmed via the package's standalone-export shape (`Gridster`, `GridsterItemComponent`) which matches the v21 release line for Angular 21 compatibility; the gridster engine's `NgZone.run`-bracketed callbacks (`itemChangeCallback`, `itemResizeCallback`) are the documented integration points for state-change detection in zone-based Angular hosts.
+- **Material 3 design-token defaults** — fallback values in § 0.5.3 mirror Angular Material 21's published defaults for the light theme as exposed via the `--mat-sys-*` custom-property family generated by `mat.theme()` SCSS mixins.
+- **Prisma 7.x explicit back-relation requirement** — already captured as Decision D-013 in `docs/decisions/agent-action-plan-decisions.md`; reaffirmed by the User-side back-relation field requirement on the new model.
+- **NestJS PassportModule + JWT strategy** — already wired in the existing `apps/api/src/app/auth/` module, consumed by `AuthGuard('jwt')`; the new endpoints reuse the existing strategy with no changes.
+
+### 0.9.5 Tech Spec Sections Cross-Referenced
+
+| Section | Why Referenced |
+|---------|----------------|
+| **§ 1.1 Executive Summary** | Confirm Ghostfolio is a wealth-management platform with portfolio analytics, transaction tracking, AI chat, rebalancing |
+| **§ 3.2 FRAMEWORKS & LIBRARIES** | Confirm Angular 21.2.7, Material 21.2.5, CDK 21.2.5, NestJS 11.1.19, Prisma 7.7.0; angular-gridster2 not previously listed |
+| **§ 5.1 HIGH-LEVEL ARCHITECTURE** | Confirm modular monolith with narrowly-scoped NestJS feature modules; layout module fits this pattern |
+| **§ 5.4 CROSS-CUTTING CONCERNS** | Confirm error-handling patterns, JWT-Authoritative Identity Rule 5, performance SLAs |
+| **§ 6.2 Database Design** | Confirm PostgreSQL operational schema with 18 entities, 8 enumerations, 50+ explicit indexes; FinancialProfile cascade-delete pattern |
+| **§ 7.1 OVERVIEW** | UI scope and surfaces with mount points |
+| **§ 7.2 CORE UI TECHNOLOGIES** | Stack details: Angular 21.2.7, Material 21.2.5, CDK 21.2.5, TypeScript 5.9.2, Bootstrap 4.6.2, Ionicons 8.0.13, rxjs 7.8.1 |
+| **§ 7.4 SCREENS AND COMPONENT INVENTORY** | ChatPanelComponent identity (selector `app-chat-panel`, embedded at `portfolio-page.html:32`) — DEVIATION POINT documented |
+| **§ 7.10 ENGINEERING CONSTRAINTS AND COMPLIANCE** | Module Isolation Rule 1, JWT-Authoritative Identity Rule 5, Selector Naming Convention (`gf` prefix), Persistence Restrictions D-002, SSE Disconnection Rule 6 |
+
+### 0.9.6 User-Provided Attachments
+
+The user attached **0** environments and **0** files to this work item. No Figma URLs, no design assets, no environment files, no secrets files, and no additional attachments were provided. The Blitzy platform did not consume any external attachment paths because none exist for this work item.
+
+### 0.9.7 Figma Design References
+
+No Figma URLs were provided in the prompt. The prompt explicitly does NOT reference any Figma frames, design specifications, or external design system documentation. The visual specification for the dashboard chrome is therefore derived entirely from:
+
+1. The user's textual specification ("module catalog: overlay or sidebar panel listing all registered modules, searchable by name; add via drag or click; remove via module header action") and the grid spec ("12 columns, fixed row height (constant px), minimum module size 2×2 cells").
+2. Material Design 3 system tokens via Angular Material 21.2.5 (already in the repo).
+3. Existing repository chrome conventions captured in `chat-panel.component.scss`, `rebalancing-page.component.scss`, and Decision D-020.
+
+### 0.9.8 External Documentation Anchors
+
+| Anchor | Use |
+|--------|-----|
+| Angular Material 3 token catalogue | Source for `--mat-sys-*` token names and default fallback values (§ 0.5.3) |
+| Angular CDK Drag-Drop API | Bridges catalog drag-from-source to gridster drop-to-canvas |
+| angular-gridster2 v21.0.1 README and example | Standalone `Gridster` component, `GridsterItemComponent`, `gridster` options shape (`minCols`, `maxCols`, `fixedRowHeight`, `minItemCols`, `minItemRows`, `itemChangeCallback`, `itemResizeCallback`) |
+| Prisma 7.x schema reference | `Json` type maps to `jsonb` on PostgreSQL; `@id`, `@relation`, `onDelete: Cascade`, `@updatedAt` semantics |
+| NestJS `@nestjs/passport` + `AuthGuard('jwt')` | Existing JWT strategy reused unchanged |
+
+### 0.9.9 Decision Log Anchors (Existing Repository)
+
+| Decision ID | Subject | Anchor |
+|-------------|---------|--------|
+| D-002 | Persistence restrictions | `docs/decisions/agent-action-plan-decisions.md` |
+| D-005 | DEMO/INACTIVE permission exclusion pattern | `docs/decisions/agent-action-plan-decisions.md` |
+| D-013 | Prisma 7.x explicit back-relation | `docs/decisions/agent-action-plan-decisions.md` |
+| D-019 | Idempotent PATCH via upsert | `docs/decisions/agent-action-plan-decisions.md` |
+| D-020 | Material 3 var/fallback pattern; semantic colors (BUY/SELL/HOLD) | `docs/decisions/agent-action-plan-decisions.md` |
+| D-023 | class-validator decorator pattern (`@MaxLength(200)` etc.) | `docs/decisions/agent-action-plan-decisions.md` |
+
+### 0.9.10 Engineering Constraints Cross-Reference
+
+| Constraint | Source | Application in This Refactor |
+|-----------|--------|------------------------------|
+| Module Isolation (Rule 1) | § 7.10 of existing tech spec | New `UserDashboardLayoutModule` does not import other feature modules' internals; consumes only `PrismaModule` |
+| JWT-Authoritative Identity (Rule 5) | § 7.10 | `userId` always derived from `request.user.id` |
+| Selector Naming Convention (`gf` prefix) | `apps/client/project.json` line 6, `nx.json` | All new components use `gf-*` selectors; `app-chat-panel` retained as legacy exception (§ 0.7.4) |
+| Persistence Restrictions (D-002) | Decision log | Layout JSON is the only new persisted shape; no other tables added |
+| SSE Disconnection (Rule 6) | § 7.10 | Chat module wraps existing `ChatPanelComponent` whose SSE handling is unchanged; gridster does not interfere with SSE streams |
+
+### 0.9.11 Build Verification Commands (For Reviewer)
+
+| Command | Purpose |
+|---------|---------|
+| `npm install angular-gridster2@21.0.1` | Install the new dependency |
+| `npx prisma migrate dev --name add-user-dashboard-layout` | Generate and apply the migration |
+| `npx nx build client` | Verify Angular build succeeds with zero errors |
+| `npx nx build api` | Verify NestJS build succeeds with zero errors |
+| `npx nx test client --testPathPattern=dashboard` | Run client-side dashboard tests |
+| `npx nx test api --testPathPattern=user-dashboard-layout` | Run API-side layout tests |
+| `npx nx run-many -t lint,test,build` | Full workspace verification (matches Segmented PR Review pre-flight gate) |
 
 
