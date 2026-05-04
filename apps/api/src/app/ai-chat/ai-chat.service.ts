@@ -718,13 +718,22 @@ export class AiChatService {
     // calls — the id never leaves the Ghostfolio API), but is
     // intentionally NOT embedded into the system prompt text that is
     // transmitted to any LLM provider. The placeholder constant
-    // `AUTHENTICATED_USER_PLACEHOLDER` is sent instead. Tool
-    // arguments DO NOT include `userId` at all; the `execute` closures
-    // source `authenticatedUserId` from the closure scope.
+    // `AUTHENTICATED_USER_PLACEHOLDER` is rendered into the prompt
+    // body instead — it acts as a UX cue the model is instructed to
+    // pass through verbatim if it ever needs to reference the user
+    // by identifier in free-form prose. Tool arguments DO NOT include
+    // `userId` at all; the `execute` closures source
+    // `authenticatedUserId` from the closure scope (see `buildTools`).
     return [
       `You are a helpful AI portfolio assistant integrated with Ghostfolio.`,
       `Answer the user's questions conversationally and directly using the ` +
         `portfolio data already provided below in this prompt.`,
+      `The portfolio data and financial profile rendered below belong to ` +
+        `the authenticated Ghostfolio user, who is referenced by the ` +
+        `placeholder ${AiChatService.AUTHENTICATED_USER_PLACEHOLDER}. If ` +
+        `you need to refer to the user by identifier in any free-form ` +
+        `response, pass this placeholder through verbatim — never invent ` +
+        `or reveal a numeric or UUID-shaped user id.`,
       ``,
       `CRITICAL RESPONSE RULES — follow these exactly:`,
       `1. NEVER describe, narrate, or mention function calls, tool invocations, ` +
