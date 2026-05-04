@@ -754,4 +754,153 @@ describe('LayoutPersistenceService', () => {
     updateSubject.next(SAMPLE_LAYOUT);
     updateSubject.complete();
   }));
+
+  // ===========================================================
+  // Test 4.13 — `saveOutcome$` emits 'success' after a completed PATCH.
+  // ===========================================================
+  // Pins the post-fix contract for QA Checkpoint 8 Issue #11
+  // ("No success or failure snackbar for layout save"). The SUT now
+  // exposes a `saveOutcome$` Observable that emits `'success'` after
+  // every successful PATCH and `'failure'` after every failed PATCH.
+  // The canvas chrome subscribes to this stream to drive the
+  // success/failure `MatSnackBar` toasts mandated by AAP § 0.5.2
+  // ("Layout-saved snackbar" and "Failed-save toast").
+  //
+  // This test verifies the success path: after a completed PATCH,
+  // `saveOutcome$` MUST emit exactly one `'success'` value and not
+  // emit any `'failure'` values.
+  it("should emit 'success' on saveOutcome$ after a successful PATCH", fakeAsync(() => {
+    const outcomes: ('success' | 'failure')[] = [];
+    service.saveOutcome$.subscribe((outcome) => outcomes.push(outcome));
+
+    service.bind(
+      {
+        changes$: changesSubject.asObservable(),
+        layoutSelector: layoutSelectorSpy
+      },
+      destroyRef
+    );
+
+    // Trigger a change, wait for the debounce to fire, then resolve
+    // the in-flight PATCH with a successful response. This drives the
+    // SUT's success-path tap operator that emits on `saveOutcome$`.
+    changesSubject.next();
+    tick(500);
+
+    // PATCH was issued — verify the inner Observable is resolved
+    // before asserting on the outcome stream. `saveOutcome$` only
+    // emits AFTER the inner update Observable completes
+    // successfully (the success notification on the inner
+    // observable's emit triggers the `tap` operator).
+    updateSubject.next(SAMPLE_LAYOUT);
+    updateSubject.complete();
+
+    // Drain any pending RxJS microtasks so the tap-then-emit
+    // sequence has flushed before we assert.
+    tick(0);
+
+    // Exactly one `'success'` outcome — the tap fires once per
+    // successful PATCH.
+    expect(outcomes).toEqual(['success']);
+  }));
+
+  // ===========================================================
+  // Test 4.14 — `saveOutcome$` emits 'failure' after a failed PATCH.
+  // ===========================================================
+  // Symmetric to test 4.13, this verifies the failure path: after
+  // the inner `update(...)` Observable errors, `saveOutcome$` MUST
+  // emit exactly one `'failure'` value (and the outer pipeline MUST
+  // remain alive for subsequent bursts — that aliveness contract is
+  // tested separately in test 4.9, but this test pins the
+  // additional `'failure'` emission that test 4.9 didn't cover).
+  //
+  // The inner `catchError` was modified to call
+  // `saveOutcomeSubject.next('failure')` BEFORE returning the
+  // EMPTY substitution, ensuring the failure outcome is observed
+  // even though the error itself is swallowed.
+  it("should emit 'failure' on saveOutcome$ after a failed PATCH", fakeAsync(() => {
+    const outcomes: ('success' | 'failure')[] = [];
+    service.saveOutcome$.subscribe((outcome) => outcomes.push(outcome));
+
+    service.bind(
+      {
+        changes$: changesSubject.asObservable(),
+        layoutSelector: layoutSelectorSpy
+      },
+      destroyRef
+    );
+
+    // Trigger a change, wait for the debounce to fire.
+    changesSubject.next();
+    tick(500);
+
+    // Error the in-flight PATCH. The SUT's inner `catchError`
+    // swallows the error (so the outer pipeline survives — see test
+    // 4.9 for that contract) but FIRST calls
+    // `saveOutcomeSubject.next('failure')` so the canvas chrome
+    // can show the failure snack-bar.
+    updateSubject.error(new Error('network down'));
+
+    tick(0);
+
+    // Exactly one `'failure'` outcome — the catchError's
+    // `next('failure')` call fires once per errored PATCH.
+    expect(outcomes).toEqual(['failure']);
+  }));
+
+  // ===========================================================
+  // Test 4.15 — Mixed sequence emits success and failure correctly.
+  // ===========================================================
+  // Integration-style coverage: a session with multiple saves —
+  // some successful, some failed — MUST emit one outcome per PATCH
+  // attempt in the correct order. This pins the contract that
+  // `saveOutcome$` is a 1:1 stream of PATCH results, never dropping
+  // or duplicating events even across success/failure transitions.
+  //
+  // Scenario: success → failure → success.
+  it('should emit one outcome per PATCH attempt in mixed success/failure sequences', fakeAsync(() => {
+    const outcomes: ('success' | 'failure')[] = [];
+    service.saveOutcome$.subscribe((outcome) => outcomes.push(outcome));
+
+    // Each call to update() returns a fresh Subject so we can
+    // independently resolve/error each in-flight PATCH.
+    const updates: Subject<LayoutData>[] = [];
+    updateSpy.mockImplementation(() => {
+      const subject = new Subject<LayoutData>();
+      updates.push(subject);
+      return subject.asObservable();
+    });
+
+    service.bind(
+      {
+        changes$: changesSubject.asObservable(),
+        layoutSelector: layoutSelectorSpy
+      },
+      destroyRef
+    );
+
+    // First save: success.
+    changesSubject.next();
+    tick(500);
+    updates[0].next(SAMPLE_LAYOUT);
+    updates[0].complete();
+    tick(0);
+
+    // Second save: failure.
+    changesSubject.next();
+    tick(500);
+    updates[1].error(new Error('5xx'));
+    tick(0);
+
+    // Third save: success.
+    changesSubject.next();
+    tick(500);
+    updates[2].next(SAMPLE_LAYOUT);
+    updates[2].complete();
+    tick(0);
+
+    // Outcome stream MUST contain three values in the exact
+    // sequence success-failure-success.
+    expect(outcomes).toEqual(['success', 'failure', 'success']);
+  }));
 });

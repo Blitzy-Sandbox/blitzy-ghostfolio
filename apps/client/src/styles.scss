@@ -301,8 +301,60 @@ body {
   }
 }
 
-button:focus {
+// Suppress the browser-native focus outline ONLY for mouse / pointer
+// focus. Keyboard-driven focus (Tab/Shift+Tab/Arrow) MUST retain a
+// visible focus indicator to satisfy WCAG 2.1 AA criterion 2.4.7
+// (Focus Visible) — see QA Checkpoint 8 Issue #4.
+//
+// The legacy `button:focus { outline: 0 }` rule that previously lived
+// here removed the outline for both mouse and keyboard focus,
+// suppressing the visible indicator on 14 of 32 focusable elements
+// (44%) — leaving keyboard users unable to tell where focus currently
+// was. The CSS `:focus:not(:focus-visible)` selector is the modern
+// W3C-supported way to scope the outline-removal to mouse/pointer
+// focus only: `:focus-visible` is set by the user agent only when
+// the focus came from a keyboard interaction (or other heuristic
+// inputs the browser deems "should show focus"), so
+// `:focus:not(:focus-visible)` matches mouse-induced focus and skips
+// keyboard-induced focus. All major browsers (Chrome 86+, Firefox
+// 85+, Safari 15.4+, Edge 86+) support `:focus-visible`.
+//
+// Material's own focus indicators (the `.mat-mdc-focus-indicator`
+// pseudo-element ring) take effect for keyboard focus AS LONG AS the
+// browser-native outline is not also competing — the rule below
+// preserves only the legitimate "no outline on mouse click" UX
+// without violating accessibility.
+button:focus:not(:focus-visible) {
   outline: 0;
+}
+
+// Keyboard-focus visible indicator. Material's MDC components paint
+// their own focus ring via `.mat-mdc-focus-indicator::before`, but the
+// indicator's color resolves to the `--mat-mdc-focus-indicator-color`
+// custom property, which the Ghostfolio theme leaves transparent at
+// rest — making the ring invisible. The explicit override below sets
+// the ring color to the theme primary so keyboard-focused buttons,
+// menu items, list items, sort headers, and other interactive
+// surfaces show a visible 2-px outline ring on Tab navigation.
+//
+// Setting `outline-offset` to 2px keeps the ring slightly outside the
+// button border so it is visible against both light and dark
+// surfaces. The `transition` keeps the appearance subtle on focus
+// transitions. Note that `outline` (not `box-shadow`) is intentional
+// — it works correctly on rounded buttons (FAB, mat-icon-button) and
+// does not interfere with Material's built-in elevation `box-shadow`.
+//
+// Scoped to `:focus-visible` per the W3C-supported keyboard-focus
+// heuristic; mouse clicks do not trigger this ring (they still fall
+// under `:focus:not(:focus-visible)` and have no outline, preserving
+// the existing mouse-click UX).
+button:focus-visible,
+[role='button']:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--mat-sys-primary, #6750a4);
+  outline-offset: 2px;
+  transition: outline-offset 0.05s ease-out;
 }
 
 hr {

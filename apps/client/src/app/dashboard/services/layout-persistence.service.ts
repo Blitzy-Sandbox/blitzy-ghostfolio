@@ -1,10 +1,36 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { EMPTY, Observable, Subscription } from 'rxjs';
-import { catchError, debounceTime, switchMap } from 'rxjs/operators';
+import { EMPTY, Observable, Subject, Subscription } from 'rxjs';
+import { catchError, debounceTime, switchMap, tap } from 'rxjs/operators';
 
 import { LayoutData } from '../interfaces/layout-data.interface';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
+
+/**
+ * Outcome of a single layout-persistence attempt. Emitted on
+ * {@link LayoutPersistenceService.saveOutcome$} so the canvas chrome
+ * can surface a `MatSnackBar` per AAP § 0.5.2 ("Layout-saved snack-bar"
+ * and "Failed-save toast").
+ *
+ * - `'success'` — the PATCH /api/v1/user/layout call returned a `200 OK`
+ *   for the most recent debounced burst. Triggers the brief
+ *   "Layout saved" success snack-bar.
+ * - `'failure'` — the PATCH call failed (network error, 4xx, 5xx). The
+ *   pipeline continues to listen for further debounced bursts (errors
+ *   are swallowed inside `switchMap` so they do not terminate the
+ *   outer subscription); the next user-driven grid change will trigger
+ *   a fresh PATCH attempt automatically. The failure outcome triggers
+ *   the "Could not save your layout" failure snack-bar with a Dismiss
+ *   action so the user is informed that their most-recent gesture may
+ *   not have persisted.
+ *
+ * The outcome stream is the canonical hook for layout-save UX
+ * notifications. Module wrapper components MUST NOT subscribe to it
+ * (Rule 4 spirit, AAP § 0.8.1.4 — module wrappers do not participate
+ * in persistence concerns); only the canvas (which already owns the
+ * MatSnackBar service and the broader chrome) consumes it.
+ */
+export type LayoutSaveOutcome = 'success' | 'failure';
 
 /**
  * Debounce window in milliseconds applied to bursts of grid state-change
@@ -233,6 +259,66 @@ export class LayoutPersistenceService {
   private subscription: Subscription | undefined;
 
   /**
+   * Internal Subject backing the public {@link saveOutcome$} Observable.
+   * Emits one {@link LayoutSaveOutcome} value per debounced burst of
+   * grid state-change events that completed (either `'success'` after
+   * a successful PATCH or `'failure'` after the inner `update(...)`
+   * Observable errored).
+   *
+   * **Why `Subject<LayoutSaveOutcome>` (not `BehaviorSubject` or
+   * `ReplaySubject`)?**
+   *   - There is no "current value" semantic — late subscribers should
+   *     NOT receive a stale snack-bar trigger from a save that
+   *     happened before they subscribed. `Subject` matches this
+   *     "fire-and-forget event" semantic.
+   *   - Multiple snack-bars stacking up if the user rapidly opens
+   *     and closes the canvas would be poor UX; `Subject`'s "no
+   *     replay" behavior ensures only live subscribers see future
+   *     emissions.
+   *
+   * **Lifetime**: the service is `providedIn: 'root'` (singleton,
+   * app-lifetime), so the Subject lives for the entire application
+   * lifetime. The Subject is intentionally NOT `complete()`d on
+   * unbind — re-binding a fresh canvas should resume emissions
+   * without recreating the Subject (which would invalidate all
+   * existing subscriptions).
+   *
+   * **Emission timing**: emits AFTER the `userDashboardLayoutService
+   * .update(...)` Observable resolves (success path: from the inner
+   * `tap` operator; failure path: from inside the inner `catchError`
+   * before the EMPTY substitution). The emission therefore
+   * corresponds 1:1 with each completed PATCH attempt — never
+   * duplicated, never dropped.
+   */
+  private readonly saveOutcomeSubject = new Subject<LayoutSaveOutcome>();
+
+  /**
+   * Public read-only Observable of layout-save outcomes (see
+   * {@link LayoutSaveOutcome}). The canvas's `ngOnInit` subscribes to
+   * this stream to drive `MatSnackBar` notifications per AAP § 0.5.2:
+   *
+   *   - On `'success'`: brief "Layout saved" success snack-bar.
+   *   - On `'failure'`: "Could not save your layout" failure snack-bar
+   *     with a Dismiss action so the user is informed that their
+   *     most-recent gesture may not have persisted.
+   *
+   * **Why a public field (not a getter)?** Direct field exposure
+   * matches the `chat-panel.component.ts:39`-style precedent for
+   * read-only Subject projections; getters would invite unnecessary
+   * computation per subscription (the underlying Subject does the
+   * fan-out internally).
+   *
+   * **`asObservable()` cast**: prevents external callers from invoking
+   * `.next(...)` / `.error(...)` / `.complete()` on the Subject. Only
+   * this service emits; subscribers consume.
+   *
+   * **Subscription scope**: the canvas typically subscribes via
+   * `takeUntilDestroyed(this.destroyRef)` so the snack-bar trigger
+   * pipeline tears down on canvas destroy.
+   */
+  public readonly saveOutcome$ = this.saveOutcomeSubject.asObservable();
+
+  /**
    * Wires up the debounced persistence stream. Called once by
    * `GfDashboardCanvasComponent.ngAfterViewInit` with the canvas's grid
    * state-change Observable and a layout-selector callback.
@@ -325,9 +411,30 @@ export class LayoutPersistenceService {
         // `MatSnackBar` toast lives in the canvas chrome, not in this
         // service's API surface).
         switchMap(() =>
-          this.userDashboardLayoutService
-            .update(binding.layoutSelector())
-            .pipe(catchError(() => EMPTY))
+          this.userDashboardLayoutService.update(binding.layoutSelector()).pipe(
+            // Emit a `'success'` outcome AFTER the PATCH resolves so
+            // the canvas can surface the "Layout saved" success
+            // snack-bar (AAP § 0.5.2 / QA Checkpoint 8 Issue #11).
+            // `tap` runs as a side-effect on the success notification
+            // path only — the inner `catchError` handles the failure
+            // path symmetrically below. Using `tap` (not `map`)
+            // preserves the inner Observable's value (the upserted
+            // LayoutData) for any future subscribers.
+            tap(() => this.saveOutcomeSubject.next('success')),
+            // Emit a `'failure'` outcome BEFORE the EMPTY
+            // substitution so the canvas can surface the failure
+            // toast. The substitution converts the inner error into
+            // a benign EMPTY-completion so the OUTER pipeline
+            // survives the inner failure (per the rationale on
+            // lines 122-135). Without this `next('failure')` call,
+            // the canvas would have no signal that the save failed
+            // — a silent data-loss UX (AAP § 0.5.2 explicitly
+            // mandates a failed-save toast).
+            catchError(() => {
+              this.saveOutcomeSubject.next('failure');
+              return EMPTY;
+            })
+          )
         ),
         // MUST be the LAST operator in the pipe chain so it correctly
         // tears down all upstream operators (debounce timer, in-flight

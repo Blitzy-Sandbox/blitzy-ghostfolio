@@ -18,8 +18,11 @@ import {
   takeUntilDestroyed
 } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
-import { MatIconModule } from '@angular/material/icon';
+import {
+  MatDialog,
+  MatDialogModule,
+  MatDialogRef
+} from '@angular/material/dialog';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import {
@@ -29,6 +32,8 @@ import {
   GridType
 } from 'angular-gridster2';
 import type { GridsterConfig, GridsterItemConfig } from 'angular-gridster2';
+import { addIcons } from 'ionicons';
+import { addOutline } from 'ionicons/icons';
 import { catchError, of, Subject } from 'rxjs';
 
 import { LayoutData, LayoutItem } from '../interfaces/layout-data.interface';
@@ -88,6 +93,39 @@ const COULD_NOT_LOAD_LABEL = $localize`:Snack-bar message when the layout failed
  * `LayoutPersistenceService` semantics — the canvas does not auto-retry).
  */
 const DISMISS_LABEL = $localize`:Snack-bar dismiss button label|Action button label on the layout-error snack-bar:Dismiss`;
+
+/**
+ * Brief positive confirmation displayed after every successful debounced
+ * `PATCH /api/v1/user/layout` save. Per AAP § 0.5.2 the success snack-bar
+ * is a 2-second auto-dismissing notification with no action button — it
+ * confirms persistence to the user without requiring acknowledgment.
+ *
+ * QA Checkpoint 8 Issue #11 noted that the canvas was previously silent
+ * on save outcomes, leaving users with no way to know whether their
+ * gestures were persisted. The success snack-bar now closes that
+ * feedback gap on the happy path.
+ */
+const LAYOUT_SAVED_LABEL = $localize`:Snack-bar message after a successful layout save|Brief confirmation displayed after PATCH /api/v1/user/layout returns 200 OK:Layout saved`;
+
+/**
+ * Failure notification displayed when the debounced
+ * `PATCH /api/v1/user/layout` save fails (network error, 4xx, 5xx). Per
+ * AAP § 0.5.2 the failed-save toast carries a Dismiss action button so
+ * the user can acknowledge the failure. The toast remains visible for
+ * 4 seconds (longer than the 2-second success duration) because users
+ * may need extra time to read it AND because the failure is consequential
+ * (their most-recent gesture may not have persisted).
+ *
+ * QA Checkpoint 8 Issue #11 captured the silent-failure risk: a user
+ * moving modules with the API down had no way to know data was being
+ * lost. This snack-bar surfaces the failure deterministically.
+ *
+ * The next user-driven grid change will trigger a fresh PATCH attempt
+ * automatically (per `LayoutPersistenceService` semantics — the
+ * pipeline survives transient inner failures), so no manual retry
+ * action is offered on the snack-bar.
+ */
+const COULD_NOT_SAVE_LABEL = $localize`:Snack-bar message after a failed layout save|Shown when PATCH /api/v1/user/layout fails:Could not save your layout`;
 
 // =============================================================================
 // Local discriminated GridItem type.
@@ -400,7 +438,6 @@ export class GfDashboardModuleHostDirective implements OnInit {
     GridsterItem,
     MatButtonModule,
     MatDialogModule,
-    MatIconModule,
     MatProgressBarModule,
     MatSnackBarModule
   ],
@@ -648,6 +685,41 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
   );
 
   /**
+   * Active reference to the open catalog dialog, if any. Used by
+   * {@link openCatalog} to prevent rapid successive FAB clicks (or
+   * programmatic calls) from stacking multiple identical dialog
+   * instances on top of each other (QA Checkpoint 8 Issue #3).
+   *
+   * The field is set when {@link openCatalog} successfully opens the
+   * dialog and cleared when the dialog's `afterClosed()` Observable
+   * emits (Material's idiomatic close-detection hook). A check at the
+   * top of {@link openCatalog} early-returns if a dialog is already
+   * open, keeping the canvas's "open the catalog" semantics
+   * idempotent: any number of consecutive `openCatalog()` calls
+   * results in EXACTLY ONE catalog dialog being visible, regardless
+   * of the click cadence.
+   *
+   * **Why a class field rather than a `MatDialog.openDialogs` lookup?**
+   * `MatDialog.openDialogs` returns ALL open dialogs across the
+   * application — including any unrelated dialogs (e.g., a holding-
+   * detail dialog opened from a module's content). Filtering that list
+   * for the catalog specifically would require either a string-id
+   * comparison or a per-dialog config tag, both of which are more
+   * fragile than tracking the canvas's OWN dialog reference. The class
+   * field approach is also forward-compatible with a hypothetical
+   * future "open catalog from a module" feature: the canvas remains
+   * the single owner of the catalog dialog lifecycle.
+   *
+   * **Type `MatDialogRef<GfModuleCatalogComponent> | undefined`**:
+   * `undefined` is the project's idiomatic "absent" value for class
+   * fields with no initial value (matching the `subscription` field
+   * pattern in `layout-persistence.service.ts`). After `afterClosed()`
+   * emits, the field is reset to `undefined` so the next
+   * {@link openCatalog} call can re-open.
+   */
+  private catalogDialogRef: MatDialogRef<GfModuleCatalogComponent> | undefined;
+
+  /**
    * Subject driving the persistence pipeline — emits `void` from
    * {@link addModule}, {@link removeItem}, {@link onItemChange}, and
    * {@link onItemResize}. The persistence service binds to this stream
@@ -782,6 +854,27 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
    * guard inside `subscribe` then prevents `hydrateFromLayout` from
    * running on the error path.
    */
+  /**
+   * Registers the `add-outline` Ionicons glyph used by the canvas
+   * FAB ("Add module" button) — QA Checkpoint 8 console warning fix
+   * companion to Issue #2. Without this registration the Ionicons
+   * runtime emits the warning "Could not load icon with name
+   * 'add-outline'" and renders the literal name text instead of
+   * the SVG glyph.
+   *
+   * `addIcons` uses a process-global registry — the same icon name
+   * registered from any other component (e.g., {@link
+   * GfModuleCatalogComponent}) is shared, but registering here
+   * defensively guarantees the icon is available even when the
+   * catalog has not yet been opened (the FAB renders on every
+   * dashboard visit, but the catalog only renders when triggered).
+   * Repeated registrations of the same name are idempotent in
+   * Ionicons' API contract — there is no cost.
+   */
+  public constructor() {
+    addIcons({ addOutline });
+  }
+
   public ngOnInit(): void {
     this.layoutPersistenceService.bind(
       {
@@ -790,6 +883,46 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
       },
       this.destroyRef
     );
+
+    // Subscribe to layout-save outcomes so the canvas can surface the
+    // success snack-bar (per AAP § 0.5.2 "Layout-saved snack-bar")
+    // and the failure snack-bar (per AAP § 0.5.2 "Failed-save toast")
+    // — closing the silent-feedback gap captured by QA Checkpoint 8
+    // Issue #11. The subscription is scoped to `takeUntilDestroyed`
+    // so it tears down cleanly when the canvas is destroyed.
+    //
+    // **Snack-bar configurations**:
+    //   - Success: `duration: 2000` matches Material 3 guidance for
+    //     transient confirmations. No action button — the save was
+    //     successful, no acknowledgment needed.
+    //   - Failure: `duration: 4000` (longer than success) gives users
+    //     extra time to read the failure notice. Includes a Dismiss
+    //     action so users can acknowledge the failure. The `panelClass`
+    //     `'gf-error-snackbar'` is reserved for future targeted
+    //     error styling (e.g., `--mat-sys-error-container`
+    //     background); current Material defaults are sufficient until
+    //     the design system explicitly requires the override.
+    //
+    // **Why subscribe AFTER `bind(...)`**: the persistence service's
+    // `saveOutcome$` Subject is constructed at service-injection
+    // time (`providedIn: 'root'` singleton), so it exists before
+    // `bind(...)` is called. The order here is therefore safe; we
+    // place the subscription after `bind(...)` purely for visual
+    // grouping with the rest of the persistence-related setup.
+    this.layoutPersistenceService.saveOutcome$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((outcome) => {
+        if (outcome === 'success') {
+          this.matSnackBar.open(LAYOUT_SAVED_LABEL, undefined, {
+            duration: 2000
+          });
+        } else {
+          this.matSnackBar.open(COULD_NOT_SAVE_LABEL, DISMISS_LABEL, {
+            duration: 4000,
+            panelClass: 'gf-error-snackbar'
+          });
+        }
+      });
 
     this.userDashboardLayoutService
       .get()
@@ -860,13 +993,104 @@ export class GfDashboardCanvasComponent implements OnInit, AfterViewInit {
    *     viewports while preserving the catalog list scrollability.
    *   - `autoFocus: 'first-tabbable'` — Material 3 default for modal
    *     accessibility (focus moves into the search input on open).
+   *   - `restoreFocus: <captured trigger>` — explicit reference to the
+   *     element that had focus before the dialog opened. Materials
+   *     uses this to restore focus on close, satisfying WCAG 2.4.3
+   *     (Focus Order) — a modal returns to the launching control.
+   *     The trigger is captured and explicitly blurred BEFORE the
+   *     dialog opens, sidestepping the Chromium 86+ console warning
+   *     "Blocked aria-hidden on an element because its descendant
+   *     retained focus" (QA Checkpoint 8 console MAJOR fix).
    */
   public openCatalog(): void {
+    // Single-instance guard (QA Checkpoint 8 Issue #3): if a catalog
+    // dialog is already open, return early instead of opening a second
+    // one. Without this guard, rapid successive FAB clicks (or
+    // accidental double-clicks, or programmatic spam from tests) would
+    // stack multiple identical catalog dialogs on top of each other,
+    // each requiring its own Escape key to dismiss. The guard makes
+    // `openCatalog()` idempotent: any number of consecutive calls
+    // results in EXACTLY ONE catalog dialog being visible.
+    //
+    // The early-return is silent (no log, no error); a spam click is
+    // semantically equivalent to "I want the catalog open" — which it
+    // already is. Returning normally avoids surprising the caller.
+    if (this.catalogDialogRef) {
+      return;
+    }
+
+    // Capture and blur the currently-focused element BEFORE opening
+    // the dialog (QA Checkpoint 8 console warning fix).
+    //
+    // Why: modern browsers (Chromium 86+) emit a console warning
+    //   "Blocked aria-hidden on an element because its descendant
+    //    retained focus."
+    // when `aria-hidden="true"` is applied to a subtree containing
+    // the currently-focused element. Material's CDK FocusTrap moves
+    // focus INTO the dialog as part of dialog open, but the warning
+    // can still fire in the brief window between aria-hidden being
+    // applied to the background siblings (e.g., the FAB's parent
+    // `<gf-dashboard-canvas>` host) and focus being moved into the
+    // dialog. Explicitly blurring the active element BEFORE the
+    // dialog opens removes the focus from the about-to-be-hidden
+    // subtree and sidesteps the race entirely.
+    //
+    // The captured element is then passed to `restoreFocus` so that
+    // when the dialog closes, focus is returned to the original
+    // trigger (the FAB in the spec scenario, but defensive against
+    // any other trigger element such as a keyboard shortcut). This
+    // preserves the WCAG 2.4.3 Focus Order requirement: a modal that
+    // returns to the launching control after dismissal.
+    //
+    // `previouslyFocused` is intentionally typed `HTMLElement | null`
+    // so the `restoreFocus` config receives either the explicit
+    // element (passes through Material's element-reference branch)
+    // or `true` (Material's default — restore to whatever was
+    // focused at open time, which after the blur is `<body>`; this
+    // is safe because the dialog itself is closing and Material's
+    // close animation already returns focus correctly via the
+    // FocusTrap teardown).
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    previouslyFocused?.blur();
+
     const ref = this.matDialog.open(GfModuleCatalogComponent, {
       autoFocus: 'first-tabbable',
       maxHeight: '80vh',
+      restoreFocus: previouslyFocused ?? true,
       width: '720px'
     });
+
+    // Track the open dialog reference so the single-instance guard
+    // above can detect it. The reference is cleared in the
+    // `afterClosed()` subscriber below — Material's idiomatic
+    // close-detection hook that fires regardless of how the dialog is
+    // dismissed (Escape key, backdrop click, programmatic
+    // `ref.close()`, route navigation).
+    this.catalogDialogRef = ref;
+
+    // Clear the reference when the dialog closes so the next
+    // `openCatalog()` call can re-open. `afterClosed()` is the
+    // canonical Material hook for "dialog is fully torn down" — it
+    // fires AFTER the close animation completes and the dialog DOM
+    // is removed. Using this hook (rather than wrapping the close in
+    // a `tap`) ensures the field is reset even when the dialog
+    // closes via Escape or backdrop click (paths that bypass the
+    // `addModule` handler below).
+    //
+    // `take(1)` is implicit because `afterClosed()` emits exactly
+    // once and then completes; no explicit `take(1)` operator is
+    // needed. `takeUntilDestroyed` is paired so that if the canvas
+    // is destroyed mid-close (rare), the subscription still tears
+    // down cleanly.
+    ref
+      .afterClosed()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.catalogDialogRef = undefined;
+      });
 
     outputToObservable(ref.componentInstance.addModule)
       .pipe(takeUntilDestroyed(this.destroyRef))

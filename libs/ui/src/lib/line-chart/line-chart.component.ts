@@ -37,6 +37,7 @@ import {
   type TooltipOptions
 } from 'chart.js';
 import 'chartjs-adapter-date-fns';
+import annotationPlugin from 'chartjs-plugin-annotation';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 
 import { registerChartConfiguration } from '../chart';
@@ -79,6 +80,32 @@ export class GfLineChartComponent
 
   public constructor(private changeDetectorRef: ChangeDetectorRef) {
     Chart.register(
+      // chartjs-plugin-annotation is registered defensively here even
+      // though `gf-line-chart` does not configure annotations on its
+      // own chart instances. The plugin uses an internal `chartStates`
+      // WeakMap whose entries are populated by the plugin's
+      // `beforeInit` hook — which only fires on charts created AFTER
+      // the plugin is registered with `Chart.register(...)`. When
+      // `gf-investment-chart` or `gf-benchmark-comparator` (which DO
+      // configure annotations) call `Chart.register(annotationPlugin)`
+      // later in the page lifecycle, the plugin's hooks then run on
+      // every existing chart instance — including any
+      // already-instantiated `gf-line-chart`s that never had their
+      // state populated. The next `chart.update()` on such a
+      // line-chart would crash inside the plugin's `beforeUpdate`
+      // hook with `TypeError: Cannot set properties of undefined
+      // (setting 'annotations')` because `chartStates.get(chart)`
+      // returns `undefined`. Co-registering the plugin from the
+      // line-chart constructor guarantees the plugin's `beforeInit`
+      // fires for every line-chart instance regardless of which
+      // chart-rendering component loads first — eliminating the
+      // crash that QA Checkpoint 8 Issues #5 and #7 captured (charts
+      // rendering fully transparent in the dashboard's
+      // Portfolio Overview and Analysis modules where line-chart and
+      // investment-chart are co-mounted on the same canvas). Cost is
+      // negligible: re-registering an already-registered plugin is a
+      // documented Chart.js no-op.
+      annotationPlugin,
       Filler,
       LineController,
       LineElement,

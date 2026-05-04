@@ -18,6 +18,7 @@ import { registerChartConfiguration } from '@ghostfolio/ui/chart';
 
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
   type ElementRef,
@@ -54,7 +55,9 @@ import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
   styleUrls: ['./investment-chart.component.scss'],
   templateUrl: './investment-chart.component.html'
 })
-export class GfInvestmentChartComponent implements OnChanges, OnDestroy {
+export class GfInvestmentChartComponent
+  implements AfterViewInit, OnChanges, OnDestroy
+{
   @Input() benchmarkDataItems: InvestmentItem[] = [];
   @Input() benchmarkDataLabel = '';
   @Input() colorScheme: ColorScheme;
@@ -86,6 +89,43 @@ export class GfInvestmentChartComponent implements OnChanges, OnDestroy {
     );
 
     registerChartConfiguration();
+  }
+
+  public ngAfterViewInit() {
+    // The chart cannot be created in `ngOnChanges` when this component is
+    // first mounted with @Input() values already populated, because
+    // Angular calls `ngOnChanges` BEFORE `ngAfterViewInit`. At that
+    // point, `this.chartCanvas` (a `@ViewChild('chartCanvas')`) is
+    // `undefined`, so the guard `if (this.chartCanvas)` inside
+    // `initialize()` short-circuits and the chart is never instantiated.
+    //
+    // This pattern manifested as QA Checkpoint 8 Issues #5 and #7's
+    // residual symptom: even after the original Chart.js plugin
+    // registration TypeError was resolved (by registering
+    // `chartjs-plugin-annotation` in `line-chart.component.ts` and
+    // adding defensive optional chaining at line 167 above), the
+    // Analysis module's investment-chart canvas remained at the
+    // default 300×150 size with zero rendered pixels because
+    // `<gf-investment-chart>` is created inside the analysis-module
+    // template's `@if (performance() && user())` block — meaning the
+    // child component is only instantiated AFTER its parent's data
+    // signals are populated. By that time, the @Input() bindings are
+    // already non-empty arrays (`benchmarkDataItems = investments()`
+    // with 450 items, `historicalDataItems = performanceDataItems()`
+    // with 450 items), so the first (and only) `ngOnChanges` fires
+    // synchronously with the populated inputs but the View hasn't
+    // yet been initialized — meaning `chartCanvas` is undefined.
+    // No subsequent `ngOnChanges` fires (the data is stable), so the
+    // chart never initializes.
+    //
+    // Adding `ngAfterViewInit` as a fallback ensures `initialize()` is
+    // called once the View is ready and `chartCanvas` is resolved.
+    // The mirror sibling fix lives in
+    // `apps/client/src/app/components/benchmark-comparator/
+    // benchmark-comparator.component.ts`.
+    if (this.benchmarkDataItems && this.historicalDataItems && !this.chart) {
+      this.initialize();
+    }
   }
 
   public ngOnChanges() {
@@ -164,9 +204,26 @@ export class GfInvestmentChartComponent implements OnChanges, OnDestroy {
         this.chart.options.plugins.tooltip =
           this.getTooltipPluginConfiguration();
 
+        // Defensive optional-chaining around `plugins.annotation`. The
+        // chartjs-plugin-annotation registers the `annotation` plugin
+        // options on a chart's options block via `beforeInit`. In rare
+        // race conditions where the chart instance was created before
+        // this plugin was first registered (see line-chart.component.ts
+        // for the symmetric defensive `Chart.register(annotationPlugin)`
+        // call that prevents the original crash), the `annotation`
+        // sub-key may be absent on `chart.options.plugins`. Without the
+        // optional-chain guard, `this.chart.options.plugins.annotation
+        // .annotations` would throw `TypeError: Cannot read properties
+        // of undefined (reading 'annotations')`. The guard is a
+        // belt-and-suspenders defense for QA Checkpoint 8 Issues #5
+        // and #7 — a future regression that drops the line-chart
+        // co-registration would still not crash the chart pipeline
+        // because the savingsRate update would be silently skipped.
         const annotations = this.chart.options.plugins.annotation
-          .annotations as Record<string, AnnotationOptions<'line'>>;
-        if (this.savingsRate && annotations.savingsRate) {
+          ?.annotations as
+          | Record<string, AnnotationOptions<'line'>>
+          | undefined;
+        if (this.savingsRate && annotations?.savingsRate) {
           annotations.savingsRate.value = this.savingsRate;
         }
 

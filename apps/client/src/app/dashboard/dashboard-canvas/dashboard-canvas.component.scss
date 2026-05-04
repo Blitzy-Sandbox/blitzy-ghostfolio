@@ -128,12 +128,104 @@
 // `z-index: 1000` puts the FAB above gridster, the loading bar, and the
 // error banner. Material's `MatDialog` uses z-index 1000+ via the CDK
 // overlay container, so an open catalog dialog correctly obscures the
-// FAB while it is open. The button's color is owned by Material's
-// `MatFab` component theme, which already consumes `--mat-sys-primary`
-// and `--mat-sys-on-primary` internally — no override here.
+// FAB while it is open.
+//
+// **WCAG 1.4.3 contrast override** (QA Checkpoint 8 Issue #1): the
+// Ghostfolio theme overrides Material's default `--mat-sys-primary`
+// (M3 default `#6750a4` purple) to the brand cyan `#36cfcc`
+// (`apps/client/src/styles/theme.scss:438`). White text on that cyan
+// produces a contrast ratio of only 1.92:1 — well below the WCAG 2.1
+// AA minimum of 4.5:1 for normal-weight 14-px text. To satisfy WCAG
+// AA for the dashboard FAB regardless of which primary value the
+// theme defines, we override the FAB foreground color to use the
+// on-surface dark text color (`#1d1b20`), which yields a 10.5:1
+// contrast ratio against the cyan background — well above the AA
+// threshold.
+//
+// **Specificity battle**: the Ghostfolio global theme declares
+//   `.mat-mdc-fab.mat-primary { color: rgba(var(--light-primary-text)); }`
+// at specificity (0,2,0), which overrides any single-class selector
+// like `.gf-canvas-fab`. To deterministically beat the legacy theme
+// rule we compound the `.mat-primary` class onto our scoped selector
+// (specificity 0,2,0) AND use direct `color: ...` declarations rather
+// than CSS variable overrides. The variable overrides remain as a
+// belt-and-suspenders fallback for Material's M3-token-aware
+// rendering paths (e.g., `mat-fab-icon-color` is consumed by the
+// underlying icon-color resolution chain even when the host `color`
+// is overridden).
+//
+// **Why `&.mat-primary` (compound) over `&` (single)**: the legacy
+// `light-primary-text` rule targets the FAB only when it has
+// `color="primary"` (which sets the `.mat-primary` class). Our
+// dashboard FAB intentionally uses `color="primary"` to inherit the
+// brand-primary background; the `.mat-primary` class is therefore
+// always present, so the compound selector reliably matches AND
+// matches the legacy rule's specificity. The `color: ...` direct
+// rule on the compound selector then wins via source-order
+// (component styles load AFTER the global theme).
+//
+// The background remains the theme's primary token so the FAB stays
+// visually consistent with other primary-colored surfaces (e.g.,
+// chat-panel buttons). The fallback values mirror the AAP § 0.5.3.1
+// catalog (on-surface `#1d1b20`).
 .gf-canvas-fab {
+  --mat-fab-extended-foreground-color: var(--mat-sys-on-surface, #1d1b20);
+  --mat-fab-foreground-color: var(--mat-sys-on-surface, #1d1b20);
+  --mat-fab-icon-color: var(--mat-sys-on-surface, #1d1b20);
+  --mdc-extended-fab-label-text-color: var(--mat-sys-on-surface, #1d1b20);
+  --mdc-fab-icon-color: var(--mat-sys-on-surface, #1d1b20);
+
   bottom: 1.5rem;
   position: fixed;
   right: 1.5rem;
   z-index: 1000;
+
+  // Compound `.mat-primary` selector to match the legacy theme's
+  // `(0,2,0)` specificity for `.mat-mdc-fab.mat-primary` AND `!important`
+  // on the legacy rule, which forces us to also use `!important` here.
+  //
+  // The legacy global theme declares (with `!important`):
+  //   `.mat-mdc-fab.mat-primary, .mat-mdc-unelevated-button.mat-primary {
+  //      color: rgba(var(--light-primary-text)) !important;
+  //    }`
+  // — `!important` defeats any non-`!important` declaration regardless
+  // of specificity, so a plain `color: var(...)` rule on the same
+  // compound selector still loses to it. Using `!important` on our
+  // scoped override deterministically wins via source-order
+  // (component styles load AFTER the global theme; both are
+  // `!important`, so the later one wins).
+  //
+  // **Justified !important**: Material's MDC architecture and the
+  // Ghostfolio legacy theme's `light-primary-text` token are
+  // designed for the global "primary buttons render with white
+  // text" rule. The dashboard FAB is the ONLY place we deviate from
+  // that rule (because the brand cyan + white combo fails WCAG AA);
+  // this is the textbook case for `!important` — a localized,
+  // accessibility-driven override of a global theme decision.
+  // Linters generally allow `!important` for accessibility fixes;
+  // no other place in the dashboard chrome uses `!important`.
+  //
+  // The direct `color` declaration cascades into the inner
+  // `.mdc-button__label` span automatically via standard `color`
+  // inheritance — no separate rule needed for the label.
+  // (The cascade-into-label was attempted with `color: inherit !important`
+  // on `.mdc-button__label` in an earlier iteration, but the inner
+  // selector failed to match at all because Angular's view-encapsulation
+  // attribute selector `[_ngcontent-ng-cXXX]` couldn't pierce
+  // Material's component subtree. The simpler approach — overriding
+  // the host `color` and relying on inheritance — works because the
+  // label has NO explicit color rule of its own.)
+  &.mat-primary {
+    color: var(--mat-sys-on-surface, #1d1b20) !important;
+  }
+
+  // Ion-icon color override — the icon inherits the FAB foreground
+  // via `currentColor` so the same WCAG-AA-compliant on-surface dark
+  // text color applies. Without this, the ion-icon would render in
+  // its own default color (typically inherited from the document
+  // root) instead of the FAB's foreground color, producing a visual
+  // contrast mismatch within the same button.
+  ion-icon {
+    color: var(--mat-sys-on-surface, #1d1b20);
+  }
 }

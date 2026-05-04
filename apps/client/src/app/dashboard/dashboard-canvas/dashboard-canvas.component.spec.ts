@@ -347,6 +347,15 @@ describe('GfDashboardCanvasComponent', () => {
   let layoutGetSpy: jest.Mock<Observable<LayoutData | null>>;
   let bindSpy: jest.Mock<void, [PersistenceBindingArg, DestroyRef]>;
   let unbindSpy: jest.Mock<void>;
+  // Subject backing the mocked `LayoutPersistenceService.saveOutcome$`
+  // public Observable. The SUT subscribes to this stream in `ngOnInit`
+  // to drive the success/failure snack-bar surface (per AAP § 0.5.2 and
+  // QA Checkpoint 8 Issue #11). A fresh Subject per test prevents
+  // emission leakage; tests that need to assert snack-bar behavior
+  // can drive emissions deterministically via
+  // `saveOutcomeSubject.next('success')` etc. without depending on
+  // the real persistence pipeline.
+  let saveOutcomeSubject: Subject<'success' | 'failure'>;
   let openCatalogSpy: jest.SpyInstance;
   let fakeRegistry: FakeModuleRegistryService;
 
@@ -366,8 +375,17 @@ describe('GfDashboardCanvasComponent', () => {
     // tests can verify the `bind` call signature without exercising the
     // real 500 ms debounce + switchMap pipeline (covered by
     // `layout-persistence.service.spec.ts`).
+    //
+    // We also expose a Subject-backed `saveOutcome$` Observable so
+    // the SUT's snack-bar subscription (added per AAP § 0.5.2 and
+    // QA Checkpoint 8 Issue #11) does not throw on injection. The
+    // Subject is fresh per test to prevent emission leakage; tests
+    // that need to verify snack-bar behavior can call
+    // `saveOutcomeSubject.next('success' | 'failure')` to drive the
+    // SUT's subscription deterministically.
     bindSpy = jest.fn<void, [PersistenceBindingArg, DestroyRef]>();
     unbindSpy = jest.fn<void, []>();
+    saveOutcomeSubject = new Subject<'success' | 'failure'>();
 
     // ---- Fake ModuleRegistryService -----------------------------------
     // The SUT looks up descriptors via `moduleRegistry.getByName(...)`
@@ -390,7 +408,18 @@ describe('GfDashboardCanvasComponent', () => {
         },
         {
           provide: LayoutPersistenceService,
-          useValue: { bind: bindSpy, unbind: unbindSpy }
+          useValue: {
+            bind: bindSpy,
+            // The mocked `saveOutcome$` is the Subject's public
+            // Observable projection — same semantic as the
+            // production service which exposes the Subject via
+            // `.asObservable()` to prevent external `.next(...)`
+            // calls. Tests that need to drive emissions use
+            // `saveOutcomeSubject.next(...)` directly (the test has
+            // privileged access to the underlying Subject).
+            saveOutcome$: saveOutcomeSubject.asObservable(),
+            unbind: unbindSpy
+          }
         },
         {
           provide: ModuleRegistryService,
@@ -436,6 +465,11 @@ describe('GfDashboardCanvasComponent', () => {
     // explicit completion in `afterEach` belt-and-suspenders against
     // any test that errored mid-emission.
     userDashboardLayoutSubject.complete();
+    // Symmetric cleanup for the saveOutcome subject — the SUT
+    // subscribes to it in `ngOnInit` (per AAP § 0.5.2 / QA
+    // Checkpoint 8 Issue #11), so an uncompleted subject would leak
+    // an active subscription across tests.
+    saveOutcomeSubject.complete();
     jest.clearAllMocks();
     jest.restoreAllMocks();
   });

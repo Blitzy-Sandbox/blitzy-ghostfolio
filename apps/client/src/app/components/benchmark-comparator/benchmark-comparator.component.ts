@@ -19,6 +19,7 @@ import { GfPremiumIndicatorComponent } from '@ghostfolio/ui/premium-indicator';
 
 import { CommonModule } from '@angular/common';
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
   type ElementRef,
@@ -67,7 +68,9 @@ import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
   styleUrls: ['./benchmark-comparator.component.scss'],
   templateUrl: './benchmark-comparator.component.html'
 })
-export class GfBenchmarkComparatorComponent implements OnChanges, OnDestroy {
+export class GfBenchmarkComparatorComponent
+  implements AfterViewInit, OnChanges, OnDestroy
+{
   @Input() benchmark: Partial<SymbolProfile>;
   @Input() benchmarkDataItems: LineChartItem[] = [];
   @Input() benchmarks: Partial<SymbolProfile>[];
@@ -100,6 +103,39 @@ export class GfBenchmarkComparatorComponent implements OnChanges, OnDestroy {
     registerChartConfiguration();
 
     addIcons({ arrowForwardOutline });
+  }
+
+  public ngAfterViewInit() {
+    // The chart cannot be created in `ngOnChanges` when this component is
+    // first mounted with @Input() values already populated, because
+    // Angular calls `ngOnChanges` BEFORE `ngAfterViewInit`. At that
+    // point, `this.chartCanvas` (a `@ViewChild('chartCanvas')`) is
+    // `undefined`, so the guard `if (this.chartCanvas)` inside
+    // `initialize()` short-circuits and the chart is never instantiated.
+    //
+    // This pattern manifested as QA Checkpoint 8 Issues #5 and #7's
+    // residual symptom on the dashboard's Analysis module: even after
+    // the original Chart.js plugin registration TypeError was resolved,
+    // the benchmark-comparator canvas remained at the default 300×150
+    // size with zero rendered pixels because
+    // `<gf-benchmark-comparator>` is created inside the analysis-module
+    // template's `@if (performance() && user())` block — meaning the
+    // child component is only instantiated AFTER its parent's data
+    // signals are populated. By that time, the @Input() bindings are
+    // already populated (`performanceDataItems = ` 450 items), so the
+    // first (and only) `ngOnChanges` fires synchronously with the
+    // populated inputs but the View hasn't yet been initialized —
+    // meaning `chartCanvas` is undefined. No subsequent `ngOnChanges`
+    // fires (the data is stable), so the chart never initializes.
+    //
+    // Adding `ngAfterViewInit` as a fallback ensures `initialize()` is
+    // called once the View is ready and `chartCanvas` is resolved.
+    // The mirror sibling fix lives in
+    // `apps/client/src/app/components/investment-chart/
+    // investment-chart.component.ts`.
+    if (this.performanceDataItems && !this.chart) {
+      this.initialize();
+    }
   }
 
   public ngOnChanges() {
@@ -178,7 +214,22 @@ export class GfBenchmarkComparatorComponent implements OnChanges, OnDestroy {
               }
             },
             interaction: { intersect: false, mode: 'index' },
-            maintainAspectRatio: true,
+            // `maintainAspectRatio: false` lets Chart.js scale the
+            // canvas to its container's exact width AND height
+            // independently, instead of preserving an intrinsic
+            // aspect ratio (the previous `true` value combined with
+            // the SCSS `aspect-ratio: 16/9` on `.chart-container`
+            // caused the canvas to overflow its parent by ~63 px when
+            // mounted inside the dashboard's Analysis module at the
+            // 8 × 4 default size — QA Checkpoint 8 Issue #8). The
+            // SCSS still sets `aspect-ratio: 16/9` on the container,
+            // but with `maintainAspectRatio: false` Chart.js no
+            // longer adds its own width/height enforcement on top of
+            // that — eliminating the overflow. The container
+            // dimensions remain correct in both the dashboard
+            // (constrained-width) and original (full-width) mount
+            // contexts.
+            maintainAspectRatio: false,
             plugins: {
               annotation: {
                 annotations: {
