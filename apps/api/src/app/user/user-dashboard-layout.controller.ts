@@ -67,37 +67,31 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * executes — the controller never sees a structurally-invalid payload).
  *
  * OBSERVABILITY (AAP § 0.6.1.10 + § 0.8.2.1 — correlation-id propagation):
- * Both endpoints generate a fresh per-request correlation id at the
- * controller boundary via `node:crypto.randomUUID()` (RFC 4122 v4) and
- * surface it as the `X-Correlation-ID` HTTP response header. The header
- * is set BEFORE the service call so it is emitted on BOTH the success
- * path (HTTP 200) AND the error paths reachable via the controller
- * method body (HTTP 404 `NotFoundException`, HTTP 500 service errors)
- * — Express preserves headers set before a thrown exception. The same
- * correlation id is forwarded to the service so structured logs and
- * Prometheus metrics emitted by `UserDashboardLayoutService` share it
- * for end-to-end traceability across the controller / service /
- * Prisma boundary. `@Res({ passthrough: true })` keeps NestJS in
- * charge of body serialization while still allowing the controller
- * to write the header.
+ * The `X-Correlation-ID` HTTP response header is emitted on EVERY response
+ * from `/api/v1/user/layout*` — including HTTP 200 success, HTTP 404
+ * `NotFoundException`, AND the upstream short-circuit paths HTTP 400
+ * (validation), HTTP 401 (auth), HTTP 403 (permission). The id is minted by
+ * an Express middleware registered in `apps/api/src/main.ts` that runs
+ * BEFORE NestJS guards/pipes, so even when the request is rejected before
+ * this controller's method body executes, the header is still set on the
+ * response. The middleware ALSO honors a caller-supplied `X-Correlation-ID`
+ * request header so that distributed-tracing systems can propagate end-to-
+ * end ids through the NestJS layer rather than having the server overwrite
+ * them. The middleware stashes the correlationId on `request.correlationId`,
+ * which the controller methods read here and forward to
+ * `UserDashboardLayoutService` so structured logs and Prometheus metrics
+ * share the same canonical id end-to-end. The `??` fallback to a fresh
+ * `randomUUID()` preserves unit-test compatibility — synthetic request
+ * objects built directly in `*.spec.ts` files do not traverse the
+ * middleware. `@Res({ passthrough: true })` keeps NestJS in charge of body
+ * serialization while still allowing the controller to write the header
+ * defensively (idempotent for the middleware's value).
  *
- * **Known limitation — HTTP 400 (DTO validation errors)**: NestJS's
- * global `ValidationPipe` runs BEFORE the controller method body
- * executes — when an incoming PATCH body fails class-validator (e.g.,
- * missing `layoutData`, `cols < 2`, `x + cols > 12`), the framework
- * short-circuits the request with HTTP 400 `BadRequestException`
- * before `randomUUID()` and `response.setHeader('X-Correlation-ID',
- * ...)` ever run. Therefore the X-Correlation-ID header is NOT
- * emitted on validation-error 400 responses. Requests rejected by
- * the upstream `AuthGuard('jwt')` (HTTP 401) and `HasPermissionGuard`
- * (HTTP 403) likewise short-circuit before the controller body and
- * therefore also do not carry the header. Operators troubleshooting
- * 400/401/403 responses MUST correlate via the global request
- * logger's request-id (e.g., the access log's per-request id) rather
- * than via this header. Promoting the correlation-id generation to a
- * NestJS interceptor that runs ahead of `ValidationPipe` would close
- * this gap; that is recorded as a future enhancement (out of scope
- * for the v1 dashboard refactor).
+ * **Resolves QA Checkpoint 9 finding AAP-Compliance #11** — previously the
+ * `X-Correlation-ID` header was missing from 401 / 403 / 400 responses
+ * because correlation-id generation happened inside the controller body,
+ * which guards/pipes short-circuited. Promoting the generation to an
+ * Express middleware fixed the gap.
  *
  * IDEMPOTENCY (AAP § 0.8.1.4 — Decision D-019): The service method
  * `upsertForUser(...)` uses `prisma.userDashboardLayout.upsert(...)`
@@ -142,12 +136,19 @@ export class UserDashboardLayoutController {
    * `this.request.user.id` (JWT-derived). It is NEVER read from the
    * request body, query string, or route parameter.
    *
-   * Observability (AAP § 0.6.1.10): a fresh per-request correlation id
-   * is emitted as the `X-Correlation-ID` response header BEFORE the
-   * service call, so the header is also emitted on the 404 path
-   * (Express preserves headers set before a thrown exception). The same
-   * id is forwarded to the service so structured logs and Prometheus
-   * metrics emitted during the read share it.
+   * Observability (AAP § 0.6.1.10): the per-request correlation id is
+   * READ from `this.request.correlationId` (set by the Express middleware
+   * registered in `main.ts` for `/api/v1/user/layout*` routes — see the
+   * class-level JSDoc above), then re-asserted as the `X-Correlation-ID`
+   * response header (idempotent if the middleware already set the same
+   * value), and forwarded to the service so structured logs and Prometheus
+   * metrics emitted during the read share it. A fresh `randomUUID()`
+   * fallback applies in unit tests where the middleware does not run.
+   *
+   * 404 message contract (QA Checkpoint 9 finding 1.5.3): the user-facing
+   * 404 BODY carries a generic message ("No layout found"); the userId
+   * appears only in server-side structured logs at WARN level for
+   * support diagnostics, never in the response body.
    *
    * @param response Express response, passthrough-injected for header
    *                 decoration only.
@@ -161,7 +162,20 @@ export class UserDashboardLayoutController {
   public async findOne(
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
+    // Resolve the correlationId. The Express middleware registered in
+    // `apps/api/src/main.ts` for `/api/v1/user/layout*` requests has
+    // already minted a correlationId, attached it as the `X-Correlation-ID`
+    // response header, and stashed it on the request object — including
+    // for the upstream 401 / 403 / 400 short-circuit paths that NEVER
+    // reach this controller body. We REUSE that id here so structured
+    // logs from this method, the service layer, and the response header
+    // all share a single canonical value. The `??` fallback to a fresh
+    // `randomUUID()` keeps unit tests passing — the spec builds a
+    // synthetic `request` object that does not go through the middleware
+    // pipeline. Resolves QA Checkpoint 9 finding AAP-Compliance #11.
+    const correlationId =
+      (this.request as unknown as { correlationId?: string }).correlationId ??
+      randomUUID();
     response.setHeader('X-Correlation-ID', correlationId);
 
     const userId = this.request.user.id;
@@ -171,7 +185,15 @@ export class UserDashboardLayoutController {
     );
 
     if (!layout) {
-      throw new NotFoundException(`No layout found for user ${userId}`);
+      // Resolves QA Checkpoint 9 finding 1.5.3 (INFO) — "404 response
+      // includes own userId". The 404 BODY now carries a generic message
+      // ("No layout found"); operator traceability is preserved through
+      // (a) the `X-Correlation-ID` response header (set BEFORE this
+      // throw), and (b) the service-layer structured log that does
+      // include the userId at WARN level for support diagnostics. This
+      // keeps the user-facing response free of any per-user identifier
+      // while leaving full operator-side observability intact.
+      throw new NotFoundException('No layout found');
     }
 
     return layout;
@@ -211,18 +233,18 @@ export class UserDashboardLayoutController {
    * must safely absorb the deduplicated bursts without producing
    * duplicate rows.
    *
-   * Observability (AAP § 0.6.1.10): a fresh per-request correlation id
-   * is emitted as the `X-Correlation-ID` response header BEFORE the
-   * service call, so the header is emitted on the 200 success path
-   * AND on HTTP 500 service errors thrown after `setHeader` runs
-   * (Express preserves headers set before a thrown exception). The
-   * header is NOT emitted on HTTP 400 validation errors because
-   * NestJS's global `ValidationPipe` short-circuits the request
-   * before this method body executes (see the class-level JSDoc's
-   * "Known limitation" section for the full propagation matrix and
-   * the operator-facing remediation guidance). The same id is
-   * forwarded to the service so structured logs and Prometheus
-   * metrics emitted during the upsert share it.
+   * Observability (AAP § 0.6.1.10): the per-request correlation id is
+   * READ from `this.request.correlationId` (set by the Express middleware
+   * registered in `main.ts` for `/api/v1/user/layout*` routes — see the
+   * class-level JSDoc above), then re-asserted as the `X-Correlation-ID`
+   * response header (idempotent), and forwarded to the service so
+   * structured logs and Prometheus metrics emitted during the upsert
+   * share it. The middleware ensures the header is emitted on EVERY
+   * response — including HTTP 400 validation errors that NestJS's
+   * global `ValidationPipe` short-circuits before this method body
+   * runs — which fixes the previously-documented gap. A fresh
+   * `randomUUID()` fallback applies in unit tests where the middleware
+   * does not run.
    *
    * @param dto      Validated request body containing the
    *                 `LayoutDataPayload` payload.
@@ -238,7 +260,17 @@ export class UserDashboardLayoutController {
     @Body() dto: UpdateDashboardLayoutDto,
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
+    // See the GET handler's correlationId comment for the full rationale —
+    // the Express middleware in `main.ts` already minted, header-wrote,
+    // and stashed a correlationId for `/api/v1/user/layout*` requests
+    // (including 400 validation-error responses that NestJS's global
+    // ValidationPipe short-circuits before this method runs). We reuse
+    // the middleware-supplied id when present so logs, headers, and
+    // metrics all share one canonical value. The `??` fallback to a
+    // fresh `randomUUID()` preserves unit-test compatibility.
+    const correlationId =
+      (this.request as unknown as { correlationId?: string }).correlationId ??
+      randomUUID();
     response.setHeader('X-Correlation-ID', correlationId);
 
     // The `LayoutDataPayload` class instance is structurally a JSON-

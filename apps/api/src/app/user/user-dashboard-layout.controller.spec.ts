@@ -260,16 +260,23 @@ describe('UserDashboardLayoutController', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3 — GET 404 message references the userId (operator traceability)
+  // Test 3 — GET 404 message is generic (no userId in response body)
+  //          (QA Checkpoint 9 finding 1.5.3 — Information Disclosure)
   // -------------------------------------------------------------------------
 
-  it('returns HTTP 404 message identifying the user when no layout exists', async () => {
-    // The 404 message intentionally references the userId (no PII beyond
-    // what the JWT already authenticated) so operators can trace the
-    // miss in logs without exposing other users' data. Verifying the
-    // message content (rather than just the exception type) defends
-    // against a regression that drops the userId from the message — which
-    // would degrade the operator experience for first-visit user support.
+  it('returns a generic HTTP 404 message that does NOT include the userId', async () => {
+    // Per QA Checkpoint 9 finding 1.5.3 (INFO — "404 response includes own
+    // userId"), the 404 RESPONSE BODY must NOT include the user identifier.
+    // Operator traceability is preserved through (a) the X-Correlation-ID
+    // response header (set BEFORE the throw — verified by Tests 5–7), and
+    // (b) the service-layer structured log that DOES include the userId at
+    // WARN level for support diagnostics.
+    //
+    // Even though `userId` is the JWT-derived caller's own id (not another
+    // user's), excluding it from the response body is a defensive minimization
+    // — the body should never echo back identity attributes that the caller
+    // could already retrieve from their own JWT, lest a future template
+    // change inadvertently leak more than intended.
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
 
     try {
@@ -280,7 +287,10 @@ describe('UserDashboardLayoutController', () => {
       expect((error as NotFoundException).getStatus()).toBe(
         HttpStatus.NOT_FOUND
       );
-      expect((error as Error).message).toContain(USER_1_ID);
+      // The response body contains the generic message and does NOT
+      // include the user id.
+      expect((error as Error).message).toBe('No layout found');
+      expect((error as Error).message).not.toContain(USER_1_ID);
     }
   });
 
@@ -443,6 +453,60 @@ describe('UserDashboardLayoutController', () => {
     const firstId = firstResponse.setHeader.mock.calls[0][1] as string;
     const secondId = secondResponse.setHeader.mock.calls[0][1] as string;
     expect(firstId).not.toBe(secondId);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 7b — Middleware-supplied correlationId is reused (not regenerated)
+  //           (QA Checkpoint 9 finding AAP-Compliance #11 — X-Correlation-ID
+  //            propagation across upstream guard / pipe short-circuits)
+  // -------------------------------------------------------------------------
+
+  it('reuses request.correlationId set by Express middleware (QA Checkpoint 9 AAP-Compliance #11)', async () => {
+    // The Express middleware registered in `apps/api/src/main.ts` for
+    // `/api/v1/user/layout*` mints a correlationId BEFORE NestJS guards/
+    // pipes run, sets the X-Correlation-ID response header AND stashes
+    // the id on `request.correlationId`. The controller MUST READ from
+    // `request.correlationId` (rather than generating a new one) so the
+    // server's logs, metrics, and response header all share the SAME
+    // canonical id end-to-end. This regression test simulates the
+    // middleware by seeding `request.correlationId` and verifies the
+    // controller uses that exact value.
+    //
+    // The fallback path (request.correlationId undefined → fresh
+    // randomUUID()) is verified by Tests 5–7 which build synthetic
+    // request objects without going through the middleware.
+    const middlewareSuppliedId = '11111111-2222-4333-8444-555555555555';
+    (request as unknown as { correlationId?: string }).correlationId =
+      middlewareSuppliedId;
+    const persistedRecord: UserDashboardLayout = {
+      userId: USER_1_ID,
+      layoutData: VALID_DTO.layoutData as any,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    userDashboardLayoutService.findByUserId.mockResolvedValueOnce(
+      persistedRecord
+    );
+    const httpResponse = buildMockResponse();
+
+    await controller.findOne(httpResponse);
+
+    // The controller forwarded the middleware-supplied id to the service
+    // for end-to-end log correlation.
+    expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
+      USER_1_ID,
+      middlewareSuppliedId
+    );
+
+    // The controller (idempotently) re-asserts the SAME id on the
+    // response — defensive write so the header is still set even if the
+    // middleware is ever bypassed (e.g., a future deployment topology
+    // change), but the value matches the middleware's value when both
+    // are present.
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      middlewareSuppliedId
+    );
   });
 
   // -------------------------------------------------------------------------

@@ -145,6 +145,36 @@ const SUPPORTED_LAYOUT_VERSIONS = [1] as const;
 const GRID_COLUMN_COUNT = 12;
 
 /**
+ * Defensive upper bound for the `y` (row origin) field of a layout item.
+ *
+ * Resolves QA Checkpoint 9 finding 1.5.2 (INFO): "y-coordinate has no upper
+ * bound — silent precision loss for values > Number.MAX_SAFE_INTEGER".
+ *
+ * The grid is conceptually unbounded vertically (`fixedRowHeight` × N rows
+ * scrolled), but a malicious or buggy client could submit `y: 99999999999999999999`
+ * which JavaScript coerces to `100000000000000000000` (precision loss); the
+ * upserted value would then drift silently across the JS / PostgreSQL JSONB
+ * boundary. Capping at a generous but finite value (1000 rows) guarantees:
+ *
+ *   1. The persisted integer never crosses `Number.MAX_SAFE_INTEGER`
+ *      (`2^53 - 1 ≈ 9.0 × 10^15`), so round-trip JSON parsing is precise.
+ *   2. Any legitimate dashboard composition is unaffected — at the
+ *      `fixedRowHeight: 64px` configured in `dashboard-canvas.component.ts`,
+ *      a y-origin of 1000 corresponds to 64,000 px (≈ 53 standard 1200-px
+ *      browser viewports), far beyond any practical user-composed canvas.
+ *   3. Adversarial payloads attempting precision-loss attacks are rejected
+ *      at the DTO boundary with HTTP 400 BEFORE the persistence layer.
+ *
+ * The chosen ceiling is intentionally LARGER than any plausible legitimate
+ * layout to avoid breaking the rare power-user with a tall canvas, while
+ * still defeating the specific QA-discovered attack vector. If a future
+ * use-case demands a taller canvas, raising this constant in lock-step is
+ * a one-line change with zero ripple effects (the constraint is purely a
+ * ceiling — increasing it does not invalidate any persisted layouts).
+ */
+const GRID_ROW_MAX = 1000;
+
+/**
  * Minimum cell extent (cols and rows) per layout item. Per AAP § 0.1.2,
  * "minimum module size 2×2 cells" — enforced at the grid-engine level via
  * angular-gridster2's `minItemCols: 2` and `minItemRows: 2` config, AND
@@ -248,7 +278,11 @@ function IsWithinGridWidth(validationOptions?: ValidationOptions) {
  *     - `cols` additionally ≤ 12 (full grid width).
  *     - `rows` has no upper bound (canvas is vertically scrollable).
  *   - `x`: column origin in [0, 11] (12-column grid).
- *   - `y`: row origin ≥ 0.
+ *   - `y`: row origin in [0, {@link GRID_ROW_MAX}]. The upper bound is a
+ *     defense-in-depth ceiling against precision-loss attacks (see the
+ *     {@link GRID_ROW_MAX} JSDoc for the full rationale and QA finding cross-
+ *     reference). Far above any plausible layout, well below
+ *     `Number.MAX_SAFE_INTEGER`.
  *   - Cross-field: `x + cols ≤ 12` (the item must fit horizontally within
  *     the 12-column grid). Enforced at this DTO layer by the custom
  *     {@link IsWithinGridWidth} decorator on `cols` per AAP § 0.6.1.7 and
@@ -279,6 +313,7 @@ export class LayoutItemDto {
 
   @IsInt()
   @Min(0)
+  @Max(GRID_ROW_MAX)
   y: number;
 }
 
