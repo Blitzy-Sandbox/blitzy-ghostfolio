@@ -1,0 +1,16 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: blitzy-ghostfolio
+  description: Open Source Wealth Management Software. Angular + NestJS + Prisma +
+    Nx + TypeScript 🤍Blitzy fok -
+  tags: []
+  annotations:
+    github.com/project-slug: Blitzy-Sandbox/blitzy-ghostfolio
+    backstage.io/source-location: url:https://github.com/Blitzy-Sandbox/blitzy-ghostfolio/tree/main/
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: service
+  lifecycle: production
+  owner: blitzy-sandbox
+  system: blitzy-sandbox-projects
