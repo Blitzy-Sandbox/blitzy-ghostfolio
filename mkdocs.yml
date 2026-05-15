@@ -1,0 +1,15 @@
+site_name: blitzy-ghostfolio
+site_description: Open source wealth management software (Ghostfolio fork)
+
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Overview: overview.md
+
+plugins:
+  - techdocs-core
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
