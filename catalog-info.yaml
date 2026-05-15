@@ -5,6 +5,7 @@ metadata:
   description: Open Source Wealth Management Software. Angular + NestJS + Prisma +
     Nx + TypeScript 🤍Blitzy fok -
   tags:
+  - typescript
   - ai
   - new-feature
   annotations:
