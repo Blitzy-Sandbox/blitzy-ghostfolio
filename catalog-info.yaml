@@ -5,9 +5,10 @@ metadata:
   description: Open Source Wealth Management Software. Angular + NestJS + Prisma +
     Nx + TypeScript 🤍Blitzy fok -
   tags:
-  - typescript
   - ai
   - new-feature
+  - typescript
+  - web-app
   annotations:
     github.com/project-slug: Blitzy-Sandbox/blitzy-ghostfolio
     backstage.io/source-location: url:https://github.com/Blitzy-Sandbox/blitzy-ghostfolio/tree/main/
