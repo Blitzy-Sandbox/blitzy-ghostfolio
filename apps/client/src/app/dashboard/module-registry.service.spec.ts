@@ -228,6 +228,15 @@ describe('ModuleRegistryService', () => {
     service = TestBed.inject(ModuleRegistryService);
   });
 
+  // Reset Jest mock state between tests so any captured call/instance history
+  // never leaks across test cases. The twelve wrapper modules are replaced via
+  // `jest.mock` module factories (not `jest.fn` spies), so this is primarily a
+  // defensive guard that keeps the suite hermetic; it also mirrors the
+  // established `chat-panel.component.spec.ts` convention.
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('should be created', () => {
     expect(service).toBeTruthy();
   });
