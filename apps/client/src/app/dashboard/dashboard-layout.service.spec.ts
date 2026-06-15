@@ -231,6 +231,27 @@ describe('DashboardLayoutService', () => {
 
       consoleErrorSpy.mockRestore();
     }));
+
+    it('should send only { layoutData } in the PATCH body', fakeAsync(() => {
+      const payload = buildPayload('body-shape');
+      service.queueSave(payload);
+
+      tick(500);
+
+      const req = httpMock.expectOne(LAYOUT_URL);
+
+      expect(req.request.method).toBe('PATCH');
+      // The wire payload is a `UserDashboardLayoutPatchPayload`: exactly the
+      // `layoutData` key. Server-controlled fields are never sent — `userId`
+      // is read from the JWT and `createdAt`/`updatedAt` are maintained by
+      // Prisma's `@default(now())` / `@updatedAt` directives.
+      expect(req.request.body).toEqual(payload);
+      expect(req.request.body).not.toHaveProperty('userId');
+      expect(req.request.body).not.toHaveProperty('createdAt');
+      expect(req.request.body).not.toHaveProperty('updatedAt');
+
+      req.flush(mockLayout);
+    }));
   });
 
   describe('public API surface', () => {
