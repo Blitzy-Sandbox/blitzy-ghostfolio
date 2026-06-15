@@ -1,3 +1,16 @@
+import '@angular/localize/init';
+
+// `@angular/localize/init` is intentionally the VERY FIRST statement in this
+// file so that the global `$localize` function is installed before any other
+// module is imported and evaluated. The `dashboard-canvas.component.html`
+// template carries `i18n` attributes (the "Add module" button label and
+// tooltip, the canvas `aria-label`) which the Angular compiler lowers to
+// `$localize` tagged-template calls, so any module evaluating localized code at
+// load time would throw `ReferenceError: $localize is not defined` if
+// `$localize` were not installed first. A scoped Prettier override
+// (`importOrderSideEffects: false` for this spec in `.prettierrc`) pins this
+// side-effect import at the top instead of letting
+// `@trivago/prettier-plugin-sort-imports` fold it into the `@angular` group.
 import { DashboardLayoutService } from '@ghostfolio/client/dashboard/dashboard-layout.service';
 import {
   DashboardItem,
@@ -8,14 +21,6 @@ import { UserDashboardLayout } from '@ghostfolio/common/interfaces';
 
 import { NO_ERRORS_SCHEMA } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-// Initializes the global `$localize` function used by Angular i18n at runtime.
-// The `dashboard-canvas.component.html` template carries `i18n` attributes (the
-// "Add module" button label and tooltip, the canvas `aria-label`) which the
-// Angular compiler lowers to `$localize` tagged-template calls. Without this
-// side-effect import the component would throw `ReferenceError: $localize is
-// not defined` whenever the template is created. Placed in the `@angular`
-// import group exactly as the sibling `module-catalog.component.spec.ts` does.
-import '@angular/localize/init';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { Gridster, GridsterItem } from 'angular-gridster2';
 import { of } from 'rxjs';
@@ -90,12 +95,46 @@ function buildDragEvent(key: string | null) {
   };
 }
 
+// jsdom (the Jest DOM environment) does not implement `ResizeObserver`, which
+// `angular-gridster2` instantiates as soon as its `<gridster>` element is
+// created. These unit tests deliberately remove the real `Gridster` /
+// `GridsterItem` components from the component's `imports` (see the
+// `TestBed.overrideComponent` call in `beforeEach`), so the polyfill is not
+// strictly required by the current assertions. It is installed before any
+// TestBed setup nonetheless (see the `beforeAll` below) so that a future test
+// which renders the live template — or any transitive code path that touches
+// `ResizeObserver` — does not throw `ReferenceError: ResizeObserver is not
+// defined`.
+class ResizeObserverStub {
+  public disconnect(): void {
+    // Intentionally empty: the stub fulfils the `ResizeObserver` contract
+    // without performing any DOM measurement (jsdom has no layout engine).
+  }
+
+  public observe(): void {
+    // Intentionally empty (see `disconnect`).
+  }
+
+  public unobserve(): void {
+    // Intentionally empty (see `disconnect`).
+  }
+}
+
 describe('GfDashboardCanvasComponent', () => {
   let component: GfDashboardCanvasComponent;
   let fixture: ComponentFixture<GfDashboardCanvasComponent>;
   let getSpy: jest.Mock;
   let queueSaveSpy: jest.Mock;
   let registryGetSpy: jest.Mock;
+
+  beforeAll(() => {
+    // Install the ResizeObserver polyfill BEFORE any TestBed setup so the test
+    // DOM environment satisfies any code path that constructs a
+    // `ResizeObserver` (only installed when the environment lacks one).
+    (
+      globalThis as unknown as { ResizeObserver?: typeof ResizeObserverStub }
+    ).ResizeObserver ??= ResizeObserverStub;
+  });
 
   beforeEach(async () => {
     // Default: first-visit (no saved layout). Individual tests override the

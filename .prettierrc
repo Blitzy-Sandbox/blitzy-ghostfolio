@@ -23,6 +23,12 @@
       "options": {
         "importOrderParserPlugins": ["decorators-legacy", "typescript"]
       }
+    },
+    {
+      "files": "**/dashboard-canvas/dashboard-canvas.component.spec.ts",
+      "options": {
+        "importOrderSideEffects": false
+      }
     }
   ],
   "plugins": [
