@@ -1,0 +1,104 @@
+// Material Design 3 token discipline (Decision D-020).
+//
+// The Ghostfolio host theme is built with `mat.all-component-themes()` rather
+// than `mat.theme()`, so the `--mat-sys-*` system custom properties are NOT
+// emitted at runtime. Every `var(--mat-sys-*, <fallback>)` reference below
+// therefore renders its FALLBACK, which makes each hardcoded fallback mandatory
+// and load-bearing; a bare `--mat-sys-*` without a fallback is prohibited.
+//
+// The fallbacks mirror `chat-panel.component.scss`, mapping brand surfaces to
+// Ghostfolio's cyan-teal palette (rgb(0, 161, 159) light, rgb(71, 219, 215)
+// dark) instead of Material's default Indigo, so the catalog inherits the
+// existing brand identity.
+
+// The host adds no box of its own; the fixed `.catalog-container` (the
+// `mat-sidenav-container`) owns positioning and overlays the viewport.
+:host {
+  display: contents;
+}
+
+// The sidenav container is pinned to the full viewport so the `over`-mode
+// drawer and its backdrop float above the dashboard canvas.
+.catalog-container {
+  bottom: 0;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 5;
+}
+
+// The catalog panel surface — this class is applied to the `<mat-sidenav>`.
+.catalog-panel {
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  box-sizing: border-box;
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  width: 20rem;
+}
+
+.catalog-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.catalog-title {
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.catalog-search {
+  width: 100%;
+}
+
+.catalog-list {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+// Hover affordance for each registered-module row in the catalog list.
+.catalog-item:hover {
+  background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+}
+
+.catalog-empty {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-size: 0.875rem;
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+// Dark-theme overrides mirror the chat-panel dark block: the SAME token names
+// with dark-mode fallbacks. `.theme-dark` is toggled on `document.body`, so
+// `:host-context(.theme-dark)` activates these declarations.
+:host-context(.theme-dark) {
+  .catalog-panel {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .catalog-title {
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .catalog-item:hover {
+    background-color: var(
+      --mat-sys-primary-container,
+      rgba(71, 219, 215, 0.16)
+    );
+  }
+
+  .catalog-empty {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+}
