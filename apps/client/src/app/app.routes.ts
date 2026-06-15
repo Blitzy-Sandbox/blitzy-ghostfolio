@@ -6,6 +6,13 @@ import { AuthGuard } from './core/auth.guard';
 
 export const routes: Routes = [
   {
+    loadComponent: () =>
+      import('./dashboard/dashboard-canvas/dashboard-canvas.component').then(
+        (m) => m.GfDashboardCanvasComponent
+      ),
+    path: ''
+  },
+  {
     path: publicRoutes.about.path,
     loadChildren: () =>
       import('./pages/about/about-page.routes').then((m) => m.routes)
@@ -70,11 +77,6 @@ export const routes: Routes = [
     title: publicRoutes.features.title
   },
   {
-    path: internalRoutes.home.path,
-    loadChildren: () =>
-      import('./pages/home/home-page.routes').then((m) => m.routes)
-  },
-  {
     canActivate: [AuthGuard],
     loadComponent: () =>
       import('./pages/i18n/i18n-page.component').then(
@@ -92,11 +94,6 @@ export const routes: Routes = [
     path: publicRoutes.openStartup.path,
     loadChildren: () =>
       import('./pages/open/open-page.routes').then((m) => m.routes)
-  },
-  {
-    path: internalRoutes.portfolio.path,
-    loadChildren: () =>
-      import('./pages/portfolio/portfolio-page.routes').then((m) => m.routes)
   },
   {
     path: publicRoutes.pricing.path,
@@ -140,7 +137,7 @@ export const routes: Routes = [
     // wildcard, if requested url doesn't match any paths for routes defined
     // earlier
     path: '**',
-    redirectTo: 'home',
+    redirectTo: '',
     pathMatch: 'full'
   }
 ];
