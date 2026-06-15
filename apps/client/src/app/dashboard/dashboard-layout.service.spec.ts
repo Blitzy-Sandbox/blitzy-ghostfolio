@@ -196,6 +196,41 @@ describe('DashboardLayoutService', () => {
       expect(secondRequest.request.body).toEqual(secondPayload);
       secondRequest.flush(mockLayout);
     }));
+
+    it('should keep persisting after a failed PATCH (stream must not terminate)', fakeAsync(() => {
+      // The failed PATCH logs via console.error; silence + assert it so the
+      // test output stays clean while still verifying the failure is surfaced.
+      const consoleErrorSpy = jest
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+
+      // First window: the PATCH fails with HTTP 500. The inner `catchError`
+      // must swallow it (returning EMPTY) so the long-lived `persist$`
+      // subscription is NOT errored/terminated.
+      service.queueSave(buildPayload('will-fail'));
+      tick(500);
+      const failingRequest = httpMock.expectOne(LAYOUT_URL);
+      failingRequest.flush('Server error', {
+        status: 500,
+        statusText: 'Internal Server Error'
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalled();
+
+      // Second window: a later save must STILL issue a PATCH. Before the fix
+      // this request was never produced because the errored stream had
+      // permanently terminated, silently stopping all future persistence.
+      const recoveryPayload = buildPayload('after-failure');
+      service.queueSave(recoveryPayload);
+      tick(500);
+      const recoveryRequest = httpMock.expectOne(LAYOUT_URL);
+
+      expect(recoveryRequest.request.method).toBe('PATCH');
+      expect(recoveryRequest.request.body).toEqual(recoveryPayload);
+      recoveryRequest.flush(mockLayout);
+
+      consoleErrorSpy.mockRestore();
+    }));
   });
 
   describe('public API surface', () => {

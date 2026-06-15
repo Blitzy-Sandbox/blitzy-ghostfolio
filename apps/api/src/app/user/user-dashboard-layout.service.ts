@@ -1,7 +1,7 @@
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, UserDashboardLayout } from '@prisma/client';
+import type { Prisma, UserDashboardLayout } from '@prisma/client';
 
 import { UpdateUserDashboardLayoutDto } from './dtos/update-user-dashboard-layout.dto';
 

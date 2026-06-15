@@ -80,6 +80,8 @@ import { DeviceDetectorService } from 'ngx-device-detector';
       <div class="gf-module-header gf-module-drag-handle">
         <span class="gf-module-title" i18n>Portfolio Summary</span>
         <button
+          aria-label="Remove Portfolio Summary module"
+          i18n-aria-label
           i18n-matTooltip
           mat-icon-button
           matTooltip="Remove module"

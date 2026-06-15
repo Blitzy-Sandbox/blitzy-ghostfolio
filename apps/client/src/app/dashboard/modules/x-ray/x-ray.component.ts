@@ -89,6 +89,8 @@ import { MatTooltipModule } from '@angular/material/tooltip';
       <div class="gf-module-header gf-module-drag-handle">
         <span class="gf-module-title" i18n>X-ray</span>
         <button
+          aria-label="Remove X-ray module"
+          i18n-aria-label
           i18n-matTooltip
           mat-icon-button
           matTooltip="Remove module"
