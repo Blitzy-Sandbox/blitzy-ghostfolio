@@ -97,10 +97,8 @@ describe('UserDashboardLayoutController', () => {
       upsertedRecord
     );
 
-    const result = await controller.updateLayout(
-      VALID_DTO,
-      buildMockResponse()
-    );
+    const httpResponse = buildMockResponse();
+    const result = await controller.updateLayout(VALID_DTO, httpResponse);
 
     expect(result).toBe(upsertedRecord);
     expect(userDashboardLayoutService.upsertForUser).toHaveBeenCalledTimes(1);
@@ -109,8 +107,10 @@ describe('UserDashboardLayoutController', () => {
     // Rule: userId is JWT-derived (request.user.id), dto is forwarded as-is.
     expect(upsertArgs[0]).toBe(USER_1_ID);
     expect(upsertArgs[1]).toBe(VALID_DTO);
-    // No third argument (the dateOfBirth helper is intentionally omitted).
-    expect(upsertArgs[2]).toBeUndefined();
+    // M2: the 3rd arg is the SAME correlationId set on the response header, so
+    // service logs correlate to the X-Correlation-ID returned to the client.
+    const headerValue = httpResponse.setHeader.mock.calls[0][1] as string;
+    expect(upsertArgs[2]).toBe(headerValue);
   });
 
   // ------------------------------------------------------------------------
@@ -126,11 +126,12 @@ describe('UserDashboardLayoutController', () => {
 
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledTimes(1);
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
-      USER_1_ID
+      USER_1_ID,
+      expect.any(String)
     );
   });
 
-  it('returns a 404 message identifying the user when no layout exists', async () => {
+  it('returns a generic 404 message that does NOT leak the userId when no layout exists', async () => {
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
 
     try {
@@ -141,7 +142,9 @@ describe('UserDashboardLayoutController', () => {
       expect((error as NotFoundException).getStatus()).toBe(
         HttpStatus.NOT_FOUND
       );
-      expect((error as Error).message).toContain(USER_1_ID);
+      // m5: the response body must not expose the internal user identifier.
+      expect((error as Error).message).toBe('Dashboard layout not found');
+      expect((error as Error).message).not.toContain(USER_1_ID);
     }
   });
 
@@ -160,7 +163,8 @@ describe('UserDashboardLayoutController', () => {
 
     expect(result).toBe(persistedRecord);
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
-      USER_1_ID
+      USER_1_ID,
+      expect.any(String)
     );
   });
 
@@ -188,6 +192,11 @@ describe('UserDashboardLayoutController', () => {
     expect(headerValue).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
     );
+    // M2: the same correlationId is propagated to the service for log tracing.
+    expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
+      USER_1_ID,
+      headerValue
+    );
   });
 
   it('sets a v4 X-Correlation-ID header on PATCH', async () => {
@@ -209,6 +218,12 @@ describe('UserDashboardLayoutController', () => {
     const headerValue = httpResponse.setHeader.mock.calls[0][1] as string;
     expect(headerValue).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    // M2: the same correlationId is propagated to the service for log tracing.
+    expect(userDashboardLayoutService.upsertForUser).toHaveBeenCalledWith(
+      USER_1_ID,
+      VALID_DTO,
+      headerValue
     );
   });
 
@@ -247,10 +262,12 @@ describe('UserDashboardLayoutController', () => {
     }
 
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
-      USER_1_ID
+      USER_1_ID,
+      expect.any(String)
     );
     expect(userDashboardLayoutService.findByUserId).not.toHaveBeenCalledWith(
-      USER_2_ID
+      USER_2_ID,
+      expect.any(String)
     );
   });
 

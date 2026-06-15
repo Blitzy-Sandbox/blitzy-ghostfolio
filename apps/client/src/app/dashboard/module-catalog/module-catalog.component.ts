@@ -1,4 +1,7 @@
-import { ModuleDefinition } from '@ghostfolio/client/dashboard/dashboard.types';
+import {
+  MODULE_DRAG_DATA_TYPE,
+  ModuleDefinition
+} from '@ghostfolio/client/dashboard/dashboard.types';
 import { ModuleRegistryService } from '@ghostfolio/client/dashboard/module-registry.service';
 
 import { CommonModule } from '@angular/common';
@@ -25,22 +28,13 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 /**
  * Searchable, auto-opening module catalog (the "introduce a module" surface).
  *
- * This standalone component is a deliberately isolated overlay: it knows
- * nothing about the dashboard grid, layout persistence, or the underlying
- * feature components. It renders the metadata of every registered module —
- * obtained exclusively from {@link ModuleRegistryService.getAll} — as a
- * searchable list and emits the **key** of the module the user selects upward
- * via {@link addModule}. The canvas (its parent) owns the actual placement of
- * the module on the grid.
- *
- * Two structural rules from the AAP are enforced purely by this component's
- * shape:
- * - **Registry-only introduction.** Modules are read solely through the
- *   injected {@link ModuleRegistryService}; no module list is hardcoded and no
- *   wrapper/feature component is imported here.
- * - **Module isolation.** The component never imports the canvas layer or the
- *   per-feature wrapper components; additions flow strictly upward as a plain
- *   `string` key through {@link addModule}.
+ * Renders the metadata of every registered module — obtained from
+ * {@link ModuleRegistryService.getAll} — as a searchable list, and relays the
+ * `key` of the chosen module upward via {@link addModule}, either on click
+ * ({@link onAddModule}) or when a row is dragged onto the canvas
+ * ({@link onDragStart}). The parent canvas owns the actual placement of the
+ * module on the grid. The component imports neither the canvas layer nor any
+ * feature/wrapper component; additions flow upward as a plain `string` key.
  *
  * The component owns its own open/close state (the {@link opened} signal) so
  * the canvas can drive first-visit auto-open through {@link autoOpen} while
@@ -152,6 +146,25 @@ export class GfModuleCatalogComponent implements OnInit {
    */
   public onAddModule(key: string): void {
     this.addModule.emit(key);
+  }
+
+  /**
+   * Begins a drag-add: writes the module `key` onto the drag's `DataTransfer`
+   * under {@link MODULE_DRAG_DATA_TYPE} and marks the operation as a copy, so
+   * the canvas drop handler can read the key and place the module. The catalog
+   * performs no placement itself — dropping on the canvas drives
+   * {@link addModule} through the canvas.
+   *
+   * @param event - The native `dragstart` event for the catalog row.
+   * @param key - The stable registry key of the dragged module.
+   */
+  public onDragStart(event: DragEvent, key: string): void {
+    if (!event.dataTransfer) {
+      return;
+    }
+
+    event.dataTransfer.setData(MODULE_DRAG_DATA_TYPE, key);
+    event.dataTransfer.effectAllowed = 'copy';
   }
 
   /**

@@ -7,6 +7,15 @@ export type {
 } from '@ghostfolio/common/interfaces';
 
 /**
+ * `DataTransfer` type key carrying a module's registry `key` during a
+ * catalog-to-canvas drag-add. The catalog (drag source) writes the key under
+ * this type on `dragstart`; the canvas (drop target) reads it on `drop`.
+ * Declared here — a layer both sides already depend on — so the catalog and
+ * canvas share the contract without importing each other (module isolation).
+ */
+export const MODULE_DRAG_DATA_TYPE = 'application/x-gf-dashboard-module';
+
+/**
  * Metadata describing a single module type that the dashboard can render.
  * Registered exclusively through `ModuleRegistryService` (the sole module-
  * introduction mechanism). `component` is the thin wrapper component that

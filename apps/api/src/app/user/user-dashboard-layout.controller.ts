@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
-import { UserDashboardLayout } from '@prisma/client';
+import type { UserDashboardLayout } from '@prisma/client';
 import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
@@ -25,35 +25,20 @@ import { UpdateUserDashboardLayoutDto } from './dtos/update-user-dashboard-layou
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
 
 /**
- * `UserDashboardLayoutController` exposes the two HTTP endpoints that gate
- * read and write access to the per-user `UserDashboardLayout` record
- * introduced by the Modular Dashboard feature (AAP § 0.1.1):
+ * `UserDashboardLayoutController` exposes the two authenticated dashboard
+ * layout endpoints:
  *
  *     GET   /api/v1/user/layout  → 200 (record) | 404 (no record)
  *     PATCH /api/v1/user/layout  → 200 (upserted record)
  *
- * The route prefix `'user/layout'` is auto-prefixed at runtime with the
- * global `/api/v1` URI version configured in `apps/api/src/main.ts`; this
- * controller declares only the feature-relative segment.
- *
- * Both endpoints are guarded by `AuthGuard('jwt')` (HTTP 401 if the JWT is
- * missing/invalid) and `HasPermissionGuard` (HTTP 403 if the user lacks the
- * permission). The triple-decorator pattern mirrors the established
- * `user-financial-profile` precedent.
- *
- * SECURITY: the `userId` passed to the service is sourced exclusively from
- * `this.request.user.id` (JWT-derived) — NEVER from the request body, query,
- * or route param. `UpdateUserDashboardLayoutDto` intentionally omits a
- * `userId` field so a client cannot impersonate another user.
- *
- * CONTROLLER THINNESS: no method body exceeds 10 lines, and no Prisma call
- * appears here — `UserDashboardLayout` is imported as a type only and all
- * persistence lives in `UserDashboardLayoutService`. Invalid PATCH bodies are
- * rejected with HTTP 400 by the global `ValidationPipe` before the method runs.
- *
- * OBSERVABILITY: both endpoints emit a fresh `X-Correlation-ID` response
- * header (via `node:crypto.randomUUID()`), set BEFORE the service call so it
- * is present on both success and error (e.g. 404) paths.
+ * The `'user/layout'` prefix is auto-prefixed at runtime with the global
+ * `/api/v1` URI version from `apps/api/src/main.ts`. Both endpoints are
+ * guarded by `AuthGuard('jwt')` (401) and `HasPermissionGuard` (403); the
+ * global `ValidationPipe` rejects an invalid PATCH body with 400. `userId` is
+ * sourced exclusively from `this.request.user.id`, and a fresh
+ * `X-Correlation-ID` response header is set before the service call (so it is
+ * present on success and error paths) and passed to the service for
+ * end-to-end log correlation.
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {
@@ -76,15 +61,17 @@ export class UserDashboardLayoutController {
   public async getLayout(
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    response.setHeader('X-Correlation-ID', randomUUID());
+    const correlationId = randomUUID();
+    response.setHeader('X-Correlation-ID', correlationId);
 
     const userId = this.request.user.id;
-    const layout = await this.userDashboardLayoutService.findByUserId(userId);
+    const layout = await this.userDashboardLayoutService.findByUserId(
+      userId,
+      correlationId
+    );
 
     if (!layout) {
-      throw new NotFoundException(
-        `Dashboard layout not found for user ${userId}`
-      );
+      throw new NotFoundException('Dashboard layout not found');
     }
 
     return layout;
@@ -107,11 +94,13 @@ export class UserDashboardLayoutController {
     @Body() dto: UpdateUserDashboardLayoutDto,
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    response.setHeader('X-Correlation-ID', randomUUID());
+    const correlationId = randomUUID();
+    response.setHeader('X-Correlation-ID', correlationId);
 
     return this.userDashboardLayoutService.upsertForUser(
       this.request.user.id,
-      dto
+      dto,
+      correlationId
     );
   }
 }

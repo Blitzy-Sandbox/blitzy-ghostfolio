@@ -1,4 +1,5 @@
 import { ActivitiesModule } from '@ghostfolio/api/app/activities/activities.module';
+import { MetricsModule } from '@ghostfolio/api/app/metrics/metrics.module';
 import { SubscriptionModule } from '@ghostfolio/api/app/subscription/subscription.module';
 import { RedactValuesInResponseModule } from '@ghostfolio/api/interceptors/redact-values-in-response/redact-values-in-response.module';
 import { ConfigurationModule } from '@ghostfolio/api/services/configuration/configuration.module';
@@ -28,6 +29,7 @@ import { UserService } from './user.service';
       secret: process.env.JWT_SECRET_KEY,
       signOptions: { expiresIn: '30 days' }
     }),
+    MetricsModule,
     PrismaModule,
     PropertyModule,
     RedactValuesInResponseModule,

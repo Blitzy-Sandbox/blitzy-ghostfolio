@@ -13,7 +13,13 @@
   </button>
 </div>
 
-<gridster class="dashboard-grid" [options]="options">
+<gridster
+  aria-label="Dashboard module grid"
+  class="dashboard-grid"
+  i18n-aria-label
+  role="region"
+  [options]="options"
+>
   @for (item of dashboard; track item.moduleKey) {
     <gridster-item class="dashboard-grid-item" [item]="item">
       <ng-container

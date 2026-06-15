@@ -126,8 +126,9 @@ export class GfAppComponent implements OnInit {
         this.currentSubRoute = urlSegments[1]?.path;
 
         if (
-          ((this.currentRoute === internalRoutes.home.path &&
-            !this.currentSubRoute) ||
+          (this.currentRoute === '' ||
+            (this.currentRoute === internalRoutes.home.path &&
+              !this.currentSubRoute) ||
             (this.currentRoute === internalRoutes.home.path &&
               this.currentSubRoute ===
                 internalRoutes.home.subRoutes?.holdings.path) ||
@@ -141,6 +142,7 @@ export class GfAppComponent implements OnInit {
         }
 
         if (
+          this.currentRoute === '' ||
           (this.currentRoute === internalRoutes.home.path &&
             this.currentSubRoute ===
               internalRoutes.home.subRoutes?.holdings.path) ||

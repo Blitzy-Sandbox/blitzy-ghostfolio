@@ -17,14 +17,12 @@ import { Injectable } from '@angular/core';
 /**
  * Centralized registry of every dashboard module type.
  *
- * This service is the **single, authoritative mechanism** by which module
- * types are introduced to the dashboard canvas — ad-hoc component insertion
- * is prohibited (AAP §0.8.1, "Registry-only introduction"). Each module is
- * described by a {@link ModuleDefinition} that pairs a stable `key` with the
- * thin **wrapper** component (`Gf*ModuleComponent`) that embeds the
- * underlying feature component and supplies the MatCard grid chrome. The raw
- * feature components are never registered here — only their wrappers, which
- * preserve module isolation.
+ * The single mechanism by which module types are introduced to the dashboard
+ * canvas. Each module is described by a {@link ModuleDefinition} that pairs a
+ * stable `key` with the thin **wrapper** component (`Gf*ModuleComponent`) that
+ * embeds the underlying feature component and supplies the MatCard grid chrome.
+ * Only wrappers are registered here — never the raw feature components — so
+ * module isolation is preserved.
  *
  * The registry is `providedIn: 'root'`, so a single shared instance is reused
  * across the {@link DashboardCanvasComponent} (which resolves a `key` to a

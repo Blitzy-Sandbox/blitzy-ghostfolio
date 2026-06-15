@@ -1,6 +1,8 @@
 @if (opened()) {
   <mat-sidenav-container class="catalog-container">
     <mat-sidenav
+      aria-labelledby="catalog-title"
+      autoFocus=".catalog-search input"
       class="catalog-panel"
       mode="over"
       opened
@@ -8,7 +10,7 @@
       (openedChange)="onSidenavOpenedChange($event)"
     >
       <div class="catalog-header">
-        <h2 class="catalog-title" i18n>Add module</h2>
+        <h2 class="catalog-title" i18n id="catalog-title">Add module</h2>
         <button
           aria-label="Close module catalog"
           data-testid="catalog-close-button"
@@ -38,10 +40,12 @@
         @for (module of filteredModules(); track module.key) {
           <button
             class="catalog-item"
+            draggable="true"
             mat-list-item
             type="button"
             [attr.data-testid]="'catalog-item-' + module.key"
             (click)="onAddModule(module.key)"
+            (dragstart)="onDragStart($event, module.key)"
           >
             <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
             <span matListItemTitle>{{ module.displayName }}</span>

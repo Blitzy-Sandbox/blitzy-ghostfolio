@@ -6,6 +6,7 @@ import { AuthGuard } from './core/auth.guard';
 
 export const routes: Routes = [
   {
+    canActivate: [AuthGuard],
     loadComponent: () =>
       import('./dashboard/dashboard-canvas/dashboard-canvas.component').then(
         (m) => m.GfDashboardCanvasComponent
@@ -132,6 +133,19 @@ export const routes: Routes = [
     path: internalRoutes.zen.path,
     loadChildren: () =>
       import('./pages/zen/zen-page.routes').then((m) => m.routes)
+  },
+  {
+    // The home and portfolio route trees were collapsed into the root dashboard
+    // canvas (''). Map their paths explicitly so authenticated redirects (and
+    // any direct links) resolve to the dashboard instead of via the wildcard.
+    path: internalRoutes.home.path,
+    redirectTo: '',
+    pathMatch: 'full'
+  },
+  {
+    path: internalRoutes.portfolio.path,
+    redirectTo: '',
+    pathMatch: 'full'
   },
   {
     // wildcard, if requested url doesn't match any paths for routes defined

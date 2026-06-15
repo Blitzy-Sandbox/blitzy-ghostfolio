@@ -1,5 +1,8 @@
 import { DashboardLayoutService } from '@ghostfolio/client/dashboard/dashboard-layout.service';
-import { DashboardItem } from '@ghostfolio/client/dashboard/dashboard.types';
+import {
+  DashboardItem,
+  MODULE_DRAG_DATA_TYPE
+} from '@ghostfolio/client/dashboard/dashboard.types';
 import { GfModuleCatalogComponent } from '@ghostfolio/client/dashboard/module-catalog/module-catalog.component';
 import { ModuleRegistryService } from '@ghostfolio/client/dashboard/module-registry.service';
 import {
@@ -29,8 +32,7 @@ import {
 
 /**
  * Fixed pixel height of a single grid row. Paired with `GridType.Fixed`, it
- * yields a deterministic, non-responsive cell size (mobile/responsive layout is
- * explicitly out of scope — AAP § 0.7.2).
+ * yields a deterministic, non-responsive cell size.
  */
 const FIXED_ROW_HEIGHT = 50;
 
@@ -69,7 +71,7 @@ const MIN_ITEM_ROWS = 2;
  * - **Renders modules generically.** Each grid item is rendered through
  *   `*ngComponentOutlet`, resolving the wrapper component at runtime via
  *   {@link ModuleRegistryService.get}. The canvas imports no wrapper and no
- *   feature component, preserving module isolation (AAP § 0.8.1).
+ *   feature component, preserving module isolation.
  * - **Drives grid-event-driven persistence.** Drag, resize, add and remove are
  *   the only events that persist the layout, always through
  *   {@link DashboardLayoutService.queueSave} (debounced 500 ms upstream). No
@@ -83,6 +85,10 @@ const MIN_ITEM_ROWS = 2;
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '(dragover)': 'onDragOver($event)',
+    '(drop)': 'onDrop($event)'
+  },
   imports: [
     CommonModule,
     GfModuleCatalogComponent,
@@ -162,6 +168,14 @@ export class GfDashboardCanvasComponent implements OnInit {
   private readonly dashboardLayoutService = inject(DashboardLayoutService);
 
   /**
+   * The live `angular-gridster2` grid instance, queried once the view renders.
+   * Its {@link Gridster.api} exposes `getNextPossiblePosition`, used by
+   * {@link onAddModule} to place a new module in the next free slot. Resolves
+   * to `undefined` until the grid view is initialized.
+   */
+  private readonly grid = viewChild(Gridster);
+
+  /**
    * Memoizes the `*ngComponentOutlet` `inputs` object per placed item so the
    * `OnPush` change detector receives a stable reference each cycle (a fresh
    * object literal every render would defeat outlet input change detection).
@@ -237,15 +251,46 @@ export class GfDashboardCanvasComponent implements OnInit {
     };
 
     // First-fit placement: the grid API mutates `x`/`y` in place to the next
-    // available slot. Optional chaining keeps this null-safe when the live grid
-    // API is unavailable (e.g. unit tests), in which case the item stays at
-    // (0, 0) and the engine resolves any overlap on render.
-    this.options.api?.getNextPossiblePosition?.(newItem);
+    // free slot before the item is added and persisted. Optional chaining keeps
+    // this null-safe until the grid view has initialized.
+    this.grid()?.api?.getNextPossiblePosition?.(newItem);
 
     this.dashboard = [...this.dashboard, newItem];
 
     this.changeDetectorRef.markForCheck();
     this.persistLayout();
+  }
+
+  /**
+   * Drag-over handler for the canvas drop target. When the drag carries a
+   * module key (a catalog drag-add), `preventDefault()` marks the canvas as a
+   * valid drop target and the cursor reflects a copy. Drags without the module
+   * data type are ignored, leaving unrelated drags unaffected.
+   *
+   * @param event - The native `dragover` event on the canvas host.
+   */
+  public onDragOver(event: DragEvent) {
+    if (event.dataTransfer?.types.includes(MODULE_DRAG_DATA_TYPE)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  /**
+   * Drop handler for the canvas drop target. Reads the dragged module key from
+   * the {@link MODULE_DRAG_DATA_TYPE} data and adds it through
+   * {@link onAddModule} (which applies first-fit placement and persistence).
+   * No-ops for drags that carry no module key.
+   *
+   * @param event - The native `drop` event on the canvas host.
+   */
+  public onDrop(event: DragEvent) {
+    const key = event.dataTransfer?.getData(MODULE_DRAG_DATA_TYPE);
+
+    if (key) {
+      event.preventDefault();
+      this.onAddModule(key);
+    }
   }
 
   /**

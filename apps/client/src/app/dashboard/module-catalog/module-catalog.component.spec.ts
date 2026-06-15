@@ -1,4 +1,7 @@
-import { ModuleDefinition } from '@ghostfolio/client/dashboard/dashboard.types';
+import {
+  MODULE_DRAG_DATA_TYPE,
+  ModuleDefinition
+} from '@ghostfolio/client/dashboard/dashboard.types';
 import { ModuleRegistryService } from '@ghostfolio/client/dashboard/module-registry.service';
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';
@@ -326,6 +329,39 @@ describe('GfModuleCatalogComponent', () => {
       component.onAddModule('ai-chat');
 
       expect(emitted).toContain('ai-chat');
+    });
+
+    // Drag-add — `onDragStart` writes the module key onto the drag's
+    // `DataTransfer` so the canvas drop handler can place the module.
+    it('should write the module key onto the drag DataTransfer on dragstart', () => {
+      const setData = jest.fn();
+      const dataTransfer = {
+        effectAllowed: 'none',
+        setData
+      } as unknown as DataTransfer;
+      const event = { dataTransfer } as unknown as DragEvent;
+
+      component.onDragStart(event, 'markets');
+
+      expect(setData).toHaveBeenCalledWith(MODULE_DRAG_DATA_TYPE, 'markets');
+      expect(dataTransfer.effectAllowed).toBe('copy');
+    });
+
+    it('should no-op on dragstart when the event carries no DataTransfer', () => {
+      const event = { dataTransfer: null } as unknown as DragEvent;
+
+      expect(() => component.onDragStart(event, 'markets')).not.toThrow();
+    });
+
+    it('should mark catalog rows as draggable for drag-add', () => {
+      component.open();
+      fixture.detectChanges();
+
+      const holdingsRow = fixture.nativeElement.querySelector(
+        '[data-testid="catalog-item-holdings"]'
+      ) as HTMLButtonElement;
+
+      expect(holdingsRow.getAttribute('draggable')).toBe('true');
     });
   });
 });

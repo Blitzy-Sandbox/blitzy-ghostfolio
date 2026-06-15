@@ -128,7 +128,10 @@ export class GfHeaderComponent implements OnChanges {
   public routerLinkAdminControl = internalRoutes.adminControl.routerLink;
   public routerLinkFeatures = publicRoutes.features.routerLink;
   public routerLinkMarkets = publicRoutes.markets.routerLink;
-  public routerLinkPortfolio = internalRoutes.portfolio.routerLink;
+  // The portfolio route tree was collapsed into the root dashboard canvas, so
+  // this menu entry navigates to the dashboard root rather than the removed
+  // `/portfolio` route.
+  public routerLinkPortfolio = ['/'];
   public routerLinkPricing = publicRoutes.pricing.routerLink;
   public routerLinkRegister = publicRoutes.register.routerLink;
   public routerLinkResources = publicRoutes.resources.routerLink;
