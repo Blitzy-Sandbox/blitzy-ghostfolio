@@ -119,8 +119,14 @@ export class GfAppComponent implements OnInit {
       .subscribe(() => {
         const urlTree = this.router.parseUrl(this.router.url);
         const urlSegmentGroup = urlTree.root.children[PRIMARY_OUTLET];
-        const urlSegments = urlSegmentGroup.segments;
-        this.currentRoute = urlSegments[0].path;
+        // At the collapsed root canvas route ('/'), the URL parses to an empty
+        // root segment group: `urlTree.root.children[PRIMARY_OUTLET]` is
+        // `undefined`. Guard the segment access (optional chaining + nullish
+        // fallbacks) so the NavigationEnd handler does not throw a TypeError on
+        // first paint. With `currentRoute === ''` the downstream route-gated UI
+        // flags below each evaluate to their false/default branch (inert).
+        const urlSegments = urlSegmentGroup?.segments ?? [];
+        this.currentRoute = urlSegments[0]?.path ?? '';
         this.currentSubRoute = urlSegments[1]?.path;
 
         if (
