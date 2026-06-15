@@ -1,0 +1,34 @@
+<div class="dashboard-toolbar">
+  <button
+    color="primary"
+    data-testid="add-module-button"
+    i18n-matTooltip
+    mat-flat-button
+    matTooltip="Add module"
+    type="button"
+    (click)="openCatalog()"
+  >
+    <mat-icon>add</mat-icon>
+    <span i18n>Add module</span>
+  </button>
+</div>
+
+<gridster class="dashboard-grid" [options]="options">
+  @for (item of dashboard; track item.moduleKey) {
+    <gridster-item class="dashboard-grid-item" [item]="item">
+      <ng-container
+        *ngComponentOutlet="
+          registry.get(item.moduleKey)?.component;
+          inputs: getOutletInputs(item)
+        "
+      />
+    </gridster-item>
+  }
+</gridster>
+
+@if (isInitialized()) {
+  <gf-module-catalog
+    [autoOpen]="shouldAutoOpenCatalog()"
+    (addModule)="onAddModule($event)"
+  />
+}
