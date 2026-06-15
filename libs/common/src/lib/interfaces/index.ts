@@ -104,6 +104,8 @@ import type { SystemMessage } from './system-message.interface';
 import type { TabConfiguration } from './tab-configuration.interface';
 import type { ToggleOption } from './toggle-option.interface';
 import type {
+  DashboardLayoutItem,
+  LayoutData,
   UserDashboardLayout,
   UserDashboardLayoutPatchPayload
 } from './user-dashboard-layout.interface';
@@ -146,6 +148,7 @@ export {
   ChatMessageRole,
   Coupon,
   CreateStripeCheckoutSessionResponse,
+  DashboardLayoutItem,
   DataEnhancerHealthResponse,
   DataProviderGhostfolioAssetProfileResponse,
   DataProviderGhostfolioStatusResponse,
@@ -171,6 +174,7 @@ export {
   InfoResponse,
   InvestmentGoal,
   InvestmentItem,
+  LayoutData,
   LineChartItem,
   LookupItem,
   LookupResponse,

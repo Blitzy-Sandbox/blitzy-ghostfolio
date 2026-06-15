@@ -1,0 +1,102 @@
+import { GfHomeOverviewComponent } from '@ghostfolio/client/components/home-overview/home-overview.component';
+
+import { CommonModule } from '@angular/common';
+import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
+import { MatCardModule } from '@angular/material/card';
+import { MatIconModule } from '@angular/material/icon';
+import { MatTooltipModule } from '@angular/material/tooltip';
+
+/**
+ * Portfolio Overview dashboard module wrapper.
+ *
+ * Thin isolation wrapper that frames the self-fetching
+ * {@link GfHomeOverviewComponent} feature inside Material grid chrome (a
+ * `MatCard` header with a localized title and a remove icon button) so the
+ * dashboard canvas can place it as the `portfolio-overview` grid module.
+ *
+ * The embedded feature exposes no inputs/outputs and loads its own data, so
+ * this wrapper is purely structural and holds no layout state — the grid's
+ * `DashboardItem[]` on the canvas remains the single source of truth. Module
+ * isolation is preserved: the only repository import is the feature component;
+ * the canvas/registry layers are never referenced here. The canvas supplies
+ * the remove behavior through the `removeModule` callback input (bound via
+ * `NgComponentOutlet`'s input map).
+ */
+@Component({
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [
+    CommonModule,
+    GfHomeOverviewComponent,
+    MatButtonModule,
+    MatCardModule,
+    MatIconModule,
+    MatTooltipModule
+  ],
+  selector: 'gf-portfolio-overview-module',
+  styles: [
+    `
+      :host {
+        display: block;
+        height: 100%;
+      }
+
+      .gf-module-card {
+        background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+        color: var(--mat-sys-on-surface, var(--dark-primary-text));
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .gf-module-header {
+        align-items: center;
+        border-bottom: 1px solid var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
+        display: flex;
+        justify-content: space-between;
+        padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+      }
+
+      .gf-module-drag-handle {
+        cursor: move;
+      }
+
+      .gf-module-title {
+        color: var(--mat-sys-on-surface, var(--dark-primary-text));
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .gf-module-content {
+        flex: 1 1 auto;
+        overflow: auto;
+        padding: 0.5rem;
+      }
+    `
+  ],
+  template: `
+    <mat-card appearance="outlined" class="gf-module-card">
+      <div class="gf-module-header gf-module-drag-handle">
+        <span class="gf-module-title" i18n>Portfolio Overview</span>
+        <button
+          i18n-matTooltip
+          mat-icon-button
+          matTooltip="Remove module"
+          (click)="removeModule?.()"
+          (mousedown)="$event.stopPropagation()"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+      <div class="gf-module-content">
+        <gf-home-overview />
+      </div>
+    </mat-card>
+  `
+})
+export class GfPortfolioOverviewModuleComponent {
+  @Input() removeModule?: () => void;
+}
