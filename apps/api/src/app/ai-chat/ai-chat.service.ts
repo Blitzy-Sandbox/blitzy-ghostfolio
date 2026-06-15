@@ -725,6 +725,10 @@ export class AiChatService {
       `You are a helpful AI portfolio assistant integrated with Ghostfolio.`,
       `Answer the user's questions conversationally and directly using the ` +
         `portfolio data already provided below in this prompt.`,
+      `The authenticated user is referred to throughout this prompt only as ` +
+        `"${AiChatService.AUTHENTICATED_USER_PLACEHOLDER}"; use that reference ` +
+        `verbatim in any free-form mention and never request, infer, or expose ` +
+        `any real account identifier.`,
       ``,
       `CRITICAL RESPONSE RULES — follow these exactly:`,
       `1. NEVER describe, narrate, or mention function calls, tool invocations, ` +
