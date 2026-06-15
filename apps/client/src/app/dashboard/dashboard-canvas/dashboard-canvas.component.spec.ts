@@ -226,6 +226,38 @@ describe('GfDashboardCanvasComponent', () => {
       expect(component.shouldAutoOpenCatalog()).toBe(false);
       expect(component.isInitialized()).toBe(true);
     });
+
+    it('should fall back to the global 2x2 minimum when a stored module key is no longer registered', () => {
+      // A forward-compatibility edge: the saved layout references a module key
+      // that the registry no longer knows (e.g. a module removed in a later
+      // release). `registryGetSpy` returns `undefined` for it, so the hydrated
+      // item keeps its stored geometry but adopts the global 2x2 floor for its
+      // per-item minimums (the `definition?.minItemCols ?? MIN_ITEM_COLS`
+      // fallback), rather than crashing or dropping the item.
+      const savedLayout = {
+        layoutData: {
+          items: [
+            { cols: 8, moduleKey: 'retired-module', rows: 5, x: 0, y: 0 }
+          ],
+          schemaVersion: 1
+        }
+      } as unknown as UserDashboardLayout;
+      getSpy.mockReturnValue(of(savedLayout));
+
+      component.ngOnInit();
+
+      expect(component.dashboard[0]).toMatchObject({
+        cols: 8,
+        minItemCols: 2,
+        minItemRows: 2,
+        moduleKey: 'retired-module',
+        rows: 5,
+        x: 0,
+        y: 0
+      });
+      expect(component.shouldAutoOpenCatalog()).toBe(false);
+      expect(component.isInitialized()).toBe(true);
+    });
   });
 
   describe('onAddModule (first-fit placement, M4)', () => {
@@ -274,6 +306,21 @@ describe('GfDashboardCanvasComponent', () => {
       component.onAddModule('holdings');
 
       expect(component.dashboard).toHaveLength(1);
+      expect(queueSaveSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should still add and persist a module when the grid view child is not yet resolved', () => {
+      // No `installFakeGridApi()` here: `grid()` resolves to `undefined` (the
+      // view is never rendered in these unit tests), so the
+      // `this.grid()?.api?.getNextPossiblePosition?.(newItem)` placement call
+      // safely no-ops via optional chaining. The module is still added at its
+      // default origin and the layout is still persisted.
+      component.onAddModule('holdings');
+
+      expect(component.dashboard).toHaveLength(1);
+      expect(component.dashboard[0].moduleKey).toBe('holdings');
+      expect(component.dashboard[0].x).toBe(0);
+      expect(component.dashboard[0].y).toBe(0);
       expect(queueSaveSpy).toHaveBeenCalledTimes(1);
     });
   });
@@ -331,6 +378,154 @@ describe('GfDashboardCanvasComponent', () => {
 
       expect(component.dashboard).toHaveLength(0);
       expect(queueSaveSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('grid options contract (minimums + grid-event persistence)', () => {
+    // Required case (7), global half: the canvas pins a 2x2 cell floor. The
+    // gridster engine reads `minItemCols`/`minItemRows` to enforce the minimum
+    // and reject below-minimum resize attempts.
+    it('should pin the global minimum item size to a 2x2 cell', () => {
+      expect(component.options.minItemCols).toBe(2);
+      expect(component.options.minItemRows).toBe(2);
+    });
+
+    // Required case (6): drag-end (`itemChangeCallback`) and resize-end
+    // (`itemResizeCallback`) are the grid-state-change events that drive
+    // debounced persistence. Both are zero-argument arrows that funnel through
+    // the private `persistLayout`, so invoking each must enqueue exactly one
+    // save (two in total). This exercises the canvas's drag/resize persistence
+    // wiring without instantiating the (removed) real grid engine.
+    it('should persist the layout on the drag-end and resize-end grid callbacks', () => {
+      const itemChangeCallback = component.options
+        .itemChangeCallback as unknown as () => void;
+      const itemResizeCallback = component.options
+        .itemResizeCallback as unknown as () => void;
+
+      itemChangeCallback();
+      itemResizeCallback();
+
+      expect(queueSaveSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // Required case (7), per-item half: an added module adopts the minimum cell
+    // dimensions declared in its registry definition, and those minimums are
+    // never below the global 2x2 floor. `markets` is registered as 4x3, so the
+    // placed item carries `minItemCols`/`minItemRows` (and initial size) of 4x3.
+    it('should stamp registry-declared per-module minimums (>= 2) onto an added item', () => {
+      installFakeGridApi();
+
+      component.onAddModule('markets');
+
+      const [added] = component.dashboard;
+
+      expect(added.minItemCols).toBeGreaterThanOrEqual(2);
+      expect(added.minItemRows).toBeGreaterThanOrEqual(2);
+      expect(added.minItemCols).toBe(4);
+      expect(added.minItemRows).toBe(3);
+      expect(added.cols).toBe(4);
+      expect(added.rows).toBe(3);
+    });
+  });
+
+  describe('persistLayout (versioned payload shape)', () => {
+    // Required case (8): the queued payload is EXACTLY
+    // `{ layoutData: { schemaVersion: <number>, items: [{ moduleKey, x, y,
+    // cols, rows }] } }`. `toHaveBeenCalledWith` deep-equals the call argument,
+    // so any extra key — notably the per-item minimums, which are re-derived
+    // from the registry on read-back rather than persisted — would fail the
+    // assertion. The deterministic values come from the `holdings` registry
+    // definition (6x4) and the fake first-fit origin (0,0).
+    it('should queue a correctly-shaped versioned persistence payload', () => {
+      installFakeGridApi();
+
+      component.onAddModule('holdings');
+
+      expect(queueSaveSpy).toHaveBeenCalledTimes(1);
+      expect(queueSaveSpy).toHaveBeenCalledWith({
+        layoutData: {
+          items: [
+            {
+              cols: 6,
+              moduleKey: 'holdings',
+              rows: 4,
+              x: 0,
+              y: 0
+            }
+          ],
+          schemaVersion: 1
+        }
+      });
+    });
+  });
+
+  describe('getOutletInputs (memoized *ngComponentOutlet inputs)', () => {
+    it('should return a stable inputs object per item across change-detection cycles', () => {
+      installFakeGridApi();
+      component.onAddModule('holdings');
+
+      const [item] = component.dashboard;
+      // `getOutletInputs` is `protected` (template-visible); a typed structural
+      // cast reaches it without `any`, keeping the assertions free of
+      // unsafe-call / unsafe-member-access lint findings.
+      const canvasInternals = component as unknown as {
+        getOutletInputs: (item: DashboardItem) => { removeModule: () => void };
+      };
+      const inputsA = canvasInternals.getOutletInputs(item);
+      const inputsB = canvasInternals.getOutletInputs(item);
+
+      // Same object reference -> the OnPush outlet never sees a "changed" input
+      // and avoids needless re-creation of the wrapped feature component.
+      expect(inputsA).toBe(inputsB);
+      expect(typeof inputsA.removeModule).toBe('function');
+    });
+
+    it('should remove the owning item when the memoized removeModule callback fires', () => {
+      installFakeGridApi();
+      component.onAddModule('holdings');
+
+      const [item] = component.dashboard;
+      const canvasInternals = component as unknown as {
+        getOutletInputs: (item: DashboardItem) => { removeModule: () => void };
+      };
+      const inputs = canvasInternals.getOutletInputs(item);
+      queueSaveSpy.mockClear();
+
+      // The wrapper invokes this callback from its header remove action; it must
+      // delegate to `removeItem`, shrinking the dashboard and persisting once.
+      inputs.removeModule();
+
+      expect(component.dashboard).toHaveLength(0);
+      expect(queueSaveSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('openCatalog', () => {
+    // Mirrors `installFakeGridApi`: the `catalog` view-child signal resolves to
+    // `undefined` while no live view is rendered (these unit tests never call
+    // `detectChanges`), so a fake exposing `open` is installed to verify the
+    // canvas delegates to the catalog overlay.
+    it('should open the module catalog overlay through the catalog view child', () => {
+      const openSpy = jest.fn();
+      const canvasWithCatalog = component as unknown as {
+        catalog: () => { open: () => void } | undefined;
+      };
+      canvasWithCatalog.catalog = () => ({ open: openSpy });
+
+      component.openCatalog();
+
+      expect(openSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should no-op when the catalog view child is not yet resolved', () => {
+      const canvasWithCatalog = component as unknown as {
+        catalog: () => { open: () => void } | undefined;
+      };
+      canvasWithCatalog.catalog = () => undefined;
+
+      // The optional chaining in `openCatalog` (`this.catalog()?.open()`) keeps
+      // the toolbar action safe before the catalog has rendered.
+      expect(() => component.openCatalog()).not.toThrow();
     });
   });
 });
