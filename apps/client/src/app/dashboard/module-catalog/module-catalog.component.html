@@ -1,0 +1,62 @@
+@if (opened()) {
+  <mat-sidenav-container class="catalog-container">
+    <mat-sidenav
+      class="catalog-panel"
+      mode="over"
+      opened
+      position="end"
+      (openedChange)="onSidenavOpenedChange($event)"
+    >
+      <div class="catalog-header">
+        <h2 class="catalog-title" i18n>Add module</h2>
+        <button
+          aria-label="Close module catalog"
+          data-testid="catalog-close-button"
+          i18n-aria-label
+          mat-icon-button
+          type="button"
+          (click)="close()"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+
+      <mat-form-field appearance="outline" class="catalog-search">
+        <mat-label i18n>Search modules</mat-label>
+        <input
+          data-testid="catalog-search-input"
+          i18n-placeholder
+          matInput
+          placeholder="Search modules"
+          type="text"
+          [ngModel]="searchTerm()"
+          (ngModelChange)="searchTerm.set($event)"
+        />
+      </mat-form-field>
+
+      <mat-action-list class="catalog-list">
+        @for (module of filteredModules(); track module.key) {
+          <button
+            class="catalog-item"
+            mat-list-item
+            type="button"
+            [attr.data-testid]="'catalog-item-' + module.key"
+            (click)="onAddModule(module.key)"
+          >
+            <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
+            <span matListItemTitle>{{ module.displayName }}</span>
+            <mat-icon i18n-matTooltip matListItemMeta matTooltip="Add module"
+              >add</mat-icon
+            >
+          </button>
+        } @empty {
+          <p class="catalog-empty" data-testid="catalog-empty" i18n>
+            No modules found.
+          </p>
+        }
+      </mat-action-list>
+    </mat-sidenav>
+
+    <mat-sidenav-content></mat-sidenav-content>
+  </mat-sidenav-container>
+}
