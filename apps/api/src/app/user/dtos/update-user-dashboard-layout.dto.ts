@@ -2,7 +2,9 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsDefined,
   IsInt,
+  IsObject,
   IsString,
   MaxLength,
   Min,
@@ -68,6 +70,18 @@ export class LayoutDataDto {
 }
 
 export class UpdateUserDashboardLayoutDto {
+  /**
+   * Guard the top-level payload BEFORE nested validation. In class-validator,
+   * `@ValidateNested()` on its own treats `undefined`/`null` as valid and does
+   * not reject array values, so a malformed body such as `{}`,
+   * `{ "layoutData": null }`, or `{ "layoutData": [] }` would otherwise bypass
+   * nested validation and reach the persistence layer (producing an opaque
+   * runtime/Prisma error instead of a clear HTTP 400). `@IsDefined()` rejects
+   * missing/`null` values and `@IsObject()` rejects arrays and primitives, so
+   * such bodies fail fast with HTTP 400 at the request boundary.
+   */
+  @IsDefined()
+  @IsObject()
   @ValidateNested()
   @Type(() => LayoutDataDto)
   layoutData: LayoutDataDto;
