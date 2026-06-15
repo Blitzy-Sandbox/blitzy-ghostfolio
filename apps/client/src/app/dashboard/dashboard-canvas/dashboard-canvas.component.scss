@@ -1,0 +1,69 @@
+// GfDashboardCanvasComponent — single-canvas root grid stylesheet.
+//
+// Decision D-020 (Material Design 3 token discipline): every color,
+// background, and border value resolves to a Material Design 3 system token
+// through the mandatory `var(--mat-sys-<token>, <fallback>)` pattern. The host
+// theme is built with `mat.define-theme()` + `mat.all-component-themes()` (see
+// apps/client/src/styles/theme.scss) rather than `mat.theme()`, so the Material
+// Design 3 system custom properties are NOT emitted at runtime and the
+// hardcoded fallback is what actually renders. A bare system-token reference
+// (without a fallback) is therefore prohibited; this mirrors the token+fallback
+// approach in chat-panel.component.scss.
+
+// The canvas fills its router-outlet host. `angular-gridster2` requires a sized
+// parent or the grid collapses to 0 height, so the host explicitly claims the
+// full width and height handed down by app.component.
+:host {
+  box-sizing: border-box;
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+// Compact top toolbar (~3rem tall) that hosts the "Add module" affordance.
+.dashboard-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+// The `<gridster>` element fills the remaining height beneath the toolbar so
+// the grid engine can compute non-zero cell sizes. A subtle surface tint
+// distinguishes the empty canvas from the modules placed on it.
+.dashboard-grid {
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  display: block;
+  height: calc(100% - 3rem);
+  width: 100%;
+}
+
+// Grid chrome — pierce the emulated view encapsulation with `::ng-deep` to
+// reach the elements `angular-gridster2` renders internally.
+
+// Drag/resize drop-zone preview rendered by the grid engine during a move.
+:host ::ng-deep gridster-preview {
+  background: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+}
+
+// Resize-handle affordance. The engine draws the south-east handle as a CSS
+// triangle (border-width: 0 0 10px 10px) with a transparent border color, so
+// tokenizing border-color makes that triangle visible in the outline color.
+:host ::ng-deep .gridster-item-resizable-handler {
+  border-color: var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
+}
+
+// Dark-theme overrides — re-declare only the rules whose fallback differs in
+// dark mode (`.theme-dark` is applied to <body> by app.component).
+:host-context(.theme-dark) {
+  .dashboard-grid {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+  }
+
+  ::ng-deep gridster-preview {
+    background: var(--mat-sys-primary-container, rgba(71, 219, 215, 0.16));
+  }
+}
