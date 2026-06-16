@@ -10,14 +10,31 @@
 // (without a fallback) is therefore prohibited; this mirrors the token+fallback
 // approach in chat-panel.component.scss.
 
-// The canvas fills its router-outlet host. `angular-gridster2` requires a sized
-// parent or the grid collapses to 0 height, so the host explicitly claims the
-// full width and height handed down by app.component.
+// The canvas fills the viewport beneath the fixed application header.
+// `angular-gridster2` requires a parent with a DEFINITE height or the grid
+// collapses to 0 height (the engine measures its container to size the cells).
+// The surrounding `<main>` (app.component.scss) carries only `min-height`, so a
+// `height: 100%` here cannot resolve and the canvas would shrink to its toolbar
+// content (~toolbar height), collapsing the grid to a few pixels. We therefore
+// pin a definite viewport-relative height — mirroring the established in-app
+// surface pattern (`.page.has-tabs { height: calc(100svh - <header>) }` in
+// apps/client/src/styles.scss). This is scoped to the dashboard canvas host, so
+// it does not affect the brownfield scrolling pages (which keep their own
+// layout). `--mat-toolbar-standard-height` is the fixed header height already
+// used by app.component.scss/styles.scss.
 :host {
   box-sizing: border-box;
   display: block;
-  height: 100%;
+  height: calc(100svh - var(--mat-toolbar-standard-height));
   width: 100%;
+}
+
+// When the live-demo / system-message banner is shown, app.component adds the
+// `.has-info-message` class to the `gf-root` host and the header doubles to two
+// toolbar rows (see app.component.scss). Subtract the taller header so the
+// canvas still ends exactly at the viewport bottom in that state.
+:host-context(.has-info-message) {
+  height: calc(100svh - 2 * var(--mat-toolbar-standard-height));
 }
 
 // Compact top toolbar (~3rem tall) that hosts the "Add module" affordance.

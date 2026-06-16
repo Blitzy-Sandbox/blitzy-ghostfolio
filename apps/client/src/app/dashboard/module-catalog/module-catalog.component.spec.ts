@@ -172,6 +172,43 @@ describe('GfModuleCatalogComponent', () => {
       expect(component.opened()).toBe(true);
       expect(emitted).toEqual([true]);
     });
+
+    // F2-05 — the catalog is hidden by `MatSidenav` rather than destroyed, so a
+    // search term typed before a close would otherwise persist and leave the
+    // list filtered (or empty) on the next open. `setOpened(true)` must reset
+    // `searchTerm` so every reopen presents the full, unfiltered module list.
+    it('should reset the search term on reopen so the full list is shown (F2-05)', () => {
+      // Open and type a term that matches nothing -> the list filters to empty.
+      component.open();
+      component.searchTerm.set('zzznomatch');
+      expect(component.filteredModules()).toEqual([]);
+
+      // Closing does NOT clear the term (the sidenav hides, it is not
+      // destroyed) — proving the reset on the *next open* is what restores it.
+      component.close();
+      expect(component.searchTerm()).toBe('zzznomatch');
+
+      // Reopening must clear the stale term and restore every registered module.
+      component.open();
+
+      expect(component.searchTerm()).toBe('');
+      expect(component.filteredModules().length).toBe(MOCK_MODULES.length);
+    });
+
+    // The reset is scoped to genuine open *transitions*: calling `open()` while
+    // the catalog is already open hits the unchanged-value guard and must NOT
+    // wipe a search the user is actively typing.
+    it('should not clear an in-progress search when open() is called while already open', () => {
+      component.open();
+      component.searchTerm.set('hold');
+
+      component.open();
+
+      expect(component.searchTerm()).toBe('hold');
+      expect(component.filteredModules().map((module) => module.key)).toEqual([
+        'holdings'
+      ]);
+    });
   });
 
   // Extra coverage — `onSidenavOpenedChange` relays the MatSidenav's own

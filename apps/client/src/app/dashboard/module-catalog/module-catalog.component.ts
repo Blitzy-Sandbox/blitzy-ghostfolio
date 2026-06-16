@@ -200,11 +200,24 @@ export class GfModuleCatalogComponent implements OnInit {
    * {@link onSidenavOpenedChange} (sidenav -> component) and the template's
    * `[opened]` binding (component -> sidenav).
    *
+   * On every open transition the {@link searchTerm} is reset to an empty
+   * string so the catalog always presents the full, unfiltered module list
+   * when it (re)opens. Because the catalog is hidden by the `MatSidenav`
+   * rather than destroyed, a search term typed before a close would otherwise
+   * persist and leave the list filtered (or showing "No modules found.") on
+   * the next open (QA finding F2-05). The reset is placed after the
+   * unchanged-value guard, so it fires exactly once per open transition and
+   * never while the catalog is already open and being interacted with.
+   *
    * @param value - The desired open state.
    */
   private setOpened(value: boolean): void {
     if (this.opened() === value) {
       return;
+    }
+
+    if (value) {
+      this.searchTerm.set('');
     }
 
     this.opened.set(value);

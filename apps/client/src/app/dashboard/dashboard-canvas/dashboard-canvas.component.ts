@@ -29,6 +29,8 @@ import {
   GridsterItem,
   GridType
 } from 'angular-gridster2';
+import { Chart } from 'chart.js';
+import annotationPlugin from 'chartjs-plugin-annotation';
 
 /**
  * Fixed pixel height of a single grid row. Paired with `GridType.Fixed`, it
@@ -187,6 +189,41 @@ export class GfDashboardCanvasComponent implements OnInit {
   >();
 
   /**
+   * JSON signature of the most recently loaded or persisted {@link LayoutData}.
+   * Used to dedupe `angular-gridster2`'s initial-placement `itemChangeCallback`
+   * volley on hydration: the grid engine fires drag-end callbacks while it lays
+   * out the freshly hydrated items, but that reproduces the SAME geometry that
+   * was just loaded, so nothing actually changed and no `PATCH` must be issued
+   * (AAP § 0.8.1 R4 — persistence is grid-state-CHANGE-driven only). Starts
+   * `null` so the very first real user change always persists; on first visit
+   * (no saved layout) it stays `null` until the first add.
+   */
+  private lastPersistedLayoutSignature: string | null = null;
+
+  /**
+   * Registers the Chart.js annotation plugin once, at the dashboard
+   * composition root, BEFORE any module is rendered through
+   * `*ngComponentOutlet`.
+   *
+   * Root cause of F2-04: `chartjs-plugin-annotation` initializes its per-chart
+   * state in a `beforeInit` hook and reads it in `beforeUpdate`. The feature
+   * chart components register the plugin GLOBALLY but lazily (in their own
+   * constructors). On the single-canvas dashboard, every chart module mounts
+   * together, so a chart with no annotations (e.g. the doughnut proportion
+   * chart) can be constructed BEFORE another module's constructor registers the
+   * plugin. That chart misses `beforeInit` (no state), then crashes on its next
+   * `beforeUpdate` ("Cannot set properties of undefined (setting
+   * 'annotations')") once the plugin has become global. Registering the plugin
+   * here — the canvas is instantiated before any module wrapper renders —
+   * guarantees `beforeInit` runs for every subsequently-created chart,
+   * eliminating the race. `Chart.register` is idempotent, so the feature
+   * components' own later registrations remain harmless no-ops.
+   */
+  public constructor() {
+    Chart.register(annotationPlugin);
+  }
+
+  /**
    * Loads the persisted layout on init. A `null` result is the first-visit
    * case: the canvas stays blank and flags the catalog to auto-open. Otherwise
    * the saved geometry is hydrated into {@link dashboard}, re-deriving each
@@ -213,6 +250,14 @@ export class GfDashboardCanvasComponent implements OnInit {
           };
         });
         this.shouldAutoOpenCatalog.set(false);
+
+        // Seed the dedup signature with the loaded geometry so the gridster
+        // engine's initial-placement `itemChangeCallback` volley on hydration
+        // does NOT trigger a spurious `PATCH` (F2-01 / R4). Computed via the
+        // same projection as `persistLayout` so the signatures compare equal.
+        this.lastPersistedLayoutSignature = JSON.stringify(
+          this.buildLayoutData()
+        );
       }
 
       this.isInitialized.set(true);
@@ -339,13 +384,14 @@ export class GfDashboardCanvasComponent implements OnInit {
 
   /**
    * Projects the current {@link dashboard} state into a versioned
-   * {@link LayoutData} payload and queues it for debounced persistence. This is
-   * the sole persistence path; it is invoked only from grid state-change
-   * handlers ({@link options} drag/resize callbacks, {@link onAddModule} and
-   * {@link removeItem}).
+   * {@link LayoutData} payload (the persisted geometry: `moduleKey`, `x`, `y`,
+   * `cols`, `rows`, plus the schema version — the per-item minimums are
+   * re-derived from the registry on read-back and never persisted). Shared by
+   * {@link persistLayout} and the hydration path so both compute an identical
+   * signature for the dedup comparison.
    */
-  private persistLayout() {
-    const layoutData: LayoutData = {
+  private buildLayoutData(): LayoutData {
+    return {
       items: this.dashboard.map((item) => ({
         cols: item.cols,
         moduleKey: item.moduleKey,
@@ -355,6 +401,31 @@ export class GfDashboardCanvasComponent implements OnInit {
       })),
       schemaVersion: LAYOUT_SCHEMA_VERSION
     };
+  }
+
+  /**
+   * Projects the current {@link dashboard} state into a versioned
+   * {@link LayoutData} payload and queues it for debounced persistence. This is
+   * the sole persistence path; it is invoked only from grid state-change
+   * handlers ({@link options} drag/resize callbacks, {@link onAddModule} and
+   * {@link removeItem}).
+   *
+   * Grid-state-CHANGE-driven persistence (AAP § 0.8.1 R4): the save is skipped
+   * when the computed layout is byte-for-byte identical to the last loaded or
+   * persisted one. This dedupes the gridster engine's initial-placement
+   * `itemChangeCallback` volley on hydration (F2-01) — which reports the same
+   * geometry that was just loaded — while still persisting every real
+   * drag/resize/add/remove (whose geometry differs).
+   */
+  private persistLayout() {
+    const layoutData = this.buildLayoutData();
+    const signature = JSON.stringify(layoutData);
+
+    if (signature === this.lastPersistedLayoutSignature) {
+      return;
+    }
+
+    this.lastPersistedLayoutSignature = signature;
 
     const payload: UserDashboardLayoutPatchPayload = { layoutData };
 

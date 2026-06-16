@@ -78,7 +78,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
         </button>
       </div>
       <div class="gf-module-content">
-        <gf-activities-page />
+        <gf-activities-page [embeddedInModule]="true" />
       </div>
     </mat-card>
   `

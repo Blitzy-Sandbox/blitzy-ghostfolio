@@ -18,6 +18,7 @@ import {
   ChangeDetectorRef,
   Component,
   DestroyRef,
+  Input,
   OnInit
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -54,6 +55,19 @@ import { ImportActivitiesDialogParams } from './import-activities-dialog/interfa
   templateUrl: './activities-page.html'
 })
 export class GfActivitiesPageComponent implements OnInit {
+  /**
+   * When this component is hosted as a dashboard grid module (via the
+   * Transactions module wrapper) rather than on its own route, the
+   * route-driven onboarding side effect that auto-opens the "Add activity"
+   * dialog for users with zero activities must be suppressed. Otherwise the
+   * module hijacks the single canvas route (`?createDialog=true`) and pops a
+   * global modal on every render/hydration (QA finding F2-02). User-initiated
+   * dialogs (the FAB / clone / edit flows) remain fully functional because the
+   * query-param subscription is left intact; only the automatic navigation is
+   * gated. Defaults to `false` so standalone route usage is unchanged.
+   */
+  @Input() embeddedInModule = false;
+
   public activityTypesFilter: string[] = [];
   public dataSource: MatTableDataSource<Activity>;
   public deviceType: string;
@@ -160,6 +174,7 @@ export class GfActivitiesPageComponent implements OnInit {
         this.totalItems = count;
 
         if (
+          !this.embeddedInModule &&
           this.hasPermissionToCreateActivity &&
           this.user?.activitiesCount === 0
         ) {

@@ -432,7 +432,10 @@ describe('GfDashboardCanvasComponent', () => {
     // Required case (6): drag-end (`itemChangeCallback`) and resize-end
     // (`itemResizeCallback`) are the grid-state-change events that drive
     // debounced persistence. Both are zero-argument arrows that funnel through
-    // the private `persistLayout`, so invoking each must enqueue exactly one
+    // the private `persistLayout`. Each fires AFTER the geometry actually
+    // changed (a drag repositions an item; a resize changes its size), so the
+    // dashboard is mutated between the two invocations — proving BOTH callbacks
+    // are wired to persistence and each distinct change enqueues exactly one
     // save (two in total). This exercises the canvas's drag/resize persistence
     // wiring without instantiating the (removed) real grid engine.
     it('should persist the layout on the drag-end and resize-end grid callbacks', () => {
@@ -441,10 +444,55 @@ describe('GfDashboardCanvasComponent', () => {
       const itemResizeCallback = component.options
         .itemResizeCallback as unknown as () => void;
 
+      // A drag moved the item to a new position -> distinct geometry.
+      component.dashboard = [
+        { cols: 4, moduleKey: 'holdings', rows: 3, x: 2, y: 1 }
+      ];
       itemChangeCallback();
+
+      // A resize then changed the item's size -> distinct geometry again.
+      component.dashboard = [
+        { cols: 6, moduleKey: 'holdings', rows: 5, x: 2, y: 1 }
+      ];
       itemResizeCallback();
 
       expect(queueSaveSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // F2-01 / Rule R4: persistence is triggered EXCLUSIVELY by grid
+    // state-CHANGE events. The `angular-gridster2` engine fires an
+    // `itemChangeCallback` volley while it lays out the freshly hydrated items
+    // on load, but that volley reproduces the SAME geometry that was just
+    // loaded -> nothing changed, so NO spurious `PATCH` must be issued. The
+    // canvas seeds a dedup signature from the loaded layout in `ngOnInit`, so a
+    // post-hydration callback with identical geometry is a no-op; a subsequent
+    // real change still persists exactly once.
+    it('should not persist on the post-hydration callback volley when geometry is unchanged (R4)', () => {
+      const savedLayout = {
+        layoutData: {
+          items: [{ cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 }],
+          schemaVersion: 1
+        }
+      } as unknown as UserDashboardLayout;
+      getSpy.mockReturnValue(of(savedLayout));
+
+      component.ngOnInit();
+      // Hydration must not itself enqueue a save; guard against a regression.
+      expect(queueSaveSpy).not.toHaveBeenCalled();
+
+      const itemChangeCallback = component.options
+        .itemChangeCallback as unknown as () => void;
+
+      // Gridster's initial-placement volley reports the same hydrated geometry.
+      itemChangeCallback();
+      expect(queueSaveSpy).not.toHaveBeenCalled();
+
+      // A real change after hydration still persists.
+      component.dashboard = [
+        { cols: 6, moduleKey: 'holdings', rows: 6, x: 0, y: 0 }
+      ];
+      itemChangeCallback();
+      expect(queueSaveSpy).toHaveBeenCalledTimes(1);
     });
 
     // Required case (7), per-item half: an added module adopts the minimum cell
