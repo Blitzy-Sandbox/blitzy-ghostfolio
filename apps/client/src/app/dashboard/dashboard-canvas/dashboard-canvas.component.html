@@ -8,7 +8,7 @@
     type="button"
     (click)="openCatalog()"
   >
-    <mat-icon>add</mat-icon>
+    <ion-icon name="add-outline" />
     <span i18n>Add module</span>
   </button>
 </div>
@@ -35,6 +35,7 @@
 @if (isInitialized()) {
   <gf-module-catalog
     [autoOpen]="shouldAutoOpenCatalog()"
+    [placedModuleKeys]="placedModuleKeys"
     (addModule)="onAddModule($event)"
   />
 }

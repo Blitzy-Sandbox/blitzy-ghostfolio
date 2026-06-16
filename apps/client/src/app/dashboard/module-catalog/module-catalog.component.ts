@@ -9,6 +9,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   EventEmitter,
+  HostListener,
   Input,
   OnInit,
   Output,
@@ -19,11 +20,28 @@ import {
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import {
+  addOutline,
+  analyticsOutline,
+  barChartOutline,
+  chatbubblesOutline,
+  closeOutline,
+  eyeOutline,
+  flameOutline,
+  flaskOutline,
+  gridOutline,
+  pieChartOutline,
+  readerOutline,
+  swapHorizontalOutline,
+  trendingUpOutline,
+  walletOutline
+} from 'ionicons/icons';
 
 /**
  * Searchable, auto-opening module catalog (the "introduce a module" surface).
@@ -47,9 +65,9 @@ import { MatTooltipModule } from '@angular/material/tooltip';
   imports: [
     CommonModule,
     FormsModule,
+    IonIcon,
     MatButtonModule,
     MatFormFieldModule,
-    MatIconModule,
     MatInputModule,
     MatListModule,
     MatSidenavModule,
@@ -68,6 +86,19 @@ export class GfModuleCatalogComponent implements OnInit {
    * the decision is made upstream and handed in as a plain input.
    */
   @Input() public autoOpen = false;
+
+  /**
+   * The stable keys of the modules currently placed on the canvas. Supplied by
+   * the canvas (the grid state is the single source of truth) so the catalog
+   * can mark already-added modules as added: their row is disabled, drag is
+   * suppressed, and an explicit "Added" label replaces the add affordance.
+   * This resolves the silent duplicate-add no-op (QA F9 Issue 9) — adding an
+   * already-present module is impossible on the canvas (it enforces
+   * uniqueness), so the catalog must communicate that state rather than appear
+   * to do nothing on click. Defaults to an empty array so the catalog renders
+   * every row as addable until the canvas wires its placed keys.
+   */
+  @Input() public placedModuleKeys: string[] = [];
 
   /**
    * Emits the stable `key` of the module the user chose to add. Kept a plain
@@ -119,6 +150,47 @@ export class GfModuleCatalogComponent implements OnInit {
 
   private readonly moduleRegistryService = inject(ModuleRegistryService);
 
+  public constructor() {
+    addIcons({
+      addOutline,
+      analyticsOutline,
+      barChartOutline,
+      chatbubblesOutline,
+      closeOutline,
+      eyeOutline,
+      flameOutline,
+      flaskOutline,
+      gridOutline,
+      pieChartOutline,
+      readerOutline,
+      swapHorizontalOutline,
+      trendingUpOutline,
+      walletOutline
+    });
+  }
+
+  /**
+   * Deterministic Escape-to-close (QA F9 Issue 10). `MatSidenav` closes on
+   * Escape only while focus remains inside the drawer; once focus moves to a
+   * catalog row or out of the panel, the native handler stops firing, which is
+   * the inconsistency QA observed. A document-level keydown handler — guarded
+   * by {@link opened} so it is a strict no-op whenever the catalog is closed
+   * (and therefore never interferes with Escape on menus/dialogs opened from
+   * the dashboard while the catalog is shut) — guarantees Escape always closes
+   * an open catalog regardless of where focus currently sits. The
+   * {@link setOpened} guard makes a redundant close (when the native sidenav
+   * handler also fires) an idempotent no-op.
+   *
+   * @param event - The native keydown event.
+   */
+  @HostListener('document:keydown.escape', ['$event'])
+  public onEscapeKeydown(event: KeyboardEvent): void {
+    if (this.opened()) {
+      event.preventDefault();
+      this.close();
+    }
+  }
+
   /**
    * Honors {@link autoOpen}: opens the catalog on first render when the canvas
    * has flagged this as a first visit.
@@ -135,6 +207,19 @@ export class GfModuleCatalogComponent implements OnInit {
    */
   public close(): void {
     this.setOpened(false);
+  }
+
+  /**
+   * Whether a module is already placed on the canvas. Drives the catalog row's
+   * disabled/"Added" state (QA F9 Issue 9) from the canvas-supplied
+   * {@link placedModuleKeys}, keeping the grid the single source of truth — the
+   * catalog never tracks placement itself.
+   *
+   * @param key - The stable registry key of the catalog row.
+   * @returns `true` when the module is already on the canvas.
+   */
+  public isPlaced(key: string): boolean {
+    return this.placedModuleKeys.includes(key);
   }
 
   /**
@@ -159,7 +244,10 @@ export class GfModuleCatalogComponent implements OnInit {
    * @param key - The stable registry key of the dragged module.
    */
   public onDragStart(event: DragEvent, key: string): void {
-    if (!event.dataTransfer) {
+    // Already-placed modules cannot be added again (the canvas enforces
+    // uniqueness); suppress the drag so the row's disabled/"Added" state
+    // (QA F9 Issue 9) is honored for drag-add as well as click-add.
+    if (!event.dataTransfer || this.isPlaced(key)) {
       return;
     }
 

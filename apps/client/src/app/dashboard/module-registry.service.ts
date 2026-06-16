@@ -63,7 +63,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfPortfolioOverviewModuleComponent,
       displayName: $localize`Portfolio Overview`,
-      icon: 'dashboard',
+      icon: 'grid-outline',
       key: 'portfolio-overview',
       minItemCols: 6,
       minItemRows: 4
@@ -72,7 +72,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfHoldingsModuleComponent,
       displayName: $localize`Holdings`,
-      icon: 'account_balance_wallet',
+      icon: 'wallet-outline',
       key: 'holdings',
       minItemCols: 6,
       minItemRows: 4
@@ -81,7 +81,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfSummaryModuleComponent,
       displayName: $localize`Summary`,
-      icon: 'reorder',
+      icon: 'reader-outline',
       key: 'summary',
       minItemCols: 3,
       minItemRows: 4
@@ -90,7 +90,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfMarketsModuleComponent,
       displayName: $localize`Markets`,
-      icon: 'trending_up',
+      icon: 'trending-up-outline',
       key: 'markets',
       minItemCols: 4,
       minItemRows: 3
@@ -99,7 +99,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfWatchlistModuleComponent,
       displayName: $localize`Watchlist`,
-      icon: 'visibility',
+      icon: 'eye-outline',
       key: 'watchlist',
       minItemCols: 3,
       minItemRows: 4
@@ -108,7 +108,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfPortfolioSummaryModuleComponent,
       displayName: $localize`Portfolio Summary`,
-      icon: 'pie_chart',
+      icon: 'pie-chart-outline',
       key: 'portfolio-summary',
       minItemCols: 4,
       minItemRows: 4
@@ -117,7 +117,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfTransactionsModuleComponent,
       displayName: $localize`Transactions`,
-      icon: 'swap_horiz',
+      icon: 'swap-horizontal-outline',
       key: 'transactions',
       minItemCols: 6,
       minItemRows: 4
@@ -126,7 +126,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfAllocationsModuleComponent,
       displayName: $localize`Allocations`,
-      icon: 'donut_large',
+      icon: 'analytics-outline',
       key: 'allocations',
       minItemCols: 6,
       minItemRows: 4
@@ -135,7 +135,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfAnalysisModuleComponent,
       displayName: $localize`Analysis`,
-      icon: 'bar_chart',
+      icon: 'bar-chart-outline',
       key: 'analysis',
       minItemCols: 6,
       minItemRows: 4
@@ -144,7 +144,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfFireModuleComponent,
       displayName: $localize`FIRE`,
-      icon: 'local_fire_department',
+      icon: 'flame-outline',
       key: 'fire',
       minItemCols: 4,
       minItemRows: 4
@@ -153,7 +153,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfXRayModuleComponent,
       displayName: $localize`X-ray`,
-      icon: 'biotech',
+      icon: 'flask-outline',
       key: 'x-ray',
       minItemCols: 6,
       minItemRows: 4
@@ -162,7 +162,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfAiChatModuleComponent,
       displayName: $localize`AI Chat`,
-      icon: 'chat',
+      icon: 'chatbubbles-outline',
       key: 'ai-chat',
       minItemCols: 3,
       minItemRows: 4

@@ -73,7 +73,25 @@
   margin: 0;
 }
 
+// QA F9 Issue 10 (a11y): the host theme renders icon buttons at a reduced
+// density (~28px); enlarge the catalog close affordance to the 44x44 minimum
+// touch target (WCAG 2.5.5). `--mdc-icon-button-state-layer-size` and the
+// box dimensions are Material *component*/layout tokens (sizes, not the
+// `--mat-sys-*` color system), so Decision D-020's token+fallback rule — which
+// governs color/background/border values — does not apply to them.
+.catalog-header button {
+  --mdc-icon-button-state-layer-size: 44px;
+  height: 44px;
+  padding: 0;
+  width: 44px;
+}
+
 .catalog-search {
+  // QA F9 Issue 9: the outlined form field's floating label sits ~7px above the
+  // field box, and with the header flush above it the label overlapped the
+  // header text. A small top margin gives the floating label clearance below
+  // the catalog header so it is no longer clipped/overlapping.
+  margin-top: 0.5rem;
   width: 100%;
 }
 
@@ -85,6 +103,40 @@
 // Hover affordance for each registered-module row in the catalog list.
 .catalog-item:hover {
   background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+}
+
+// QA F9 Issue 10 (a11y): ensure each catalog row meets the 44px minimum
+// touch-target height (the host list density renders ~36px rows). A layout
+// dimension, so Decision D-020's color-token rule does not apply.
+.catalog-item {
+  min-height: 44px;
+}
+
+// QA F9 Issue 10 (a11y): a clearly visible keyboard focus indicator on the
+// close button and each catalog row (the host focus ring was weak/non-obvious,
+// QA "remove-button focus ring is weak"). The brand teal is applied via the
+// MD3 primary system token with a mandatory hardcoded fallback (Decision
+// D-020); the token is not emitted at runtime, so the fallback renders.
+.catalog-header button:focus-visible,
+.catalog-item:focus-visible {
+  outline: 2px solid var(--mat-sys-primary, rgb(0, 161, 159));
+  outline-offset: -2px;
+}
+
+// QA F9 Issue 9: an already-placed module's row is disabled and labeled
+// "Added" instead of presenting the add affordance, so attempting to add a
+// duplicate reads as intentional (the row is visibly inert) rather than a
+// silent click no-op. Mute the disabled row and render the "Added" label in
+// the secondary on-surface token (mandatory D-020 fallback).
+.catalog-item--added {
+  opacity: 0.6;
+}
+
+.catalog-item-added {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
 }
 
 .catalog-empty {
@@ -120,5 +172,17 @@
 
   .catalog-empty {
     color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  // Dark-mode "Added" label + focus ring: same token names with dark-mode
+  // fallbacks (mirrors the chat-panel dark block). The focus ring uses the
+  // dark brand teal so it stays visible on the dark catalog surface.
+  .catalog-item-added {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .catalog-header button:focus-visible,
+  .catalog-item:focus-visible {
+    outline-color: var(--mat-sys-primary, rgb(71, 219, 215));
   }
 }

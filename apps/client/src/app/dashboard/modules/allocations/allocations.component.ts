@@ -16,17 +16,19 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
-import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { closeOutline } from 'ionicons/icons';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     CommonModule,
     GfAllocationsPageComponent,
+    IonIcon,
     MatButtonModule,
     MatCardModule,
-    MatIconModule,
     MatTooltipModule
   ],
   selector: 'gf-allocations-module',
@@ -86,7 +88,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
           (click)="removeModule?.()"
           (mousedown)="$event.stopPropagation()"
         >
-          <mat-icon>close</mat-icon>
+          <ion-icon name="close-outline" />
         </button>
       </div>
       <div #content class="gf-module-content">
@@ -112,6 +114,10 @@ export class GfAllocationsModuleComponent implements AfterViewInit, OnDestroy {
     viewChild.required<ElementRef<HTMLElement>>('content');
   private readonly ngZone = inject(NgZone);
   private resizeObserver?: ResizeObserver;
+
+  public constructor() {
+    addIcons({ closeOutline });
+  }
 
   /**
    * Defers rendering the embedded allocations page until the module's content

@@ -4,17 +4,19 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
-import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { closeOutline } from 'ionicons/icons';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     CommonModule,
     GfHomeMarketComponent,
+    IonIcon,
     MatButtonModule,
     MatCardModule,
-    MatIconModule,
     MatTooltipModule
   ],
   selector: 'gf-markets-module',
@@ -74,7 +76,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
           (click)="removeModule?.()"
           (mousedown)="$event.stopPropagation()"
         >
-          <mat-icon>close</mat-icon>
+          <ion-icon name="close-outline" />
         </button>
       </div>
       <div class="gf-module-content">
@@ -85,4 +87,8 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 })
 export class GfMarketsModuleComponent {
   @Input() removeModule?: () => void;
+
+  public constructor() {
+    addIcons({ closeOutline });
+  }
 }

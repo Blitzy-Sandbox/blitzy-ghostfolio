@@ -40,6 +40,36 @@ jest.mock('@ghostfolio/client/dashboard/module-registry.service', () => ({
   ModuleRegistryService: class {}
 }));
 
+// The dashboard canvas/catalog components statically import `IonIcon` from
+// `@ionic/angular/standalone`, whose real module graph reaches `@ionic/core`'s
+// plain-ESM `.js` files that Jest cannot parse under the project's
+// `transformIgnorePatterns` rule (`apps/client/jest.config.ts`, out of scope
+// per AAP § 0.6). Mocking the package with a minimal standalone `ion-icon`
+// stand-in (exposing the bound `name` input) short-circuits that chain while
+// keeping the component's `imports` array and rendered template valid. The
+// companion `ionicons`/`ionicons/icons` mocks neutralise the `addIcons(...)`
+// registration call the components run in their constructors.
+jest.mock('@ionic/angular/standalone', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  const ngCore = require('@angular/core') as typeof import('@angular/core');
+  const { Component } = ngCore;
+  class IonIcon {}
+  Component({ inputs: ['name'], selector: 'ion-icon', template: '' })(IonIcon);
+  return { IonIcon };
+});
+jest.mock('ionicons', () => ({ addIcons: jest.fn() }));
+jest.mock(
+  'ionicons/icons',
+  () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, property) =>
+          typeof property === 'string' ? property : undefined
+      }
+    )
+);
+
 // A small, fixed, realistic set of module definitions with deliberately varied
 // `displayName`s so the case-insensitive search filter can be exercised. The
 // `component` field is a throwaway stub class — the catalog never instantiates
@@ -399,6 +429,121 @@ describe('GfModuleCatalogComponent', () => {
       ) as HTMLButtonElement;
 
       expect(holdingsRow.getAttribute('draggable')).toBe('true');
+    });
+  });
+
+  // Issue 9 — the catalog surfaces which modules already live on the canvas via
+  // the `placedModuleKeys` input so that an already-added module's row is
+  // disabled, labelled "Added", and non-draggable. This gives the previously
+  // silent duplicate-add no-op a visible, explained state (the canvas itself
+  // also rejects duplicates, so a click on a placed row never adds a second
+  // copy).
+  describe('placedModuleKeys / isPlaced (Issue 9)', () => {
+    it('should default placedModuleKeys to an empty array so nothing is placed', () => {
+      expect(component.placedModuleKeys).toEqual([]);
+      expect(component.isPlaced('holdings')).toBe(false);
+    });
+
+    it('should report a module as placed only when its key is in placedModuleKeys', () => {
+      component.placedModuleKeys = ['holdings'];
+
+      expect(component.isPlaced('holdings')).toBe(true);
+      expect(component.isPlaced('markets')).toBe(false);
+    });
+
+    it('should disable, label "Added", and clear draggable on a placed row while leaving unplaced rows interactive', () => {
+      component.placedModuleKeys = ['holdings'];
+      component.open();
+      fixture.detectChanges();
+
+      const holdingsRow = fixture.nativeElement.querySelector(
+        '[data-testid="catalog-item-holdings"]'
+      ) as HTMLButtonElement;
+      const marketsRow = fixture.nativeElement.querySelector(
+        '[data-testid="catalog-item-markets"]'
+      ) as HTMLButtonElement;
+
+      // Placed row: disabled, non-draggable, and carries the "Added" marker.
+      expect(holdingsRow.disabled).toBe(true);
+      expect(holdingsRow.getAttribute('draggable')).toBeNull();
+      expect(
+        holdingsRow.querySelector('[data-testid="catalog-added-marker"]')
+      ).not.toBeNull();
+
+      // Unplaced row: still enabled, draggable, and without the marker.
+      expect(marketsRow.disabled).toBe(false);
+      expect(marketsRow.getAttribute('draggable')).toBe('true');
+      expect(
+        marketsRow.querySelector('[data-testid="catalog-added-marker"]')
+      ).toBeNull();
+    });
+
+    it('should not emit addModule when a placed (disabled) row is clicked', () => {
+      component.placedModuleKeys = ['holdings'];
+      component.open();
+      fixture.detectChanges();
+
+      const emitted: string[] = [];
+      component.addModule.subscribe((key) => emitted.push(key));
+
+      const holdingsRow = fixture.nativeElement.querySelector(
+        '[data-testid="catalog-item-holdings"]'
+      ) as HTMLButtonElement;
+      holdingsRow.click();
+
+      // A disabled <button> does not fire its click handler, so no add occurs.
+      expect(emitted).toEqual([]);
+    });
+
+    it('should no-op on dragstart for a placed module so it cannot be drag-added again', () => {
+      component.placedModuleKeys = ['holdings'];
+      const setData = jest.fn();
+      const dataTransfer = {
+        effectAllowed: 'none',
+        setData
+      } as unknown as DataTransfer;
+      const event = { dataTransfer } as unknown as DragEvent;
+
+      component.onDragStart(event, 'holdings');
+
+      expect(setData).not.toHaveBeenCalled();
+    });
+  });
+
+  // Issue 10 — a document-level Escape keydown deterministically closes an open
+  // catalog (independent of where focus currently sits) and is a strict no-op
+  // when the catalog is already closed, so it never emits a spurious
+  // openedChange(false) nor swallows Escape from unrelated consumers.
+  describe('onEscapeKeydown (Issue 10)', () => {
+    it('should close an open catalog on Escape and emit openedChange(false)', () => {
+      component.open();
+
+      const emitted: boolean[] = [];
+      component.openedChange.subscribe((value) => emitted.push(value));
+
+      const event = {
+        preventDefault: jest.fn()
+      } as unknown as KeyboardEvent;
+      component.onEscapeKeydown(event);
+
+      expect(component.opened()).toBe(false);
+      expect(emitted).toEqual([false]);
+      expect(event.preventDefault).toHaveBeenCalled();
+    });
+
+    it('should be a no-op on Escape when the catalog is already closed', () => {
+      // `beforeEach` leaves the catalog closed (autoOpen = false).
+      const emitted: boolean[] = [];
+      component.openedChange.subscribe((value) => emitted.push(value));
+
+      const event = {
+        preventDefault: jest.fn()
+      } as unknown as KeyboardEvent;
+      component.onEscapeKeydown(event);
+
+      expect(component.opened()).toBe(false);
+      expect(emitted).toEqual([]);
+      expect(event.preventDefault).not.toHaveBeenCalled();
     });
   });
 });

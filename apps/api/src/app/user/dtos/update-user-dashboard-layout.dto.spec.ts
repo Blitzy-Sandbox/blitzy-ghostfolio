@@ -135,6 +135,60 @@ describe('UpdateUserDashboardLayoutDto', () => {
     });
   });
 
+  describe('rejects unregistered / duplicate moduleKeys (QA F9 Issues 2 & 5)', () => {
+    it('rejects an unknown (stale) moduleKey not in the registry allowlist', async () => {
+      await expect(
+        transform({
+          layoutData: {
+            schemaVersion: 1,
+            items: [{ ...validItem, moduleKey: 'retired-module-key' }]
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects a SQL-injection-shaped moduleKey', async () => {
+      await expect(
+        transform({
+          layoutData: {
+            schemaVersion: 1,
+            items: [
+              {
+                ...validItem,
+                moduleKey: 'summary; DROP TABLE "UserDashboardLayout"; --'
+              }
+            ]
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects an XSS / markup-shaped moduleKey', async () => {
+      await expect(
+        transform({
+          layoutData: {
+            schemaVersion: 1,
+            items: [{ ...validItem, moduleKey: '<img src=x onerror=alert(1)>' }]
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects duplicate moduleKeys in the items array', async () => {
+      await expect(
+        transform({
+          layoutData: {
+            schemaVersion: 1,
+            items: [
+              { ...validItem, moduleKey: 'summary' },
+              { ...validItem, moduleKey: 'summary', x: 6 }
+            ]
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   describe('accepts a well-formed payload', () => {
     it('returns a typed UpdateUserDashboardLayoutDto instance', async () => {
       const result = await transform(validPayload);
@@ -152,6 +206,21 @@ describe('UpdateUserDashboardLayoutDto', () => {
 
       expect(result).toBeInstanceOf(UpdateUserDashboardLayoutDto);
       expect(result.layoutData.items).toHaveLength(0);
+    });
+
+    it('accepts multiple distinct registered modules', async () => {
+      const result = await transform({
+        layoutData: {
+          schemaVersion: 1,
+          items: [
+            { moduleKey: 'holdings', x: 0, y: 0, cols: 6, rows: 4 },
+            { moduleKey: 'ai-chat', x: 6, y: 0, cols: 6, rows: 4 }
+          ]
+        }
+      });
+
+      expect(result).toBeInstanceOf(UpdateUserDashboardLayoutDto);
+      expect(result.layoutData.items).toHaveLength(2);
     });
   });
 });

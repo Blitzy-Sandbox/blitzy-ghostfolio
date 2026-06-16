@@ -114,7 +114,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfPortfolioOverviewModuleComponent',
     displayName: 'Portfolio Overview',
-    icon: 'dashboard',
+    icon: 'grid-outline',
     key: 'portfolio-overview',
     minItemCols: 6,
     minItemRows: 4
@@ -122,7 +122,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfHoldingsModuleComponent',
     displayName: 'Holdings',
-    icon: 'account_balance_wallet',
+    icon: 'wallet-outline',
     key: 'holdings',
     minItemCols: 6,
     minItemRows: 4
@@ -130,7 +130,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfSummaryModuleComponent',
     displayName: 'Summary',
-    icon: 'reorder',
+    icon: 'reader-outline',
     key: 'summary',
     minItemCols: 3,
     minItemRows: 4
@@ -138,7 +138,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfMarketsModuleComponent',
     displayName: 'Markets',
-    icon: 'trending_up',
+    icon: 'trending-up-outline',
     key: 'markets',
     minItemCols: 4,
     minItemRows: 3
@@ -146,7 +146,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfWatchlistModuleComponent',
     displayName: 'Watchlist',
-    icon: 'visibility',
+    icon: 'eye-outline',
     key: 'watchlist',
     minItemCols: 3,
     minItemRows: 4
@@ -154,7 +154,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfPortfolioSummaryModuleComponent',
     displayName: 'Portfolio Summary',
-    icon: 'pie_chart',
+    icon: 'pie-chart-outline',
     key: 'portfolio-summary',
     minItemCols: 4,
     minItemRows: 4
@@ -162,7 +162,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfTransactionsModuleComponent',
     displayName: 'Transactions',
-    icon: 'swap_horiz',
+    icon: 'swap-horizontal-outline',
     key: 'transactions',
     minItemCols: 6,
     minItemRows: 4
@@ -170,7 +170,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfAllocationsModuleComponent',
     displayName: 'Allocations',
-    icon: 'donut_large',
+    icon: 'analytics-outline',
     key: 'allocations',
     minItemCols: 6,
     minItemRows: 4
@@ -178,7 +178,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfAnalysisModuleComponent',
     displayName: 'Analysis',
-    icon: 'bar_chart',
+    icon: 'bar-chart-outline',
     key: 'analysis',
     minItemCols: 6,
     minItemRows: 4
@@ -186,7 +186,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfFireModuleComponent',
     displayName: 'FIRE',
-    icon: 'local_fire_department',
+    icon: 'flame-outline',
     key: 'fire',
     minItemCols: 4,
     minItemRows: 4
@@ -194,7 +194,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfXRayModuleComponent',
     displayName: 'X-ray',
-    icon: 'biotech',
+    icon: 'flask-outline',
     key: 'x-ray',
     minItemCols: 6,
     minItemRows: 4
@@ -202,7 +202,7 @@ const EXPECTED_MODULES: ExpectedModule[] = [
   {
     componentName: 'GfAiChatModuleComponent',
     displayName: 'AI Chat',
-    icon: 'chat',
+    icon: 'chatbubbles-outline',
     key: 'ai-chat',
     minItemCols: 3,
     minItemRows: 4

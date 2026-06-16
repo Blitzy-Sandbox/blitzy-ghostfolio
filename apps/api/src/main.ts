@@ -7,6 +7,7 @@ import {
 } from '@ghostfolio/common/config';
 
 import {
+  HttpStatus,
   Logger,
   LogLevel,
   ValidationPipe,
@@ -125,11 +126,6 @@ async function bootstrap() {
     useGlobalPrefix: false
   });
 
-  // Support 10mb csv/json files for importing activities
-  app.useBodyParser('json', { limit: '10mb' });
-
-  app.use(cookieParser());
-
   // Apply baseline HTTP security-hardening headers UNCONDITIONALLY (QA F5
   // Issue 1). Previously `helmet` was wired only inside the subscription
   // branch below, so default (non-subscription) deployments shipped without
@@ -145,6 +141,15 @@ async function bootstrap() {
   // asset loading. When `ENABLE_FEATURE_SUBSCRIPTION` is enabled, the
   // dedicated middleware below layers on the Stripe-aware CSP (and keeps
   // Cross-Origin-Opener-Policy disabled for Internet Identity).
+  //
+  // ORDERING (QA F9 Issue 3): the security-header middleware is registered
+  // BEFORE the JSON body parser below. A malformed JSON request body makes
+  // the body parser reject with a `SyntaxError` that short-circuits the
+  // middleware chain straight to the error handler — so any security
+  // middleware registered AFTER the parser would be skipped, leaving the
+  // resulting error response without the hardening header set. Registering
+  // helmet first guarantees every response, including the 400 emitted for a
+  // malformed body, carries the full security-header set.
   app.use(
     helmet({
       contentSecurityPolicy: false,
@@ -174,6 +179,49 @@ async function bootstrap() {
       }
     });
   }
+
+  app.use(cookieParser());
+
+  // Support 10mb csv/json files for importing activities
+  app.useBodyParser('json', { limit: '10mb' });
+
+  // Translate malformed-JSON body-parser failures into a clean HTTP 400
+  // (QA F9 Issue 3). Under Express 5 / body-parser 2 (NestJS 11) a JSON
+  // parse failure rejects with a `SyntaxError` carrying
+  // `type: 'entity.parse.failed'`; with no explicit error handler that
+  // rejection falls through to the framework's not-found path and surfaces
+  // as a misleading `404 Cannot <METHOD> <path>` (observed on every
+  // body-consuming endpoint, not just the dashboard layout endpoints). This
+  // four-argument Express error middleware intercepts that specific parse
+  // failure — and only that failure — and responds `400 Bad Request`. It is
+  // registered immediately after the body parser (so the parser's error is
+  // routed here) and after the helmet middleware above (so the security
+  // headers are already present on the response). All other errors are
+  // forwarded untouched to the framework's own exception handling.
+  app.use(
+    (
+      error: Error & { statusCode?: number; type?: string },
+      _request: Request,
+      response: Response,
+      next: NextFunction
+    ) => {
+      const isMalformedJsonBody =
+        error?.type === 'entity.parse.failed' ||
+        (error instanceof SyntaxError && 'body' in error);
+
+      if (isMalformedJsonBody && !response.headersSent) {
+        response.status(HttpStatus.BAD_REQUEST).json({
+          error: 'Bad Request',
+          message: 'Malformed JSON in request body',
+          statusCode: HttpStatus.BAD_REQUEST
+        });
+
+        return;
+      }
+
+      next(error);
+    }
+  );
 
   const HOST = configService.get<string>('HOST') || DEFAULT_HOST;
   const PORT = configService.get<number>('PORT') || DEFAULT_PORT;

@@ -102,6 +102,20 @@ export class UserDashboardLayoutService {
 
       outcome = layout ? 'success' : 'not_found';
 
+      // Success-path structured log with the request-scoped correlation id, so
+      // a successful read (and the normal first-visit `not_found`) is traceable
+      // end-to-end via `[UserDashboardLayoutService] [<correlationId>]` — not
+      // only error paths (QA F9 Issue 14).
+      Logger.log(
+        this.formatLogMessage(
+          layout
+            ? `Read UserDashboardLayout for user ${userId}`
+            : `No UserDashboardLayout found for user ${userId} (first visit)`,
+          correlationId
+        ),
+        'UserDashboardLayoutService'
+      );
+
       return layout;
     } catch (error) {
       outcome = 'error';
@@ -157,6 +171,18 @@ export class UserDashboardLayoutService {
       });
 
       outcome = 'success';
+
+      // Success-path structured log with the request-scoped correlation id so a
+      // successful upsert is traceable end-to-end via
+      // `[UserDashboardLayoutService] [<correlationId>]` — not only error paths
+      // (QA F9 Issue 14).
+      Logger.log(
+        this.formatLogMessage(
+          `Upserted UserDashboardLayout for user ${userId}`,
+          correlationId
+        ),
+        'UserDashboardLayoutService'
+      );
 
       return layout;
     } catch (error) {

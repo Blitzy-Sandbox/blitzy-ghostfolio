@@ -19,7 +19,7 @@
           type="button"
           (click)="close()"
         >
-          <mat-icon>close</mat-icon>
+          <ion-icon name="close-outline" />
         </button>
       </div>
 
@@ -40,18 +40,33 @@
         @for (module of filteredModules(); track module.key) {
           <button
             class="catalog-item"
-            draggable="true"
             mat-list-item
             type="button"
             [attr.data-testid]="'catalog-item-' + module.key"
+            [attr.draggable]="isPlaced(module.key) ? null : 'true'"
+            [class.catalog-item--added]="isPlaced(module.key)"
+            [disabled]="isPlaced(module.key)"
             (click)="onAddModule(module.key)"
             (dragstart)="onDragStart($event, module.key)"
           >
-            <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
+            <ion-icon matListItemIcon [name]="module.icon" />
             <span matListItemTitle>{{ module.displayName }}</span>
-            <mat-icon i18n-matTooltip matListItemMeta matTooltip="Add module"
-              >add</mat-icon
-            >
+            @if (isPlaced(module.key)) {
+              <span
+                class="catalog-item-added"
+                data-testid="catalog-added-marker"
+                i18n
+                matListItemMeta
+                >Added</span
+              >
+            } @else {
+              <ion-icon
+                i18n-matTooltip
+                matListItemMeta
+                matTooltip="Add module"
+                name="add-outline"
+              />
+            }
           </button>
         } @empty {
           <p class="catalog-empty" data-testid="catalog-empty" i18n>

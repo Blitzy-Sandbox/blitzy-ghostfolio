@@ -41,6 +41,36 @@ jest.mock('@ghostfolio/client/dashboard/module-registry.service', () => ({
   ModuleRegistryService: class {}
 }));
 
+// The dashboard canvas/catalog components statically import `IonIcon` from
+// `@ionic/angular/standalone`, whose real module graph reaches `@ionic/core`'s
+// plain-ESM `.js` files that Jest cannot parse under the project's
+// `transformIgnorePatterns` rule (`apps/client/jest.config.ts`, out of scope
+// per AAP § 0.6). Mocking the package with a minimal standalone `ion-icon`
+// stand-in (exposing the bound `name` input) short-circuits that chain while
+// keeping the component's `imports` array and rendered template valid. The
+// companion `ionicons`/`ionicons/icons` mocks neutralise the `addIcons(...)`
+// registration call the components run in their constructors.
+jest.mock('@ionic/angular/standalone', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  const ngCore = require('@angular/core') as typeof import('@angular/core');
+  const { Component } = ngCore;
+  class IonIcon {}
+  Component({ inputs: ['name'], selector: 'ion-icon', template: '' })(IonIcon);
+  return { IonIcon };
+});
+jest.mock('ionicons', () => ({ addIcons: jest.fn() }));
+jest.mock(
+  'ionicons/icons',
+  () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, property) =>
+          typeof property === 'string' ? property : undefined
+      }
+    )
+);
+
 // A minimal registry of two modules with differing widths, enough to exercise
 // hydrate, add, first-fit and non-overlap. `component` is a throwaway stub: the
 // canvas never instantiates it in these tests because none of them render the

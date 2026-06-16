@@ -21,8 +21,8 @@ import {
   viewChild
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
 import {
   Gridster,
   GridsterConfig,
@@ -31,10 +31,15 @@ import {
 } from 'angular-gridster2';
 import { Chart } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
+import { addIcons } from 'ionicons';
+import { addOutline } from 'ionicons/icons';
 
 /**
- * Fixed pixel height of a single grid row. Paired with `GridType.Fixed`, it
- * yields a deterministic, non-responsive cell size.
+ * Fixed pixel height of a single grid row. Paired with
+ * `GridType.ScrollVertical`, the row height stays constant (the AAP's
+ * fixed-row-height requirement) while the 12 columns are sized to fit the
+ * available canvas width — so the grid never overflows the viewport
+ * horizontally and tall layouts scroll vertically instead of being clipped.
  */
 const FIXED_ROW_HEIGHT = 50;
 
@@ -96,8 +101,8 @@ const MIN_ITEM_ROWS = 2;
     GfModuleCatalogComponent,
     Gridster,
     GridsterItem,
+    IonIcon,
     MatButtonModule,
-    MatIconModule,
     MatTooltipModule
   ],
   selector: 'gf-dashboard-canvas',
@@ -138,7 +143,17 @@ export class GfDashboardCanvasComponent implements OnInit {
       ignoreContent: true
     },
     fixedRowHeight: FIXED_ROW_HEIGHT,
-    gridType: GridType.Fixed,
+    // QA F9 Issue 6: `GridType.Fixed` sized every column at the engine's
+    // default 250px `fixedColWidth`, so the fixed 12-column grid rendered
+    // ~3000px wide and overflowed/clipped the canvas at every desktop width
+    // (items reached ~3120px at a 1280px/1920px viewport). `ScrollVertical`
+    // preserves the constant `fixedRowHeight` (the AAP fixed-row-height
+    // requirement) but derives each column's width from the available canvas
+    // width, so the 12 columns always fit horizontally and overflow is
+    // resolved by vertical scrolling. The column count stays pinned at 12 via
+    // `minCols`/`maxCols` below — this is deliberate fit-to-width, NOT
+    // responsive column reflow (which remains out of scope per AAP 0.7.2).
+    gridType: GridType.ScrollVertical,
     itemChangeCallback: () => this.persistLayout(),
     itemResizeCallback: () => this.persistLayout(),
     maxCols: GRID_COLUMNS,
@@ -221,6 +236,20 @@ export class GfDashboardCanvasComponent implements OnInit {
    */
   public constructor() {
     Chart.register(annotationPlugin);
+    addIcons({ addOutline });
+  }
+
+  /**
+   * The stable keys of every module currently placed on the canvas, derived
+   * live from {@link dashboard} (the single source of truth — the catalog never
+   * tracks placement itself). Bound to the catalog's `[placedModuleKeys]` input
+   * so already-added modules render as disabled/"Added" (QA F9 Issue 9). A
+   * fresh array is produced on each read, so the `OnPush` catalog detects the
+   * input change after every add/remove (both reassign {@link dashboard} and
+   * call `markForCheck`).
+   */
+  public get placedModuleKeys(): string[] {
+    return this.dashboard.map((item) => item.moduleKey);
   }
 
   /**

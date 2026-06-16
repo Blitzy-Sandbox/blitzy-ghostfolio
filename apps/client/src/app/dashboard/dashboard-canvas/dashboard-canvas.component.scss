@@ -45,6 +45,34 @@
   padding: 0.5rem;
 }
 
+// QA F9 Issue 10 (a11y): the "Add module" affordance.
+//
+// (1) Touch target — under the host theme's reduced button density the filled
+//     button renders only ~28px tall; pin a 44px minimum height to meet the
+//     WCAG 2.5.5 minimum target size (a layout dimension, outside Decision
+//     D-020's color-token scope).
+// (2) Contrast — `color="primary"` paints the button with the theme's light
+//     teal (rgb(54, 207, 204)); white label text on it is only ~1.9:1, far
+//     below the 4.5:1 WCAG AA threshold (QA-measured). Re-tokenize the
+//     container to a darker brand teal whose fallback yields >=4.5:1 with white
+//     text (white on rgb(0, 121, 119) ~= 5.1:1) via the MD3 primary/on-primary
+//     system tokens with mandatory hardcoded fallbacks (Decision D-020). The
+//     `--mat-sys-*` tokens are not emitted at runtime (see header), so the
+//     fallbacks render. The selector includes `.mat-mdc-unelevated-button`
+//     `.mat-primary` so it outranks the theme's own direct background-color.
+.dashboard-toolbar button.mat-mdc-unelevated-button.mat-primary {
+  background-color: var(--mat-sys-primary, rgb(0, 121, 119));
+  color: var(--mat-sys-on-primary, rgb(255, 255, 255));
+  min-height: 44px;
+}
+
+// Visible keyboard focus ring for the "Add module" button (Decision D-020
+// token + mandatory fallback).
+.dashboard-toolbar button:focus-visible {
+  outline: 2px solid var(--mat-sys-primary, rgb(0, 121, 119));
+  outline-offset: 2px;
+}
+
 // The `<gridster>` element fills the remaining height beneath the toolbar so
 // the grid engine can compute non-zero cell sizes. A subtle surface tint
 // distinguishes the empty canvas from the modules placed on it.
@@ -85,6 +113,28 @@
   background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
 }
 
+// QA F9 Issue 10 (a11y): module-header remove button. The host theme renders
+// icon buttons at a reduced density (~28px); enlarge every module's remove
+// affordance to the 44x44 minimum touch target (WCAG 2.5.5) and give it a
+// clearly visible keyboard focus ring (QA "remove-button focus ring is weak").
+// `.gf-module-header` is module chrome rendered inside each grid item via
+// NgComponentOutlet, so this single canvas-level `::ng-deep` override applies
+// to all current and future modules — matching the established single-point
+// pattern used for the header divider and module surface above. The size
+// tokens are layout dimensions; the focus-ring color uses the MD3 primary
+// system token with a mandatory hardcoded fallback (Decision D-020).
+:host ::ng-deep .gf-module-header button {
+  --mdc-icon-button-state-layer-size: 44px;
+  height: 44px;
+  padding: 0;
+  width: 44px;
+}
+
+:host ::ng-deep .gf-module-header button:focus-visible {
+  outline: 2px solid var(--mat-sys-primary, rgb(0, 161, 159));
+  outline-offset: -2px;
+}
+
 // Dark-theme overrides — re-declare only the rules whose fallback differs in
 // dark mode (`.theme-dark` is applied to <body> by app.component).
 :host-context(.theme-dark) {
@@ -119,5 +169,12 @@
   // override keeps the divider correct for all current and future modules.
   ::ng-deep .gf-module-header {
     border-bottom-color: var(--mat-sys-outline, rgba(255, 255, 255, 0.12));
+  }
+
+  // Dark-mode focus ring for the module-header remove button: the dark brand
+  // teal keeps the indicator visible on the dark module surface (Decision
+  // D-020 token + mandatory fallback).
+  ::ng-deep .gf-module-header button:focus-visible {
+    outline-color: var(--mat-sys-primary, rgb(71, 219, 215));
   }
 }

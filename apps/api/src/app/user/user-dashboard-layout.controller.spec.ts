@@ -56,6 +56,12 @@ describe('UserDashboardLayoutController', () => {
 
   const buildMockResponse = () => {
     return {
+      // `getHeader` returns undefined in unit context (no middleware ran), so
+      // the controller falls back to generating a fresh v4 correlation id —
+      // preserving the existing per-request-unique-id assertions. At runtime
+      // `layoutResponseHeadersMiddleware` populates this header first and the
+      // controller reuses it (QA F9 Issue 4).
+      getHeader: jest.fn().mockReturnValue(undefined),
       setHeader: jest.fn()
     } as any;
   };

@@ -35,13 +35,17 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * `/api/v1` URI version from `apps/api/src/main.ts`. Both endpoints are
  * guarded by `AuthGuard('jwt')` (401) and `HasPermissionGuard` (403); the
  * global `ValidationPipe` rejects an invalid PATCH body with 400. `userId` is
- * sourced exclusively from `this.request.user.id`, and a fresh
- * `X-Correlation-ID` response header is set before the service call (so it is
- * present on success and error paths) and passed to the service for
- * end-to-end log correlation. Both responses are additionally marked
- * `Cache-Control: no-store` so authenticated, user-specific layout data is
- * never persisted by the browser or a shared/intermediary cache (QA F5
- * Issue 1).
+ * sourced exclusively from `this.request.user.id`. The `X-Correlation-ID` and
+ * `Cache-Control: no-store` response headers are stamped by
+ * `layoutResponseHeadersMiddleware` (wired in `UserModule` and scoped to this
+ * controller), which runs BEFORE the guards/pipe — so those headers are
+ * present even on the 401/403/400 short-circuit responses, not only the
+ * controller-executed 200/404 paths (QA F9 Issue 4). Each handler reads the
+ * middleware-generated correlation id back off the response and reuses it for
+ * the service call, giving a single id that correlates the middleware, guards,
+ * controller, and service logs end-to-end (`Cache-Control: no-store` keeps
+ * authenticated, user-specific layout data out of any browser or shared cache —
+ * QA F5 Issue 1).
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {
@@ -64,7 +68,13 @@ export class UserDashboardLayoutController {
   public async getLayout(
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
+    // Reuse the correlation id that `layoutResponseHeadersMiddleware` (wired in
+    // UserModule) already generated and stamped on the response, so a single id
+    // correlates the middleware, guards, controller, and service logs
+    // end-to-end (QA F9 Issue 4). Falls back to a fresh id when the middleware
+    // did not run (e.g. direct controller unit tests).
+    const correlationId =
+      (response.getHeader('X-Correlation-ID') as string) ?? randomUUID();
     response.setHeader('X-Correlation-ID', correlationId);
     // Authenticated, user-specific layout data must never be cached by the
     // browser or any shared/intermediary cache (QA F5 Issue 1). Set before the
@@ -101,7 +111,13 @@ export class UserDashboardLayoutController {
     @Body() dto: UpdateUserDashboardLayoutDto,
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
+    // Reuse the correlation id that `layoutResponseHeadersMiddleware` (wired in
+    // UserModule) already generated and stamped on the response, so a single id
+    // correlates the middleware, guards, controller, and service logs
+    // end-to-end (QA F9 Issue 4). Falls back to a fresh id when the middleware
+    // did not run (e.g. direct controller unit tests).
+    const correlationId =
+      (response.getHeader('X-Correlation-ID') as string) ?? randomUUID();
     response.setHeader('X-Correlation-ID', correlationId);
     // Authenticated, user-specific layout data must never be cached by the
     // browser or any shared/intermediary cache (QA F5 Issue 1).

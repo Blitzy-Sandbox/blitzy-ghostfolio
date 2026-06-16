@@ -212,8 +212,10 @@ export {
   XRayRulesSettings
 };
 
+export { DASHBOARD_MODULE_KEYS } from './user-dashboard-layout.interface';
 export type {
   DashboardLayoutItem,
+  DashboardModuleKey,
   LayoutData,
   UserDashboardLayout,
   UserDashboardLayoutPatchPayload

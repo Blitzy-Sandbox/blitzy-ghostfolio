@@ -1,8 +1,12 @@
+import { DASHBOARD_MODULE_KEYS } from '@ghostfolio/common/interfaces';
+
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayUnique,
   IsArray,
   IsDefined,
+  IsIn,
   IsInt,
   IsObject,
   IsString,
@@ -37,8 +41,23 @@ const MODULE_KEY_MAX_LENGTH = 100;
 const MAX_MODULES = 50;
 
 export class DashboardLayoutItemDto {
+  /**
+   * The stable registry key identifying which module this grid item renders.
+   *
+   * Validation is defense-in-depth:
+   * - `@IsString` + `@MaxLength` bound the type and length (DoS guard).
+   * - `@IsIn(DASHBOARD_MODULE_KEYS)` is an ALLOWLIST: only the keys registered
+   *   in the centralized client `ModuleRegistryService` (mirrored by the shared
+   *   `DASHBOARD_MODULE_KEYS` contract in `libs/common`) are accepted. Any
+   *   unknown, stale, SQL-ish, or markup `moduleKey` is rejected with HTTP 400
+   *   BEFORE persistence, preserving the registry-only-introduction rule
+   *   (AAP § 0.8.1) and preventing untrusted layout data from reaching the
+   *   JSONB column (QA F9 Issue 2). The UI already safely ignores unknown keys;
+   *   this closes the persistence-integrity gap at the server boundary.
+   */
   @IsString()
   @MaxLength(MODULE_KEY_MAX_LENGTH)
+  @IsIn(DASHBOARD_MODULE_KEYS)
   moduleKey: string;
 
   @IsInt()
@@ -62,8 +81,17 @@ export class LayoutDataDto {
   @IsInt()
   schemaVersion: number;
 
+  /**
+   * The placed dashboard modules. Each `moduleKey` MUST be unique across the
+   * array: a module type appears at most once on the canvas, matching the UI,
+   * which no-ops a duplicate catalog add. `@ArrayUnique` (keyed by `moduleKey`)
+   * rejects a payload containing two items with the same `moduleKey` with HTTP
+   * 400, so the API enforces the same no-duplicate invariant the UI does and
+   * never persists duplicate module entries (QA F9 Issue 5).
+   */
   @IsArray()
   @ArrayMaxSize(MAX_MODULES)
+  @ArrayUnique((item: DashboardLayoutItemDto) => item.moduleKey)
   @ValidateNested({ each: true })
   @Type(() => DashboardLayoutItemDto)
   items: DashboardLayoutItemDto[];
