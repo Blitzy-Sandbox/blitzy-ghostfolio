@@ -1,7 +1,19 @@
 import { GfAllocationsPageComponent } from '@ghostfolio/client/pages/portfolio/allocations/allocations-page.component';
 
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
+import {
+  AfterViewInit,
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  inject,
+  Input,
+  NgZone,
+  OnDestroy,
+  signal,
+  viewChild
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
@@ -77,12 +89,92 @@ import { MatTooltipModule } from '@angular/material/tooltip';
           <mat-icon>close</mat-icon>
         </button>
       </div>
-      <div class="gf-module-content">
-        <gf-allocations-page />
+      <div #content class="gf-module-content">
+        @if (isContentSized()) {
+          <gf-allocations-page />
+        }
       </div>
     </mat-card>
   `
 })
-export class GfAllocationsModuleComponent {
+export class GfAllocationsModuleComponent implements AfterViewInit, OnDestroy {
   @Input() removeModule?: () => void;
+
+  /**
+   * Gates the embedded `gf-allocations-page` render. Starts `false` so the
+   * page (and the `gf-world-map-chart` it hosts) is not created until the
+   * module's content area has a non-zero size — see {@link ngAfterViewInit}.
+   */
+  protected readonly isContentSized = signal(false);
+
+  private readonly changeDetectorRef = inject(ChangeDetectorRef);
+  private readonly content =
+    viewChild.required<ElementRef<HTMLElement>>('content');
+  private readonly ngZone = inject(NgZone);
+  private resizeObserver?: ResizeObserver;
+
+  /**
+   * Defers rendering the embedded allocations page until the module's content
+   * area is laid out with a non-zero size.
+   *
+   * Rationale (QA F4-LOW-1): the allocations page hosts `gf-world-map-chart`,
+   * which initializes the `svgmap` engine synchronously on first render.
+   * `svgmap` calls `SVGSVGElement.getScreenCTM().inverse()` during setup; when
+   * its container is 0×0 — the brief window after a module is added to the grid
+   * but before `angular-gridster2` has measured and sized the freshly-placed
+   * item — the screen CTM is degenerate (zero scale, non-invertible) and the
+   * browser throws `InvalidStateError: Failed to execute 'inverse' on
+   * 'SVGMatrix': The matrix is not invertible.` Holding the page back until the
+   * grid item is sized guarantees the chart only mounts into a laid-out
+   * container, eliminating the console error. The fix lives entirely in this
+   * in-scope wrapper, leaving the out-of-scope chart and page components
+   * untouched (module isolation preserved).
+   */
+  public ngAfterViewInit() {
+    const element = this.content().nativeElement;
+
+    // Render immediately when the container is already laid out, or when the
+    // host environment provides no `ResizeObserver` (e.g. a non-browser test
+    // runner), so the module never silently fails to show its content.
+    if (typeof ResizeObserver === 'undefined' || this.hasNonZeroSize(element)) {
+      this.isContentSized.set(true);
+
+      return;
+    }
+
+    // Observe outside the Angular zone so the engine's intermediate zero-size
+    // measurements do not trigger change detection; re-enter the zone only for
+    // the single, meaningful transition to a sized container.
+    this.ngZone.runOutsideAngular(() => {
+      this.resizeObserver = new ResizeObserver((entries) => {
+        const isSized = entries.some(
+          ({ contentRect }) => contentRect.width > 0 && contentRect.height > 0
+        );
+
+        if (isSized) {
+          this.disconnectResizeObserver();
+
+          this.ngZone.run(() => {
+            this.isContentSized.set(true);
+            this.changeDetectorRef.markForCheck();
+          });
+        }
+      });
+
+      this.resizeObserver.observe(element);
+    });
+  }
+
+  public ngOnDestroy() {
+    this.disconnectResizeObserver();
+  }
+
+  private disconnectResizeObserver() {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
+  }
+
+  private hasNonZeroSize(element: HTMLElement) {
+    return element.clientWidth > 0 && element.clientHeight > 0;
+  }
 }
