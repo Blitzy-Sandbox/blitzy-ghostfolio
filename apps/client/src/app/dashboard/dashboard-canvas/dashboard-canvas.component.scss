@@ -70,6 +70,21 @@
   border-color: var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
 }
 
+// Module surface for each grid item. `angular-gridster2` ships an OPAQUE white
+// default in its bundled stylesheet (`gridster-item { background: #fff }` — an
+// element-only selector with no `!important`). In light theme that white reads
+// as the module surface and is fine, but in dark theme it bleeds through the
+// translucent `.gf-module-card` overlay (96% transparent) in every wrapper,
+// producing a near-white surface with illegible white text (QA F3-DARK-01).
+// Re-tokenize the grid item's background to the MD3 surface-container token so
+// the module surface tracks the active theme for ALL current and future
+// modules (single-point fix). The token is not emitted at runtime, so the
+// fallback renders (see header note); the light fallback over the white grid
+// background preserves the existing light-theme surface.
+:host ::ng-deep gridster-item.dashboard-grid-item {
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+}
+
 // Dark-theme overrides — re-declare only the rules whose fallback differs in
 // dark mode (`.theme-dark` is applied to <body> by app.component).
 :host-context(.theme-dark) {
@@ -82,5 +97,27 @@
 
   ::ng-deep gridster-preview {
     background: var(--mat-sys-primary-container, rgba(71, 219, 215, 0.16));
+  }
+
+  // Dark surface for each grid item so the bundled white `gridster-item`
+  // background does not show through the translucent module card (QA
+  // F3-DARK-01). The translucent dark fallback composites over the dark
+  // `.dashboard-grid` / page background (rgb(25, 25, 25)) to a legible dark
+  // surface, restoring sufficient contrast for the inherited white module text.
+  ::ng-deep gridster-item.dashboard-grid-item {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+  }
+
+  // Module-header divider: the wrappers' light `--mat-sys-outline` fallback
+  // (rgba(0, 0, 0, 0.12)) is near-black and becomes invisible on the dark
+  // module surface (QA F3-DARK-02). Re-tokenize to the dark outline fallback so
+  // the divider stays visible. `.gf-module-header` is module chrome rendered
+  // inside each grid item via NgComponentOutlet; this single canvas-level
+  // override keeps the divider correct for all current and future modules.
+  ::ng-deep .gf-module-header {
+    border-bottom-color: var(--mat-sys-outline, rgba(255, 255, 255, 0.12));
   }
 }

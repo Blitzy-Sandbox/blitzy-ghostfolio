@@ -17,15 +17,35 @@
   display: contents;
 }
 
-// The sidenav container is pinned to the full viewport so the `over`-mode
-// drawer and its backdrop float above the dashboard canvas.
+// The sidenav container is pinned to the viewport BENEATH the fixed application
+// header so the `over`-mode drawer and its backdrop float above the dashboard
+// canvas without underlapping the toolbar. `gf-header` is `position: fixed` with
+// `z-index: 999` and a height of `--mat-toolbar-standard-height`
+// (app.component.html / header.component.scss); a `top: 0` here lets that toolbar
+// overlay the top ~52px of the panel, hiding the catalog's own header (the
+// "Add module" title and the close button) and intercepting clicks on the close
+// affordance. Offsetting `top` by the toolbar height keeps the panel header
+// fully visible and clickable. `--mat-toolbar-standard-height` is a Material
+// *component* token (emitted at runtime) already used bare by app.component.scss
+// and dashboard-canvas.component.scss, so it needs no `--mat-sys-*` fallback
+// under Decision D-020 (which governs system-token color/background/border
+// values, not layout dimensions).
 .catalog-container {
   bottom: 0;
   left: 0;
   position: fixed;
   right: 0;
-  top: 0;
+  top: var(--mat-toolbar-standard-height);
   z-index: 5;
+}
+
+// When the live-demo / system-message banner is shown, app.component adds the
+// `.has-info-message` class to the `gf-root` host and the header doubles to two
+// toolbar rows (see app.component.scss and the matching rule in
+// dashboard-canvas.component.scss). Offset the container by the taller header so
+// the panel still starts just below the toolbar in that state.
+:host-context(.has-info-message) .catalog-container {
+  top: calc(2 * var(--mat-toolbar-standard-height));
 }
 
 // The catalog panel surface — this class is applied to the `<mat-sidenav>`.
