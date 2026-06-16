@@ -330,7 +330,9 @@
       background: linear-gradient(160deg, rgba(91, 57, 243, 0.55) 0%, rgba(45, 28, 119, 0.35) 100%);
       border: 1px solid rgba(148, 250, 213, 0.30);
       border-radius: 14px;
-      padding: 1.2em 0.6em 1.0em;
+      /* Horizontal padding trimmed (0.6em -> 0.4em) to give KPI values more
+         room and prevent edge clipping of longer values (QA INFO-2). */
+      padding: 1.2em 0.4em 1.0em;
       text-align: center;
       box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
       position: relative;
@@ -351,9 +353,14 @@
       color: var(--blitzy-mint);
     }
     .reveal .kpi-card .kpi-value {
-      font-size: 3.4em;
+      /* font-size reduced from 3.4em so 5-character values such as "500ms"
+         and "100ms" fit the fixed-width KPI card instead of being clipped
+         at the card edge by overflow:hidden (QA INFO-2). white-space:nowrap
+         keeps each value on a single line. */
+      font-size: 2.0em;
       font-weight: 800;
       line-height: 1;
+      white-space: nowrap;
       background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
       -webkit-background-clip: text;
       background-clip: text;
@@ -679,7 +686,7 @@
            diagram fits cleanly in the 1920x1080 slide. New components
            use the "newNode" classDef; existing surfaces "existingNode".
            ============================================================ -->
-      <section class="content-slide architecture-slide">
+      <section id="slide-integration" class="content-slide architecture-slide">
         <h2><i data-lucide="network"></i> Integration Topology</h2>
         <div class="mermaid">
 graph LR
@@ -1192,10 +1199,28 @@ graph LR
     });
 
     /* ------------------------------------------------------------
-       Render Mermaid + Lucide after Reveal is ready and on every
-       slide change. mermaid.run() is idempotent and processes only
-       unrendered .mermaid nodes; window.lucide.createIcons()
-       processes elements with [data-lucide] attribute.
+       Render Lucide icons + Mermaid diagrams after Reveal is ready
+       and on every slide change.
+
+       Mermaid render-timing fix (QA F7-1)
+       -----------------------------------
+       The previous implementation called mermaid.run() in-place. Because
+       mermaid.run() is idempotent, it processed the off-screen Slide-4
+       diagram during the initial Reveal 'ready' event while that slide
+       was still display:none. With a hidden container, the SVG text
+       getBBox() returns 0, so the flowchart layout collapsed to a
+       36-unit viewBox (~34x34px) and mermaid stamped the node
+       data-processed="true"; every later slidechanged re-run was then
+       skipped, so the diagram never recovered its real size.
+
+       The fix captures each diagram's source text once (before any
+       rendering) and renders it with mermaid.render(). mermaid.render()
+       lays the graph out inside a mermaid-managed temporary container
+       attached to <body> (always visible), so text measurement is
+       always correct regardless of which Reveal slide is currently
+       active. The resulting SVG is injected into the active slide's
+       .mermaid node and Reveal.layout() is invoked so the deck rescales
+       to the now-correctly-sized diagram.
        ------------------------------------------------------------ */
     function renderIcons() {
       try {
@@ -1207,27 +1232,73 @@ graph LR
       }
     }
 
-    function renderMermaid() {
-      try {
-        var nodes = document.querySelectorAll('.mermaid');
-        if (nodes && nodes.length > 0) {
-          mermaid.run({ querySelector: '.mermaid' }).catch(function (err) {
-            console.warn('[mermaid] run rejected:', err);
-          });
+    /* Capture every diagram's source text BEFORE any rendering so the
+       graph definition is never lost once the node is replaced by SVG. */
+    var mermaidSources = {};
+    (function captureMermaidSources() {
+      var nodes = document.querySelectorAll('.mermaid');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var key = el.getAttribute('data-mermaid-id');
+        if (!key) {
+          key = 'mermaid-' + i;
+          el.setAttribute('data-mermaid-id', key);
         }
+        mermaidSources[key] = el.textContent;
+        /* Defensive: clear any stale processed flag so our render owns it. */
+        el.removeAttribute('data-processed');
+      }
+    })();
+
+    function renderMermaidNode(el) {
+      if (!el || el.getAttribute('data-rendered') === 'true') {
+        return;
+      }
+      var key = el.getAttribute('data-mermaid-id');
+      var src = key ? mermaidSources[key] : null;
+      if (!src) {
+        return;
+      }
+      /* Unique id per render avoids any DOM id collision on the temporary
+         element mermaid.render() creates while measuring the graph. */
+      var renderId = 'mmd-' + key + '-' + Date.now();
+      try {
+        mermaid.render(renderId, src).then(function (result) {
+          el.innerHTML = result.svg;
+          if (result && typeof result.bindFunctions === 'function') {
+            result.bindFunctions(el);
+          }
+          el.setAttribute('data-rendered', 'true');
+          el.removeAttribute('data-processed');
+          /* Recompute Reveal scaling now that the diagram has real size. */
+          if (window.Reveal && typeof Reveal.layout === 'function') {
+            Reveal.layout();
+          }
+        }).catch(function (err) {
+          console.warn('[mermaid] render failed for ' + key + ':', err);
+        });
       } catch (err) {
-        console.warn('[mermaid] run threw:', err);
+        console.warn('[mermaid] render threw for ' + key + ':', err);
       }
     }
 
-    Reveal.on('ready', function () {
+    function renderMermaidInSlide(slideEl) {
+      var nodes = slideEl
+        ? slideEl.querySelectorAll('.mermaid')
+        : document.querySelectorAll('.mermaid');
+      for (var i = 0; i < nodes.length; i++) {
+        renderMermaidNode(nodes[i]);
+      }
+    }
+
+    Reveal.on('ready', function (event) {
       renderIcons();
-      renderMermaid();
+      renderMermaidInSlide((event && event.currentSlide) || Reveal.getCurrentSlide());
     });
 
-    Reveal.on('slidechanged', function () {
+    Reveal.on('slidechanged', function (event) {
       renderIcons();
-      renderMermaid();
+      renderMermaidInSlide((event && event.currentSlide) || Reveal.getCurrentSlide());
     });
   </script>
 </body>

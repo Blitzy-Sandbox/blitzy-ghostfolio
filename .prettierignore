@@ -3,5 +3,9 @@
 /apps/client/src/polyfills.ts
 /blitzy-deck
 /blitzy/documentation
+/blitzy/heapsnapshots
+/blitzy/logs
+/blitzy/perf_traces
+/blitzy/screenshots
 /dist
 /test/import
