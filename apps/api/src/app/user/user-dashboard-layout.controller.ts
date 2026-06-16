@@ -38,7 +38,10 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * sourced exclusively from `this.request.user.id`, and a fresh
  * `X-Correlation-ID` response header is set before the service call (so it is
  * present on success and error paths) and passed to the service for
- * end-to-end log correlation.
+ * end-to-end log correlation. Both responses are additionally marked
+ * `Cache-Control: no-store` so authenticated, user-specific layout data is
+ * never persisted by the browser or a shared/intermediary cache (QA F5
+ * Issue 1).
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {
@@ -63,6 +66,10 @@ export class UserDashboardLayoutController {
   ): Promise<UserDashboardLayout> {
     const correlationId = randomUUID();
     response.setHeader('X-Correlation-ID', correlationId);
+    // Authenticated, user-specific layout data must never be cached by the
+    // browser or any shared/intermediary cache (QA F5 Issue 1). Set before the
+    // service call so it is present on both the success (200) and error paths.
+    response.setHeader('Cache-Control', 'no-store');
 
     const userId = this.request.user.id;
     const layout = await this.userDashboardLayoutService.findByUserId(
@@ -96,6 +103,9 @@ export class UserDashboardLayoutController {
   ): Promise<UserDashboardLayout> {
     const correlationId = randomUUID();
     response.setHeader('X-Correlation-ID', correlationId);
+    // Authenticated, user-specific layout data must never be cached by the
+    // browser or any shared/intermediary cache (QA F5 Issue 1).
+    response.setHeader('Cache-Control', 'no-store');
 
     return this.userDashboardLayoutService.upsertForUser(
       this.request.user.id,

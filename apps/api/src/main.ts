@@ -42,7 +42,33 @@ async function bootstrap() {
         : ['debug', 'error', 'log', 'verbose', 'warn'])
   });
 
-  app.enableCors();
+  // Hide the `X-Powered-By: Express` response header so the underlying
+  // framework is not disclosed on any response (QA F5 Issue 2). `helmet`'s
+  // `hidePoweredBy` (enabled by the base middleware below) also removes it;
+  // disabling it at the Express app level guarantees it is never emitted
+  // regardless of middleware ordering.
+  app.disable('x-powered-by');
+
+  // Restrict CORS to an explicit origin allowlist for authenticated-API
+  // hardening (QA F5 Issue 3) rather than the previous permissive wildcard
+  // (`Access-Control-Allow-Origin: *`). The allowlist defaults to the
+  // application's own public origin (`ROOT_URL`, falling back to the build's
+  // `environment.rootUrl`); an optional comma-separated `CORS_ORIGINS`
+  // environment variable overrides it for deployments whose front-end is
+  // served from one or more additional origins. `credentials` is disabled
+  // because the API authenticates exclusively via the
+  // `Authorization: Bearer <JWT>` header, never cookies.
+  const corsOrigins = configService.get<string>('CORS_ORIGINS');
+  const rootUrl = configService.get<string>('ROOT_URL') ?? environment.rootUrl;
+  const allowedOrigins = (corsOrigins ? corsOrigins.split(',') : [rootUrl])
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  app.enableCors({
+    credentials: false,
+    origin: allowedOrigins
+  });
+
   app.enableVersioning({
     defaultVersion: '1',
     type: VersioningType.URI
@@ -103,6 +129,30 @@ async function bootstrap() {
   app.useBodyParser('json', { limit: '10mb' });
 
   app.use(cookieParser());
+
+  // Apply baseline HTTP security-hardening headers UNCONDITIONALLY (QA F5
+  // Issue 1). Previously `helmet` was wired only inside the subscription
+  // branch below, so default (non-subscription) deployments shipped without
+  // `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, or HSTS.
+  // This base middleware enables `noSniff`, `frameguard` (X-Frame-Options:
+  // SAMEORIGIN), `hidePoweredBy`, `referrerPolicy`, and `hsts` (honored only
+  // under HTTPS) for every response on every endpoint.
+  //
+  // The Content-Security-Policy and the cross-origin isolation policies are
+  // intentionally left OFF in this base layer: helmet's default CSP would
+  // block Angular's inline styles/scripts and the Swagger UI at `/docs`, and
+  // COOP/COEP/CORP would needlessly isolate the API and break cross-origin
+  // asset loading. When `ENABLE_FEATURE_SUBSCRIPTION` is enabled, the
+  // dedicated middleware below layers on the Stripe-aware CSP (and keeps
+  // Cross-Origin-Opener-Policy disabled for Internet Identity).
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false,
+      crossOriginResourcePolicy: false
+    })
+  );
 
   if (configService.get<string>('ENABLE_FEATURE_SUBSCRIPTION') === 'true') {
     app.use((req: Request, res: Response, next: NextFunction) => {

@@ -183,10 +183,15 @@ describe('UserDashboardLayoutController', () => {
 
     await controller.getLayout(httpResponse);
 
-    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
+    expect(httpResponse.setHeader).toHaveBeenCalledTimes(2);
     expect(httpResponse.setHeader).toHaveBeenCalledWith(
       'X-Correlation-ID',
       expect.any(String)
+    );
+    // QA F5 Issue 1: authenticated layout responses must be marked no-store.
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'Cache-Control',
+      'no-store'
     );
     const headerValue = httpResponse.setHeader.mock.calls[0][1] as string;
     expect(headerValue).toMatch(
@@ -210,10 +215,15 @@ describe('UserDashboardLayoutController', () => {
 
     await controller.updateLayout(VALID_DTO, httpResponse);
 
-    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
+    expect(httpResponse.setHeader).toHaveBeenCalledTimes(2);
     expect(httpResponse.setHeader).toHaveBeenCalledWith(
       'X-Correlation-ID',
       expect.any(String)
+    );
+    // QA F5 Issue 1: authenticated layout responses must be marked no-store.
+    expect(httpResponse.setHeader).toHaveBeenCalledWith(
+      'Cache-Control',
+      'no-store'
     );
     const headerValue = httpResponse.setHeader.mock.calls[0][1] as string;
     expect(headerValue).toMatch(
