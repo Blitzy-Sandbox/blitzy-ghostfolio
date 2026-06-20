@@ -6,7 +6,7 @@ import {
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Observable, of, Subject, throwError } from 'rxjs';
+import { EMPTY, Observable, of, Subject, throwError } from 'rxjs';
 import { catchError, debounceTime, switchMap } from 'rxjs/operators';
 
 /**
@@ -36,7 +36,20 @@ export class DashboardLayoutService {
       .pipe(
         debounceTime(500),
         switchMap((payload) =>
-          this.http.patch<UserDashboardLayout>('/api/v1/user/layout', payload)
+          this.http
+            .patch<UserDashboardLayout>('/api/v1/user/layout', payload)
+            .pipe(
+              catchError((error: HttpErrorResponse) => {
+                // Contain the PATCH failure INSIDE the inner stream so a
+                // transient save error does not terminate `persist$` and
+                // permanently disable future grid-event-driven saves. The
+                // outer subscription stays alive; the next `queueSave(...)`
+                // is processed normally.
+                console.error('Failed to persist dashboard layout', error);
+
+                return EMPTY;
+              })
+            )
         ),
         takeUntilDestroyed()
       )
