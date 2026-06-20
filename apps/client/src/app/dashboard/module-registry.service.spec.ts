@@ -177,6 +177,15 @@ describe('ModuleRegistryService', () => {
     service = TestBed.inject(ModuleRegistryService);
   });
 
+  // Reset Jest mock state between specs. The twelve wrapper modules are
+  // replaced with bare stub classes via top-level `jest.mock(...)` factories
+  // (not call-tracking spies), so this is a defensive convention mirroring the
+  // sibling `chat-panel.component.spec.ts` rather than a correctness
+  // requirement — it guarantees no spy state leaks into a later suite.
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('should be created', () => {
     expect(service).toBeTruthy();
   });
