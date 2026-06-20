@@ -17,6 +17,9 @@
   box-sizing: border-box;
   display: block;
   height: 100%;
+  // Positioning context for the absolutely-positioned empty-state overlay
+  // (.dashboard-empty) so it can center over the otherwise-blank grid area.
+  position: relative;
   width: 100%;
 }
 
@@ -36,6 +39,68 @@
   display: block;
   height: calc(100% - 3rem);
   width: 100%;
+}
+
+// Recoverable load-error state (F4). Replaces the grid when the initial layout
+// load fails with a non-404 error, filling the area below the toolbar and
+// centering an inline message + retry action so the canvas is never left blank.
+.dashboard-error {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: calc(100% - 3rem);
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+}
+
+.dashboard-error-icon {
+  color: var(--mat-sys-error, #ba1a1a);
+  font-size: 3rem;
+  height: 3rem;
+  width: 3rem;
+}
+
+.dashboard-error-message {
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+  margin: 0;
+}
+
+// Empty / first-visit guidance (F5). Overlays the (empty) grid area so the CTA
+// stays centered and visible even when the auto-opened catalog has been closed.
+// The container is click-through (pointer-events: none) so it never blocks a
+// drag-drop onto the empty grid behind it; the button re-enables its own.
+.dashboard-empty {
+  align-items: center;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  justify-content: center;
+  left: 0;
+  padding: 1rem;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  text-align: center;
+  top: 3rem;
+}
+
+.dashboard-empty button {
+  pointer-events: auto;
+}
+
+.dashboard-empty-icon {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-size: 3rem;
+  height: 3rem;
+  width: 3rem;
+}
+
+.dashboard-empty-message {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  margin: 0;
 }
 
 // Grid chrome (D-020). angular-gridster2 renders these elements internally and
@@ -67,5 +132,21 @@
 
   :host ::ng-deep gridster-preview {
     background: var(--mat-sys-primary-container, rgba(71, 219, 215, 0.16));
+  }
+
+  .dashboard-error-icon {
+    color: var(--mat-sys-error, #ffb4ab);
+  }
+
+  .dashboard-error-message {
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .dashboard-empty-icon {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .dashboard-empty-message {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
   }
 }

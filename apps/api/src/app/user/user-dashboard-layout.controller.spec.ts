@@ -9,6 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { AuthGuard } from '@nestjs/passport';
 import { UserDashboardLayout } from '@prisma/client';
+import type { Response } from 'express';
 
 import { UpdateUserDashboardLayoutDto } from './dtos/update-user-dashboard-layout.dto';
 import { UserDashboardLayoutController } from './user-dashboard-layout.controller';
@@ -54,10 +55,16 @@ describe('UserDashboardLayoutController', () => {
   let request: RequestWithUser;
   let userDashboardLayoutService: jest.Mocked<UserDashboardLayoutService>;
 
+  // Typed minimal Express `Response` mock: the cast is laundered through a
+  // concrete `setHeader` mock signature so the F6 correlation-ID assertions can
+  // read `.mock.calls[0][1]` as a `string` without scattering `no-unsafe-*`
+  // accesses (the real controller only ever touches `response.setHeader`).
   const buildMockResponse = () => {
     return {
       setHeader: jest.fn()
-    } as any;
+    } as unknown as Response & {
+      setHeader: jest.Mock<(name: string, value: string) => void>;
+    };
   };
 
   function buildRequest(userId: string): RequestWithUser {
@@ -97,10 +104,8 @@ describe('UserDashboardLayoutController', () => {
       upsertedRecord
     );
 
-    const result = await controller.updateLayout(
-      VALID_DTO,
-      buildMockResponse()
-    );
+    const httpResponse = buildMockResponse();
+    const result = await controller.updateLayout(VALID_DTO, httpResponse);
 
     expect(result).toBe(upsertedRecord);
     expect(userDashboardLayoutService.upsertForUser).toHaveBeenCalledTimes(1);
@@ -109,8 +114,14 @@ describe('UserDashboardLayoutController', () => {
     // Rule: userId is JWT-derived (request.user.id), dto is forwarded as-is.
     expect(upsertArgs[0]).toBe(USER_1_ID);
     expect(upsertArgs[1]).toBe(VALID_DTO);
-    // No third argument (the dateOfBirth helper is intentionally omitted).
-    expect(upsertArgs[2]).toBeUndefined();
+    // Observability (F6): the SAME correlation id emitted as the
+    // X-Correlation-ID response header is propagated to the service as the 3rd
+    // argument, so the service's [<correlationId>] logs tie back to the header.
+    const correlationId = httpResponse.setHeader.mock.calls[0][1] as string;
+    expect(correlationId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    expect(upsertArgs[2]).toBe(correlationId);
   });
 
   // ------------------------------------------------------------------------
@@ -125,8 +136,10 @@ describe('UserDashboardLayoutController', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
 
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledTimes(1);
+    // findByUserId now receives the propagated correlation id as the 2nd arg.
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
-      USER_1_ID
+      USER_1_ID,
+      expect.any(String)
     );
   });
 
@@ -160,7 +173,8 @@ describe('UserDashboardLayoutController', () => {
 
     expect(result).toBe(persistedRecord);
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
-      USER_1_ID
+      USER_1_ID,
+      expect.any(String)
     );
   });
 
@@ -212,6 +226,28 @@ describe('UserDashboardLayoutController', () => {
     );
   });
 
+  it('propagates the same correlationId into findByUserId on GET', async () => {
+    userDashboardLayoutService.findByUserId.mockResolvedValueOnce({
+      createdAt: new Date(),
+      layoutData: VALID_DTO.layoutData as any,
+      updatedAt: new Date(),
+      userId: USER_1_ID
+    } as UserDashboardLayout);
+    const httpResponse = buildMockResponse();
+
+    await controller.getLayout(httpResponse);
+
+    // The 2nd arg to the service is the SAME v4 id emitted as X-Correlation-ID,
+    // so service logs correlate with the header the client observed (F6).
+    const correlationId = httpResponse.setHeader.mock.calls[0][1] as string;
+    expect(correlationId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    const findArgs = userDashboardLayoutService.findByUserId.mock.calls[0];
+    expect(findArgs[0]).toBe(USER_1_ID);
+    expect(findArgs[1]).toBe(correlationId);
+  });
+
   it('generates distinct correlationIds across consecutive requests', async () => {
     userDashboardLayoutService.findByUserId.mockResolvedValue(null);
     const firstResponse = buildMockResponse();
@@ -247,10 +283,12 @@ describe('UserDashboardLayoutController', () => {
     }
 
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
-      USER_1_ID
+      USER_1_ID,
+      expect.any(String)
     );
     expect(userDashboardLayoutService.findByUserId).not.toHaveBeenCalledWith(
-      USER_2_ID
+      USER_2_ID,
+      expect.any(String)
     );
   });
 

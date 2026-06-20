@@ -1,5 +1,9 @@
 @if (opened()) {
-  <mat-sidenav-container class="catalog-container">
+  <mat-sidenav-container
+    class="catalog-container"
+    (dragover)="onCatalogDragOver($event)"
+    (drop)="onCatalogDrop($event)"
+  >
     <mat-sidenav
       class="catalog-panel"
       mode="over"
@@ -38,10 +42,12 @@
         @for (module of filteredModules(); track module.key) {
           <button
             class="catalog-item"
+            draggable="true"
             mat-list-item
             type="button"
             [attr.data-testid]="'catalog-item-' + module.key"
             (click)="onAddModule(module.key)"
+            (dragstart)="onModuleDragStart(module.key, $event)"
           >
             <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
             <span matListItemTitle>{{ module.displayName }}</span>

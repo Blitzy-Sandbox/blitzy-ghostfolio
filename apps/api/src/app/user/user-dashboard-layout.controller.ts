@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
-import { UserDashboardLayout } from '@prisma/client';
+import type { UserDashboardLayout } from '@prisma/client';
 import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
@@ -51,9 +51,12 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * persistence lives in `UserDashboardLayoutService`. Invalid PATCH bodies are
  * rejected with HTTP 400 by the global `ValidationPipe` before the method runs.
  *
- * OBSERVABILITY: both endpoints emit a fresh `X-Correlation-ID` response
- * header (via `node:crypto.randomUUID()`), set BEFORE the service call so it
- * is present on both success and error (e.g. 404) paths.
+ * OBSERVABILITY: both endpoints generate a fresh correlation id (via
+ * `node:crypto.randomUUID()`), emit it as the `X-Correlation-ID` response
+ * header BEFORE the service call (so it is present on both success and error
+ * paths, e.g. 404), AND propagate the SAME id into the service call so the
+ * service's structured `[<correlationId>]` log lines tie back to the header a
+ * client observed.
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {
@@ -76,10 +79,14 @@ export class UserDashboardLayoutController {
   public async getLayout(
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    response.setHeader('X-Correlation-ID', randomUUID());
+    const correlationId = randomUUID();
+    response.setHeader('X-Correlation-ID', correlationId);
 
     const userId = this.request.user.id;
-    const layout = await this.userDashboardLayoutService.findByUserId(userId);
+    const layout = await this.userDashboardLayoutService.findByUserId(
+      userId,
+      correlationId
+    );
 
     if (!layout) {
       throw new NotFoundException(
@@ -107,11 +114,13 @@ export class UserDashboardLayoutController {
     @Body() dto: UpdateUserDashboardLayoutDto,
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    response.setHeader('X-Correlation-ID', randomUUID());
+    const correlationId = randomUUID();
+    response.setHeader('X-Correlation-ID', correlationId);
 
     return this.userDashboardLayoutService.upsertForUser(
       this.request.user.id,
-      dto
+      dto,
+      correlationId
     );
   }
 }

@@ -6,6 +6,14 @@ import { AuthGuard } from './core/auth.guard';
 
 export const routes: Routes = [
   {
+    // The root dashboard canvas replaces the previously guarded `home` and
+    // `portfolio` authenticated feature surfaces and immediately calls the
+    // protected per-user layout API (`GET /api/v1/user/layout`). It must
+    // therefore be guarded by `AuthGuard` so unauthenticated users follow the
+    // established auth redirect flow (→ `/start`) instead of instantiating the
+    // canvas and hitting an unhandled 401 (CWE-862). All public/auth/bootstrap
+    // routes and the wildcard redirect below remain unchanged.
+    canActivate: [AuthGuard],
     loadComponent: () =>
       import('./dashboard/dashboard-canvas/dashboard-canvas.component').then(
         (m) => m.GfDashboardCanvasComponent

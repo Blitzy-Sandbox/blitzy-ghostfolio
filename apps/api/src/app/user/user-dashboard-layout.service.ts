@@ -1,3 +1,4 @@
+import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -26,10 +27,59 @@ import { UpdateUserDashboardLayoutDto } from './dtos/update-user-dashboard-layou
  * generated at the controller boundary and propagated to the structured
  * `Logger` so a single request can be traced end-to-end. When omitted (e.g.
  * unit tests), log lines are emitted without the `[<correlationId>]` prefix.
+ *
+ * In addition, the service emits two Prometheus signals via the injected
+ * `MetricsService` (exposed at `GET /api/v1/metrics`), satisfying the AAP
+ * § 0.8.2 Observability rule and decision-log entry D-017:
+ *   - `user_dashboard_layout_requests_total` — counter labelled by
+ *     `operation` (`get` | `patch`) and `outcome` (`success` | `not_found` |
+ *     `error`).
+ *   - `user_dashboard_layout_latency_seconds` — histogram labelled by
+ *     `operation` (`get` | `patch`).
+ * Both signals are emitted from a single `finally` block per operation
+ * (mirroring `RebalancingService`), so latency and outcome are recorded on
+ * EVERY path — success, `not_found`, and `error` alike. Labels are
+ * fixed-cardinality (no `userId`/`correlationId`), keeping the series well
+ * under the registry's `MAX_LABEL_CARDINALITY_PER_METRIC` guard.
  */
 @Injectable()
 export class UserDashboardLayoutService {
-  public constructor(private readonly prismaService: PrismaService) {}
+  /**
+   * Prometheus counter name for total layout-endpoint outcomes. Labelled with
+   * `operation ∈ { get, patch }` and `outcome ∈ { success, not_found, error }`
+   * — a small, fixed cardinality set safe under the metrics registry's
+   * `MAX_LABEL_CARDINALITY_PER_METRIC` guard.
+   */
+  private static readonly METRIC_REQUESTS_TOTAL =
+    'user_dashboard_layout_requests_total';
+
+  /**
+   * Prometheus histogram name for end-to-end layout read/upsert wall-clock
+   * latency. Recorded in seconds (consistent with Prometheus conventions and
+   * the sibling `rebalancing_latency_seconds`) and labelled only by
+   * `operation ∈ { get, patch }` to keep histogram cardinality minimal.
+   */
+  private static readonly METRIC_LATENCY_SECONDS =
+    'user_dashboard_layout_latency_seconds';
+
+  public constructor(
+    private readonly prismaService: PrismaService,
+    private readonly metricsService: MetricsService
+  ) {
+    // Register the two Prometheus metric descriptions so `/api/v1/metrics`
+    // emits proper `# HELP` lines (per the AAP § 0.8.2 Observability rule and
+    // decision-log D-017). Registration is idempotent.
+    this.metricsService.registerHelp(
+      UserDashboardLayoutService.METRIC_REQUESTS_TOTAL,
+      'Total user dashboard layout endpoint requests handled by UserDashboardLayoutService, ' +
+        'labeled by operation (get | patch) and outcome (success | not_found | error).'
+    );
+    this.metricsService.registerHelp(
+      UserDashboardLayoutService.METRIC_LATENCY_SECONDS,
+      'End-to-end wall-clock latency of UserDashboardLayoutService get/upsert operations in seconds, ' +
+        'labeled by operation (get | patch).'
+    );
+  }
 
   /**
    * Reads the dashboard layout for the given authenticated user.
@@ -45,11 +95,24 @@ export class UserDashboardLayoutService {
     userId: string,
     correlationId?: string
   ): Promise<UserDashboardLayout | null> {
+    const startTime = Date.now();
+    // Terminal outcome for the metric labels. Pessimistic default so an
+    // unexpected early exit is recorded as `error`, never a false success.
+    let outcome: 'success' | 'not_found' | 'error' = 'error';
+
     try {
-      return await this.prismaService.userDashboardLayout.findUnique({
+      const layout = await this.prismaService.userDashboardLayout.findUnique({
         where: { userId }
       });
+
+      // A `null` row is the first-visit case (the controller maps it to HTTP
+      // 404), distinct from both a hit and a thrown error.
+      outcome = layout === null ? 'not_found' : 'success';
+
+      return layout;
     } catch (error) {
+      outcome = 'error';
+
       Logger.error(
         this.formatLogMessage(
           `Failed to read UserDashboardLayout for user ${userId}: ${
@@ -61,6 +124,22 @@ export class UserDashboardLayoutService {
       );
 
       throw error;
+    } finally {
+      // Emit the terminal-outcome counter and latency histogram exactly once
+      // per call, on EVERY path (success | not_found | error), mirroring the
+      // RebalancingService finally-block pattern.
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+
+      this.metricsService.incrementCounter(
+        UserDashboardLayoutService.METRIC_REQUESTS_TOTAL,
+        1,
+        { operation: 'get', outcome }
+      );
+      this.metricsService.observeHistogram(
+        UserDashboardLayoutService.METRIC_LATENCY_SECONDS,
+        elapsedSeconds,
+        { operation: 'get' }
+      );
     }
   }
 
@@ -83,8 +162,13 @@ export class UserDashboardLayoutService {
     dto: UpdateUserDashboardLayoutDto,
     correlationId?: string
   ): Promise<UserDashboardLayout> {
+    const startTime = Date.now();
+    // `patch` resolves only to `success` or `error` — an upsert always writes,
+    // so `not_found` is a get-only outcome. Pessimistic default = `error`.
+    let outcome: 'success' | 'error' = 'error';
+
     try {
-      return await this.prismaService.userDashboardLayout.upsert({
+      const layout = await this.prismaService.userDashboardLayout.upsert({
         create: {
           userId,
           layoutData: dto.layoutData as unknown as Prisma.InputJsonValue
@@ -94,7 +178,13 @@ export class UserDashboardLayoutService {
         },
         where: { userId }
       });
+
+      outcome = 'success';
+
+      return layout;
     } catch (error) {
+      outcome = 'error';
+
       Logger.error(
         this.formatLogMessage(
           `Failed to upsert UserDashboardLayout for user ${userId}: ${
@@ -106,6 +196,22 @@ export class UserDashboardLayoutService {
       );
 
       throw error;
+    } finally {
+      // Emit the terminal-outcome counter and latency histogram exactly once
+      // per call, on both the success and error paths (RebalancingService
+      // finally-block pattern).
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+
+      this.metricsService.incrementCounter(
+        UserDashboardLayoutService.METRIC_REQUESTS_TOTAL,
+        1,
+        { operation: 'patch', outcome }
+      );
+      this.metricsService.observeHistogram(
+        UserDashboardLayoutService.METRIC_LATENCY_SECONDS,
+        elapsedSeconds,
+        { operation: 'patch' }
+      );
     }
   }
 

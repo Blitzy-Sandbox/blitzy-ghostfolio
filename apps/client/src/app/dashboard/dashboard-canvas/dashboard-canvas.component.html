@@ -13,20 +13,63 @@
   </button>
 </div>
 
-<gridster class="dashboard-grid" [options]="options">
-  @for (item of dashboard; track item.moduleKey) {
-    <gridster-item class="dashboard-grid-item" [item]="item">
-      <ng-container
-        *ngComponentOutlet="
-          registry.get(item.moduleKey)?.component;
-          inputs: getOutletInputs(item)
-        "
-      />
-    </gridster-item>
-  }
-</gridster>
+@if (isInitialized() && loadError()) {
+  <!-- Recoverable error state. Shown when the initial layout load failed with a
+       non-404 error (DashboardLayoutService.get() re-throws those); keeps the
+       canvas from being left blank/unrecoverable and offers an inline retry. -->
+  <div class="dashboard-error" data-testid="dashboard-error" role="alert">
+    <mat-icon class="dashboard-error-icon">error_outline</mat-icon>
+    <p class="dashboard-error-message" i18n>
+      We couldn’t load your dashboard. Please try again.
+    </p>
+    <button
+      color="primary"
+      data-testid="dashboard-retry-button"
+      mat-flat-button
+      type="button"
+      (click)="retryLoad()"
+    >
+      <span i18n>Retry</span>
+    </button>
+  </div>
+} @else {
+  <gridster class="dashboard-grid" [options]="options">
+    @for (item of dashboard; track item.moduleKey) {
+      <gridster-item class="dashboard-grid-item" [item]="item">
+        <ng-container
+          *ngComponentOutlet="
+            registry.get(item.moduleKey)?.component;
+            inputs: getOutletInputs(item)
+          "
+        />
+      </gridster-item>
+    }
+  </gridster>
 
-@if (isInitialized()) {
+  @if (isInitialized() && dashboard.length === 0) {
+    <!-- Empty / first-visit guidance. The catalog auto-opens on first visit,
+         but if it is closed the blank grid would offer no instruction; this CTA
+         keeps "add a module" visible and screen-reader accessible. -->
+    <div class="dashboard-empty" data-testid="dashboard-empty" role="status">
+      <mat-icon class="dashboard-empty-icon">dashboard_customize</mat-icon>
+      <p class="dashboard-empty-message" i18n>
+        Your dashboard is empty. Add a module to get started.
+      </p>
+      <button
+        color="primary"
+        data-testid="dashboard-empty-add-button"
+        mat-flat-button
+        type="button"
+        (click)="openCatalog()"
+      >
+        <mat-icon>add</mat-icon>
+        <span i18n>Add module</span>
+      </button>
+    </div>
+  }
+}
+
+@if (isInitialized() && !loadError()) {
   <gf-module-catalog
     [autoOpen]="shouldAutoOpenCatalog()"
     (addModule)="onAddModule($event)"

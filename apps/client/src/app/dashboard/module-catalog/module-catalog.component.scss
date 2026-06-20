@@ -63,6 +63,13 @@
   overflow-y: auto;
 }
 
+// Each registered-module row is draggable onto the canvas (drag-to-add) in
+// addition to being clickable, so signal the grab affordance. `cursor` is a
+// non-color property, so Decision D-020's token rule does not apply here.
+.catalog-item {
+  cursor: grab;
+}
+
 // Hover affordance on each registered-module row.
 .catalog-item:hover {
   background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));

@@ -107,6 +107,17 @@ export class GfDashboardCanvasComponent implements OnInit {
   public isInitialized = signal(false);
 
   /**
+   * Set to `true` when the initial layout load fails with a NON-404 error.
+   * `DashboardLayoutService.get()` maps HTTP 404 to `null` (first visit) but
+   * RE-THROWS every other error (401/500/network); without handling, that
+   * unhandled subscription error would leave {@link isInitialized} `false` and
+   * the canvas permanently blank. When this is `true` the template renders an
+   * inline, recoverable error state (message + "Retry") instead of a blank
+   * canvas, and {@link isInitialized} is still flipped so the surface renders.
+   */
+  public loadError = signal(false);
+
+  /**
    * Static `angular-gridster2` configuration. Declared as a field initializer
    * (not in a constructor) so the `itemChangeCallback`/`itemResizeCallback`
    * arrows capture `this`. Both callbacks are ZERO-PARAM arrows: the engine's
@@ -165,36 +176,16 @@ export class GfDashboardCanvasComponent implements OnInit {
   >();
 
   public ngOnInit() {
-    // Grid-event-driven persistence and first-visit detection both hinge on the
-    // initial layout load. A `null` result (404 mapped upstream) means "no
-    // saved layout yet" -> blank canvas + auto-open catalog.
-    this.dashboardLayoutService.get().subscribe((layout) => {
-      if (layout === null) {
-        this.dashboard = [];
-        this.shouldAutoOpenCatalog.set(true);
-      } else {
-        // Hydrate the authoritative grid state from the persisted geometry,
-        // re-deriving per-item minimum dimensions from the registry so the
-        // engine continues to enforce them after a reload.
-        this.dashboard = layout.layoutData.items.map((item) => {
-          const definition = this.registry.get(item.moduleKey);
+    this.loadLayout();
+  }
 
-          return {
-            cols: item.cols,
-            minItemCols: definition?.minItemCols ?? MIN_ITEM_COLS,
-            minItemRows: definition?.minItemRows ?? MIN_ITEM_ROWS,
-            moduleKey: item.moduleKey,
-            rows: item.rows,
-            x: item.x,
-            y: item.y
-          };
-        });
-        this.shouldAutoOpenCatalog.set(false);
-      }
-
-      this.isInitialized.set(true);
-      this.changeDetectorRef.markForCheck();
-    });
+  /**
+   * Re-attempts the initial layout load after a non-404 failure. Wired to the
+   * inline error state's "Retry" button so a transient 500/network error is
+   * fully recoverable without a full page reload.
+   */
+  public retryLoad() {
+    this.loadLayout();
   }
 
   /**
@@ -284,6 +275,62 @@ export class GfDashboardCanvasComponent implements OnInit {
     }
 
     return inputs;
+  }
+
+  /**
+   * Loads the persisted layout and resolves the canvas's initial state.
+   * Extracted from `ngOnInit` so {@link retryLoad} can re-run the exact same
+   * sequence after a transient failure.
+   *
+   * Grid-event-driven persistence and first-visit detection both hinge on this
+   * load. A `null` result (HTTP 404 mapped upstream) means "no saved layout
+   * yet" -> blank canvas + auto-open catalog. `DashboardLayoutService.get()`
+   * deliberately RE-THROWS every non-404 error (401/500/network), which the
+   * `error` branch handles: it surfaces a recoverable error state and STILL
+   * marks the canvas initialized so the template renders the inline error/retry
+   * affordance rather than an unrecoverable blank canvas.
+   */
+  private loadLayout() {
+    this.loadError.set(false);
+
+    this.dashboardLayoutService.get().subscribe({
+      error: () => {
+        // Non-404 failure (404 is mapped to `null` upstream and handled in
+        // `next`). Surface a recoverable error instead of a blank canvas.
+        this.loadError.set(true);
+        this.shouldAutoOpenCatalog.set(false);
+        this.isInitialized.set(true);
+        this.changeDetectorRef.markForCheck();
+      },
+      next: (layout) => {
+        if (layout === null) {
+          this.dashboard = [];
+          this.shouldAutoOpenCatalog.set(true);
+        } else {
+          // Hydrate the authoritative grid state from the persisted geometry,
+          // re-deriving per-item minimum dimensions from the registry so the
+          // engine continues to enforce them after a reload.
+          this.dashboard = layout.layoutData.items.map((item) => {
+            const definition = this.registry.get(item.moduleKey);
+
+            return {
+              cols: item.cols,
+              minItemCols: definition?.minItemCols ?? MIN_ITEM_COLS,
+              minItemRows: definition?.minItemRows ?? MIN_ITEM_ROWS,
+              moduleKey: item.moduleKey,
+              rows: item.rows,
+              x: item.x,
+              y: item.y
+            };
+          });
+          this.shouldAutoOpenCatalog.set(false);
+        }
+
+        this.loadError.set(false);
+        this.isInitialized.set(true);
+        this.changeDetectorRef.markForCheck();
+      }
+    });
   }
 
   /**

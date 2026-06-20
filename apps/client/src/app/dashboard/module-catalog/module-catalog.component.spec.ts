@@ -12,7 +12,10 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import '@angular/localize/init';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 
-import { GfModuleCatalogComponent } from './module-catalog.component';
+import {
+  GfModuleCatalogComponent,
+  MODULE_KEY_DATA_TRANSFER_TYPE
+} from './module-catalog.component';
 
 // Replace the real registry with a bare DI-token class BEFORE the
 // system-under-test module is loaded. `module-registry.service.ts` statically
@@ -66,6 +69,7 @@ describe('GfModuleCatalogComponent', () => {
   let component: GfModuleCatalogComponent;
   let fixture: ComponentFixture<GfModuleCatalogComponent>;
   let getAllSpy: jest.Mock;
+  let hasSpy: jest.Mock;
 
   // Type-safe DOM query helper. Casting `nativeElement` (typed `any` by
   // `ComponentFixture`) to `HTMLElement` once keeps each assertion short and
@@ -75,14 +79,48 @@ describe('GfModuleCatalogComponent', () => {
       `[data-testid="${testId}"]`
     );
 
+  // Minimal in-memory DataTransfer stand-in. jsdom does not implement the
+  // DataTransfer API, so the drag tests synthesize one that records values set
+  // under each MIME type and exposes exactly the `types`/`getData`/`setData`/
+  // `dropEffect`/`effectAllowed` surface the catalog's drag handlers touch. The
+  // synthesized object is cast to `DragEvent.dataTransfer` at each call site.
+  const createDataTransfer = () => {
+    const store = new Map<string, string>();
+    // Closure-captured (not `this`-based) so the methods stay type-safe under
+    // the project's strict `no-unsafe-*` lint rules; `types` is exposed on the
+    // returned object by reference so reads reflect every `setData`.
+    const types: string[] = [];
+
+    return {
+      dropEffect: 'none',
+      effectAllowed: 'none',
+      getData: (type: string): string => store.get(type) ?? '',
+      setData: (type: string, value: string): void => {
+        store.set(type, value);
+
+        if (!types.includes(type)) {
+          types.push(type);
+        }
+      },
+      types
+    };
+  };
+
   beforeEach(async () => {
-    // Recreate the spy each test so call history never leaks across cases.
+    // Recreate the spies each test so call history never leaks across cases.
+    // `has` backs the drop-handler's registry guard (FR3, registry-only
+    // introduction); it defaults to accepting the key, and the rejection test
+    // overrides it to return `false`.
     getAllSpy = jest.fn(() => MOCK_MODULES);
+    hasSpy = jest.fn(() => true);
 
     await TestBed.configureTestingModule({
       imports: [GfModuleCatalogComponent, NoopAnimationsModule],
       providers: [
-        { provide: ModuleRegistryService, useValue: { getAll: getAllSpy } }
+        {
+          provide: ModuleRegistryService,
+          useValue: { getAll: getAllSpy, has: hasSpy }
+        }
       ]
     }).compileComponents();
 
@@ -168,6 +206,78 @@ describe('GfModuleCatalogComponent', () => {
 
     expect(emitted).toEqual(['holdings', 'ai-chat']);
     expect(emitted).toContain('ai-chat');
+  });
+
+  // Case 5b — Drag-to-add path (AAP: "adding a module by drag or click").
+  // `dragstart` writes ONLY the stable key into the dedicated MIME type (no
+  // emission yet); `dragover` accepts the drag; and `drop` reads the key back,
+  // validates it against the registry, and emits it — the same upward `string`
+  // contract as a click, never a component reference (module isolation).
+  it('emits addModule with the module key via the drag-to-add path', () => {
+    component.open();
+    fixture.detectChanges();
+
+    const emitted: string[] = [];
+    component.addModule.subscribe((key) => emitted.push(key));
+
+    const dataTransfer = createDataTransfer();
+
+    // 1) dragstart on a row stamps the stable key into the drag payload.
+    component.onModuleDragStart('markets', {
+      dataTransfer
+    } as unknown as DragEvent);
+
+    expect(dataTransfer.getData(MODULE_KEY_DATA_TRANSFER_TYPE)).toBe('markets');
+    expect(dataTransfer.effectAllowed).toBe('copy');
+    // No emission on dragstart — only a completed drop adds the module.
+    expect(emitted).toEqual([]);
+
+    // 2) dragover accepts the drag (preventDefault is what lets `drop` fire)
+    //    because our MIME type is present in the payload.
+    const dragOverPreventDefault = jest.fn();
+    component.onCatalogDragOver({
+      dataTransfer,
+      preventDefault: dragOverPreventDefault
+    } as unknown as DragEvent);
+
+    expect(dragOverPreventDefault).toHaveBeenCalledTimes(1);
+    expect(dataTransfer.dropEffect).toBe('copy');
+
+    // 3) drop reads the key, validates it via the registry guard, and emits it.
+    const dropPreventDefault = jest.fn();
+    component.onCatalogDrop({
+      dataTransfer,
+      preventDefault: dropPreventDefault
+    } as unknown as DragEvent);
+
+    expect(dropPreventDefault).toHaveBeenCalledTimes(1);
+    expect(hasSpy).toHaveBeenCalledWith('markets');
+    expect(emitted).toEqual(['markets']);
+  });
+
+  // Case 5c — Registry guard (FR3): a drop whose payload key is not registered
+  // is rejected — no emission and the default action is NOT prevented.
+  it('ignores a drop whose payload key is not in the registry', () => {
+    component.open();
+    fixture.detectChanges();
+
+    const emitted: string[] = [];
+    component.addModule.subscribe((key) => emitted.push(key));
+
+    hasSpy.mockReturnValue(false);
+
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData(MODULE_KEY_DATA_TRANSFER_TYPE, 'not-a-real-module');
+
+    const dropPreventDefault = jest.fn();
+    component.onCatalogDrop({
+      dataTransfer,
+      preventDefault: dropPreventDefault
+    } as unknown as DragEvent);
+
+    expect(hasSpy).toHaveBeenCalledWith('not-a-real-module');
+    expect(emitted).toEqual([]);
+    expect(dropPreventDefault).not.toHaveBeenCalled();
   });
 
   // Case 6a — With the default `autoOpen = false`, `ngOnInit` leaves the
