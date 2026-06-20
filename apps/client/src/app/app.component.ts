@@ -119,8 +119,8 @@ export class GfAppComponent implements OnInit {
       .subscribe(() => {
         const urlTree = this.router.parseUrl(this.router.url);
         const urlSegmentGroup = urlTree.root.children[PRIMARY_OUTLET];
-        const urlSegments = urlSegmentGroup.segments;
-        this.currentRoute = urlSegments[0].path;
+        const urlSegments = urlSegmentGroup?.segments ?? [];
+        this.currentRoute = urlSegments[0]?.path ?? '';
         this.currentSubRoute = urlSegments[1]?.path;
 
         if (
