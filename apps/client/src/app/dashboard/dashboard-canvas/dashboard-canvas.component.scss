@@ -1,0 +1,71 @@
+// Dashboard canvas stylesheet for GfDashboardCanvasComponent — the single,
+// full-viewport root grid that hosts every dashboard module.
+//
+// Material Design 3 token discipline (Decision D-020): the Ghostfolio host
+// theme is constructed with `mat.define-theme()` + `mat.all-component-themes()`
+// (apps/client/src/styles/theme.scss), NOT `mat.theme()`. The `--mat-sys-*`
+// system custom properties are therefore NOT emitted at runtime, so every
+// `var(--mat-sys-<token>, <fallback>)` reference resolves to its FALLBACK.
+// The fallbacks are load-bearing and mandatory — bare `--mat-sys-*` is
+// prohibited. This mirrors the established pattern in
+// apps/client/src/app/components/chat-panel/chat-panel.component.scss.
+
+// Host fills its router-outlet host. angular-gridster2 requires a sized parent
+// (a 0-height parent yields a 0-height grid), so the canvas claims the full
+// height and width provided by app.component's layout.
+:host {
+  box-sizing: border-box;
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+// Compact top toolbar (~3rem tall) holding the "Add module" affordance.
+.dashboard-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+// The <gridster> element fills the height remaining below the toolbar so the
+// engine computes non-zero cell sizes. The subtle canvas background uses the
+// surface-container token with its mandatory fallback.
+.dashboard-grid {
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  display: block;
+  height: calc(100% - 3rem);
+  width: 100%;
+}
+
+// Grid chrome (D-020). angular-gridster2 renders these elements internally and
+// the component uses Emulated view encapsulation, so `::ng-deep` is required to
+// theme them.
+
+// Drag/resize drop-zone preview: the engine renders a <gridster-preview>
+// element while dragging or resizing. Tint it with the primary-container token
+// so the drop target reads as an active highlight.
+:host ::ng-deep gridster-preview {
+  background: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+}
+
+// Resize-handle affordance: tokenize the handle border color with the outline
+// token so the resize grips inherit the theme instead of a hardcoded grey.
+:host ::ng-deep .gridster-item-resizable-handler {
+  border-color: var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
+}
+
+// Dark-theme overrides: re-declare ONLY the rules whose fallback differs in
+// dark mode. The outline fallback is theme-neutral, so it is not repeated.
+:host-context(.theme-dark) {
+  .dashboard-grid {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+  }
+
+  :host ::ng-deep gridster-preview {
+    background: var(--mat-sys-primary-container, rgba(71, 219, 215, 0.16));
+  }
+}

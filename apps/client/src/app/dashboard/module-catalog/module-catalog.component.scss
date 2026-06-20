@@ -1,0 +1,104 @@
+// Module catalog panel styles for GfModuleCatalogComponent.
+//
+// The catalog is a right-hand MatSidenav (mode="over", position="end") that
+// overlays the dashboard canvas, listing every registered grid module with a
+// search field and an empty state.
+//
+// Decision D-020 (MD3 token discipline): every color/background value is
+// written as `var(--mat-sys-<token>, <fallback>)`. The host theme is built
+// with `mat.all-component-themes()` (not `mat.theme()`), so the `--mat-sys-*`
+// system custom properties are NOT emitted at runtime and the FALLBACK always
+// renders — the fallback is therefore mandatory and load-bearing. Fallbacks
+// map to the Ghostfolio cyan-teal brand palette (matching chat-panel.scss /
+// rebalancing-page.component.scss), not Material's default Indigo.
+
+// The host contributes no box of its own; the fixed `.catalog-container`
+// (the mat-sidenav-container) owns positioning.
+:host {
+  display: contents;
+}
+
+// Overlay the full viewport so the over-mode drawer + backdrop float above
+// the dashboard canvas (geometry only — bare numerics / `0` are allowed).
+.catalog-container {
+  bottom: 0;
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 5;
+}
+
+// The drawer surface itself (applied to the <mat-sidenav>).
+.catalog-panel {
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  box-sizing: border-box;
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  width: 20rem;
+}
+
+.catalog-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.catalog-title {
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.catalog-search {
+  width: 100%;
+}
+
+.catalog-list {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+// Hover affordance on each registered-module row.
+.catalog-item:hover {
+  background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+}
+
+.catalog-empty {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-size: 0.875rem;
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+// Dark theme overrides — same MD3 tokens, dark-palette fallbacks (mirrors
+// chat-panel.component.scss's `:host-context(.theme-dark)` block).
+:host-context(.theme-dark) {
+  .catalog-panel {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .catalog-title {
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .catalog-item:hover {
+    background-color: var(
+      --mat-sys-primary-container,
+      rgba(71, 219, 215, 0.16)
+    );
+  }
+
+  .catalog-empty {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+}
