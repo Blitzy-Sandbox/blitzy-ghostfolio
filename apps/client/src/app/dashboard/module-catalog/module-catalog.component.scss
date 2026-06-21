@@ -18,20 +18,39 @@
   display: contents;
 }
 
-// Overlay the full viewport so the over-mode drawer + backdrop float above
-// the dashboard canvas (geometry only — bare numerics / `0` are allowed).
+// Overlay the dashboard canvas so the over-mode drawer + backdrop float above
+// it (geometry only — bare numerics / `0` are allowed).
+//
+// `top` is offset by the fixed `gf-header`'s height instead of `0` so the
+// drawer's header (the "Add module" title + Close button) is NOT occluded by
+// the app header. The app `gf-header` is `position: fixed` with `z-index: 999`
+// and an opaque toolbar, while this container is `z-index: 5`; anchoring at
+// `top: 0` rendered the drawer's top band (~52px: title + close) behind the
+// header (F3-005). `--mat-toolbar-standard-height` is the SAME custom property
+// the app shell uses to size the header and offset `<main>`, so the catalog top
+// now aligns exactly with the bottom of the header (no gap, no overlap); the
+// `64px` fallback is Angular Material's default toolbar height.
 .catalog-container {
   bottom: 0;
   left: 0;
   position: fixed;
   right: 0;
-  top: 0;
+  top: var(--mat-toolbar-standard-height, 64px);
   z-index: 5;
 }
 
 // The drawer surface itself (applied to the <mat-sidenav>).
+//
+// The fallback is an OPAQUE surface (not the near-transparent `rgba(0,0,0,0.04)`
+// used for in-grid module cards) because this is a modal panel that floats over
+// a dark backdrop scrim: a translucent fallback let the scrim bleed through and
+// made the panel nearly indistinguishable from the dimmed canvas (F3-006).
+// `surface-container` is semantically opaque, so the fallback is a solid light
+// surface — `rgb(255, 255, 255)`, matching the app's dialog/menu/select
+// surfaces (`--light-background`). The D-020 `var(--mat-sys-<token>, <fallback>)`
+// syntax is preserved; only the fallback value is made opaque.
 .catalog-panel {
-  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  background-color: var(--mat-sys-surface-container, rgb(255, 255, 255));
   box-sizing: border-box;
   color: var(--mat-sys-on-surface, var(--dark-primary-text));
   display: flex;
@@ -86,11 +105,14 @@
 // Dark theme overrides — same MD3 tokens, dark-palette fallbacks (mirrors
 // chat-panel.component.scss's `:host-context(.theme-dark)` block).
 :host-context(.theme-dark) {
+  // Opaque elevated dark surface (not the near-transparent
+  // `rgba(255,255,255,0.06)`) so the modal panel reads as a solid raised
+  // surface and stays clearly distinct from the dark backdrop scrim (F3-006).
+  // `rgb(48, 48, 48)` is lighter than the `--dark-background` (`rgb(25,25,25)`)
+  // page, so it reads as an elevated `surface-container`, and matches the app's
+  // existing dark elevated surfaces (`#303030` / `#323232`).
   .catalog-panel {
-    background-color: var(
-      --mat-sys-surface-container,
-      rgba(255, 255, 255, 0.06)
-    );
+    background-color: var(--mat-sys-surface-container, rgb(48, 48, 48));
     color: var(--mat-sys-on-surface, var(--light-primary-text));
   }
 

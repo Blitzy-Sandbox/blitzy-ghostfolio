@@ -29,8 +29,10 @@ import {
 import { Chart } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 
-// Fixed pixel row height for the `GridType.Fixed` grid (AAP: "a fixed row
-// height (constant pixel value)").
+// Fixed pixel row height for the grid (AAP § 0.1.1: "a fixed row height
+// (constant pixel value)"). With `GridType.VerticalFixed` ONLY the row height
+// is fixed at this constant; the 12 columns are sized to fit the container
+// width (see `gridType` below), satisfying the full-viewport requirement.
 const FIXED_ROW_HEIGHT = 50;
 
 // The grid is locked to exactly 12 columns (`minCols === maxCols`) per the AAP
@@ -136,7 +138,15 @@ export class GfDashboardCanvasComponent implements OnInit {
       ignoreContent: true
     },
     fixedRowHeight: FIXED_ROW_HEIGHT,
-    gridType: GridType.Fixed,
+    // Full-viewport grid (AAP § 0.6.3): `VerticalFixed` keeps the fixed
+    // `fixedRowHeight` (row height is the ONLY fixed dimension per § 0.1.1)
+    // while sizing the 12 columns to fit the container width. `GridType.Fixed`
+    // was used previously, but it ALSO fixes the column width (default 250px),
+    // so 12 columns + margins computed to ~3120px and overflowed a 1280px
+    // viewport — half the modules (x >= 6) rendered off-screen and a single
+    // 6-column module was wider than the entire viewport (F3-001). With
+    // `VerticalFixed` the columns fit the width with no horizontal overflow.
+    gridType: GridType.VerticalFixed,
     // Persist after a drag-end or resize-end. Zero-param arrows (see above).
     itemChangeCallback: () => this.persistLayout(),
     itemResizeCallback: () => this.persistLayout(),

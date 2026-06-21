@@ -143,6 +143,24 @@
   border-color: var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
 }
 
+// Module surface theming (F3-004). angular-gridster2 hardcodes a white
+// background on every <gridster-item> in its library CSS
+// (`gridster-item { ...; background: #fff; ... }`, ViewEncapsulation.None), so
+// the item box does NOT adapt to the dark theme. The module's own MatCard
+// (.gf-module-card) is only a translucent surface-container tint
+// (rgba(0, 0, 0, 0.04)), so in dark mode the hardcoded white showed through and
+// composited to a near-white surface (~rgb(245)) beneath white-on-surface text
+// — illegible across all 12 modules. Clearing the item background to
+// `transparent` lets the tokenized MatCard surface composite over the
+// theme-aware `.dashboard-grid` background instead (dark in dark mode, light in
+// light mode), restoring readable contrast in both themes. `transparent` is an
+// explicitly-allowed bare value under Decision D-020 (no token wrapper needed),
+// and deferring to the already-tokenized card surface keeps a single source of
+// truth for the module surface color.
+:host ::ng-deep .dashboard-grid-item {
+  background: transparent;
+}
+
 // Dark-theme overrides: re-declare ONLY the rules whose fallback differs in
 // dark mode. The outline fallback is theme-neutral, so it is not repeated.
 :host-context(.theme-dark) {

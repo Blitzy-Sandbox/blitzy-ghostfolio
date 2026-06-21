@@ -30,6 +30,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import '@angular/localize/init';
 import { By } from '@angular/platform-browser';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { GridType } from 'angular-gridster2';
 import { of, throwError } from 'rxjs';
 
 import { GfDashboardCanvasComponent } from './dashboard-canvas.component';
@@ -428,6 +429,22 @@ describe('GfDashboardCanvasComponent', () => {
     expect(added.minItemRows).toBeGreaterThanOrEqual(2);
     expect(added.minItemCols).toBe(3);
     expect(added.minItemRows).toBe(4);
+  });
+
+  // Case 7b — Full-viewport grid sizing (F3-001): the grid must fit its 12
+  // columns to the container width with NO horizontal overflow.
+  // `GridType.VerticalFixed` fixes ONLY the row height (the single fixed
+  // dimension per AAP § 0.1.1) and sizes the columns to the width. The prior
+  // `GridType.Fixed` also fixed the column width (default 250px), so the grid
+  // overflowed the viewport (~3120px at 1280px) and half the modules rendered
+  // off-screen.
+  it('uses GridType.VerticalFixed with a fixed row height (full-viewport, F3-001)', () => {
+    mockLayoutService.get.mockReturnValue(of(null));
+
+    createComponent();
+
+    expect(component.options.gridType).toBe(GridType.VerticalFixed);
+    expect(component.options.fixedRowHeight).toBe(50);
   });
 
   // Case 8 — The persistence payload is exactly
