@@ -89,6 +89,62 @@ describe('UpdateUserDashboardLayoutDto', () => {
     });
   });
 
+  // QA Issue #1: the DTO previously accepted an EMPTY-array `layoutData` (`[]`)
+  // with HTTP 200, persisting it. `@ValidateNested()` (no `each: true`) handed
+  // an array validates its ELEMENTS, and `[]` has zero elements, so the
+  // `{ items, schemaVersion }` shape check passed vacuously. `@IsObject()`
+  // (added after `@IsDefined()`) rejects arrays and primitives — the shared
+  // `LayoutData` contract is an object, never an array — so every such body is
+  // now rejected with HTTP 400, while a well-formed object still passes.
+  describe('layoutData must be a LayoutData object (QA Issue #1)', () => {
+    it('rejects an empty-array `layoutData` `[]` with HTTP 400', async () => {
+      await expect(validate({ layoutData: [] })).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+    });
+
+    it('rejects a non-empty-array `layoutData` (array shape) with HTTP 400', async () => {
+      await expect(
+        validate({
+          layoutData: [
+            { cols: 6, moduleKey: 'portfolio-overview', rows: 4, x: 0, y: 0 }
+          ]
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects a string `layoutData` with HTTP 400', async () => {
+      await expect(
+        validate({ layoutData: 'not-an-object' })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects a numeric `layoutData` with HTTP 400', async () => {
+      await expect(validate({ layoutData: 42 })).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+    });
+
+    it('names `layoutData` in the validation error for an empty array', async () => {
+      expect.assertions(2);
+
+      try {
+        await validate({ layoutData: [] });
+      } catch (error) {
+        expect(error).toBeInstanceOf(BadRequestException);
+
+        const response = (error as BadRequestException).getResponse() as {
+          message: string | string[];
+        };
+        const messages = Array.isArray(response.message)
+          ? response.message
+          : [response.message];
+
+        expect(messages.join(' ')).toContain('layoutData');
+      }
+    });
+  });
+
   describe('valid payloads', () => {
     it('accepts `{ layoutData: { schemaVersion, items } }` and returns a DTO instance', async () => {
       const result = await validate(validPayload);

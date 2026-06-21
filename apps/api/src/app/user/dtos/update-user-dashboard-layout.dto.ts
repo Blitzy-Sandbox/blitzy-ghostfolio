@@ -10,6 +10,7 @@ import {
   IsDefined,
   IsIn,
   IsInt,
+  IsObject,
   IsString,
   MaxLength,
   Min,
@@ -276,12 +277,30 @@ export class UpdateUserDashboardLayoutDto {
    * such as `{}` (or `{ layoutData: undefined }`) would pass the global
    * `ValidationPipe` (`whitelist` / `transform` / `forbidNonWhitelisted`) and
    * reach the controller and service. With `@IsDefined()` first, such bodies
-   * fail fast with a clear HTTP 400 before any persistence logic runs. The
-   * decorator order matters: `@IsDefined()` (presence) → `@ValidateNested()`
-   * (shape) → `@Type()` (class-transformer instantiation for nested
-   * validation).
+   * fail fast with a clear HTTP 400 before any persistence logic runs.
+   *
+   * Rationale (array-rejection hardening — QA Issue #1, CWE-20): the shared
+   * contract (`@ghostfolio/common` `LayoutData`) defines `layoutData` as an
+   * OBJECT — `{ schemaVersion: number; items: DashboardLayoutItem[] }` — so an
+   * array (or any primitive) is NOT a valid value. `@ValidateNested()` WITHOUT
+   * `each: true`, when handed an ARRAY value, validates the array's ELEMENTS
+   * against `LayoutDataDto`; an EMPTY array `[]` has zero elements, so that
+   * shape check passes vacuously and the malformed `{ layoutData: [] }` body
+   * would persist with HTTP 200. `@IsObject()` closes that gap: in
+   * `class-validator`, `isObject()` returns `false` for arrays
+   * (`!Array.isArray(value)`) and for primitives, so `{ layoutData: [] }`,
+   * `{ layoutData: [ … ] }`, `{ layoutData: 'x' }`, and `{ layoutData: 1 }`
+   * are all rejected with HTTP 400, while a well-formed `LayoutData` object
+   * (including `{ items: [], schemaVersion: N }` — a legitimately empty
+   * layout) continues to pass. Mirrors the `@IsObject()` precedent in
+   * `rebalancing-request.dto.ts` and `update-asset-profile.dto.ts`.
+   *
+   * Decorator order matters: `@IsDefined()` (presence) → `@IsObject()`
+   * (object-not-array/primitive) → `@ValidateNested()` (nested shape) →
+   * `@Type()` (class-transformer instantiation for nested validation).
    */
   @IsDefined()
+  @IsObject()
   @ValidateNested()
   @Type(() => LayoutDataDto)
   layoutData: LayoutDataDto;
