@@ -33,6 +33,10 @@ import { openOutline } from 'ionicons/icons';
 import { DeviceDetectorService } from 'ngx-device-detector';
 import { filter } from 'rxjs/operators';
 
+import {
+  hasPermissionToChangeDateRangeForRoute,
+  hasPermissionToChangeFiltersForRoute
+} from './app.component.util';
 import { GfFooterComponent } from './components/footer/footer.component';
 import { GfHeaderComponent } from './components/header/header.component';
 import { GfHoldingDetailDialogComponent } from './components/holding-detail-dialog/holding-detail-dialog.component';
@@ -123,41 +127,25 @@ export class GfAppComponent implements OnInit {
         this.currentRoute = urlSegments[0]?.path ?? '';
         this.currentSubRoute = urlSegments[1]?.path;
 
-        if (
-          ((this.currentRoute === internalRoutes.home.path &&
-            !this.currentSubRoute) ||
-            (this.currentRoute === internalRoutes.home.path &&
-              this.currentSubRoute ===
-                internalRoutes.home.subRoutes?.holdings.path) ||
-            (this.currentRoute === internalRoutes.portfolio.path &&
-              !this.currentSubRoute)) &&
-          this.user?.settings?.viewMode !== 'ZEN'
-        ) {
-          this.hasPermissionToChangeDateRange = true;
-        } else {
-          this.hasPermissionToChangeDateRange = false;
-        }
+        // After the navigation collapse (D-010) the authenticated home and
+        // portfolio surfaces are served by the dashboard canvas at the root
+        // route (`currentRoute === ''`). The header date-range and filter
+        // controls must therefore stay enabled on the dashboard exactly as
+        // they were on the former overview screens. The route predicates are
+        // delegated to pure helpers (see `app.component.util.ts`) so the
+        // root-route handling is unit-tested in isolation.
+        this.hasPermissionToChangeDateRange =
+          hasPermissionToChangeDateRangeForRoute({
+            currentRoute: this.currentRoute,
+            currentSubRoute: this.currentSubRoute,
+            viewMode: this.user?.settings?.viewMode
+          });
 
-        if (
-          (this.currentRoute === internalRoutes.home.path &&
-            this.currentSubRoute ===
-              internalRoutes.home.subRoutes?.holdings.path) ||
-          (this.currentRoute === internalRoutes.portfolio.path &&
-            !this.currentSubRoute) ||
-          (this.currentRoute === internalRoutes.portfolio.path &&
-            this.currentSubRoute ===
-              internalRoutes.portfolio.subRoutes?.activities.path) ||
-          (this.currentRoute === internalRoutes.portfolio.path &&
-            this.currentSubRoute ===
-              internalRoutes.portfolio.subRoutes?.allocations.path) ||
-          (this.currentRoute === internalRoutes.zen.path &&
-            this.currentSubRoute ===
-              internalRoutes.home.subRoutes?.holdings.path)
-        ) {
-          this.hasPermissionToChangeFilters = true;
-        } else {
-          this.hasPermissionToChangeFilters = false;
-        }
+        this.hasPermissionToChangeFilters =
+          hasPermissionToChangeFiltersForRoute({
+            currentRoute: this.currentRoute,
+            currentSubRoute: this.currentSubRoute
+          });
 
         this.hasTabs =
           (this.currentRoute === publicRoutes.about.path ||

@@ -725,6 +725,13 @@ export class AiChatService {
       `You are a helpful AI portfolio assistant integrated with Ghostfolio.`,
       `Answer the user's questions conversationally and directly using the ` +
         `portfolio data already provided below in this prompt.`,
+      // PII minimization (AAP § 0.7.3): reference the user ONLY by the opaque
+      // placeholder defined above — never their real id (see the block comment
+      // preceding this `return` and `AUTHENTICATED_USER_PLACEHOLDER`).
+      `You are assisting the account referred to as ` +
+        `"${AiChatService.AUTHENTICATED_USER_PLACEHOLDER}". Refer to the user ` +
+        `only by this placeholder; never request, infer, or expose any real ` +
+        `account identifier.`,
       ``,
       `CRITICAL RESPONSE RULES — follow these exactly:`,
       `1. NEVER describe, narrate, or mention function calls, tool invocations, ` +

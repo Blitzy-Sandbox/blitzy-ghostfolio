@@ -130,22 +130,10 @@
             i18n
             mat-menu-item
             [ngClass]="{
-              'font-weight-bold':
-                currentRoute === internalRoutes.home.path ||
-                currentRoute === internalRoutes.zen.path
+              'font-weight-bold': currentRoute === ''
             }"
             [routerLink]="['/']"
             >Overview</a
-          >
-          <a
-            class="d-flex d-sm-none"
-            i18n
-            mat-menu-item
-            [ngClass]="{
-              'font-weight-bold': currentRoute === internalRoutes.portfolio.path
-            }"
-            [routerLink]="routerLinkPortfolio"
-            >Portfolio</a
           >
           <a
             class="d-flex d-sm-none"
