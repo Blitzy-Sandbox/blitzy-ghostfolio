@@ -214,5 +214,44 @@ describe('DashboardLayoutService', () => {
       });
       secondRequest.flush(mockLayout);
     }));
+
+    it('emits on saveError$ when a PATCH fails and keeps processing later saves (QA Issue #7)', fakeAsync(() => {
+      // A plain Subject does not replay, so subscribe BEFORE the failing save.
+      let saveErrorCount = 0;
+      const subscription = service.saveError$.subscribe(() => {
+        saveErrorCount += 1;
+      });
+
+      // Silence the expected console.error so the test output stays clean while
+      // still asserting the user-facing failure signal.
+      const consoleErrorSpy = jest
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+
+      // First window: the PATCH fails (e.g. offline / 500).
+      service.queueSave({ layoutData: mockLayoutData });
+      tick(500);
+
+      httpMock.expectOne(LAYOUT_URL).flush('Server error', {
+        status: 500,
+        statusText: 'Internal Server Error'
+      });
+
+      // The failure is re-surfaced to observers exactly once (QA Issue #7).
+      expect(saveErrorCount).toBe(1);
+
+      // The outer persistence stream MUST stay alive: a later save still issues
+      // its PATCH (the inner catchError contains the error so debounceTime /
+      // switchMap are not torn down, never permanently disabling saves).
+      service.queueSave({ layoutData: { schemaVersion: 1, items: [] } });
+      tick(500);
+
+      const nextRequest = httpMock.expectOne(LAYOUT_URL);
+      expect(nextRequest.request.method).toBe('PATCH');
+      nextRequest.flush(mockLayout);
+
+      subscription.unsubscribe();
+      consoleErrorSpy.mockRestore();
+    }));
   });
 });

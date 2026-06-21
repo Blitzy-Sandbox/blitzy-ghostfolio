@@ -11,11 +11,27 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 // the `@angular` import group exactly as `chat-panel.component.spec.ts` does.
 import '@angular/localize/init';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
+import { addIcons } from 'ionicons';
+import {
+  chatbubblesOutline,
+  trendingUpOutline,
+  walletOutline
+} from 'ionicons/icons';
 
 import {
   GfModuleCatalogComponent,
   MODULE_KEY_DATA_TRANSFER_TYPE
 } from './module-catalog.component';
+
+// Register the Ionicons referenced by the mock module definitions below. In
+// production the REAL `ModuleRegistryService` constructor registers every
+// module icon via `addIcons(...)`; this spec mocks that service (see
+// `jest.mock` above), so it registers the mock fixtures' icon names itself —
+// otherwise `<ion-icon [name]="module.icon">` emits "Could not load icon"
+// warnings for the unregistered names. The catalog's own chrome icons
+// (close/add) are registered by the component constructor. `addIcons` is
+// global and idempotent.
+addIcons({ chatbubblesOutline, trendingUpOutline, walletOutline });
 
 // Replace the real registry with a bare DI-token class BEFORE the
 // system-under-test module is loaded. `module-registry.service.ts` statically
@@ -42,7 +58,7 @@ const MOCK_MODULES: ModuleDefinition[] = [
   {
     component: class {} as unknown as ModuleDefinition['component'],
     displayName: 'Holdings',
-    icon: 'account_balance_wallet',
+    icon: 'wallet-outline',
     key: 'holdings',
     minItemCols: 6,
     minItemRows: 4
@@ -50,7 +66,7 @@ const MOCK_MODULES: ModuleDefinition[] = [
   {
     component: class {} as unknown as ModuleDefinition['component'],
     displayName: 'AI Chat',
-    icon: 'chat',
+    icon: 'chatbubbles-outline',
     key: 'ai-chat',
     minItemCols: 3,
     minItemRows: 4
@@ -58,7 +74,7 @@ const MOCK_MODULES: ModuleDefinition[] = [
   {
     component: class {} as unknown as ModuleDefinition['component'],
     displayName: 'Markets',
-    icon: 'trending_up',
+    icon: 'trending-up-outline',
     key: 'markets',
     minItemCols: 4,
     minItemRows: 3

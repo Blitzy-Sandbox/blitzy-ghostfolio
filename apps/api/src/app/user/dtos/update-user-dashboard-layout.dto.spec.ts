@@ -132,4 +132,120 @@ describe('UpdateUserDashboardLayoutDto', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
+
+  // QA Issue #2: the DTO previously accepted DTO-valid but DOMAIN-invalid
+  // layouts (unknown/empty/duplicate keys, off-grid geometry, overlapping
+  // items), persisting them with HTTP 200 and corrupting client hydration.
+  // These tests assert each class is now rejected with HTTP 400.
+  describe('moduleKey allow-list (QA Issue #2)', () => {
+    it('rejects an unknown moduleKey with HTTP 400', async () => {
+      await expect(
+        validate({
+          layoutData: {
+            items: [
+              { cols: 6, moduleKey: 'totally-unknown', rows: 4, x: 0, y: 0 }
+            ],
+            schemaVersion: 1
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects an empty-string moduleKey with HTTP 400', async () => {
+      await expect(
+        validate({
+          layoutData: {
+            items: [{ cols: 6, moduleKey: '', rows: 4, x: 0, y: 0 }],
+            schemaVersion: 1
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('accepts every registered moduleKey', async () => {
+      const result = await validate({
+        layoutData: {
+          items: [
+            { cols: 3, moduleKey: 'ai-chat', rows: 4, x: 0, y: 0 },
+            { cols: 3, moduleKey: 'x-ray', rows: 4, x: 3, y: 0 }
+          ],
+          schemaVersion: 1
+        }
+      });
+
+      expect(result).toBeInstanceOf(UpdateUserDashboardLayoutDto);
+      expect(result.layoutData.items).toHaveLength(2);
+    });
+  });
+
+  describe('domain geometry validation (QA Issue #2)', () => {
+    it('rejects duplicate moduleKey entries with HTTP 400', async () => {
+      await expect(
+        validate({
+          layoutData: {
+            items: [
+              { cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 },
+              { cols: 6, moduleKey: 'holdings', rows: 4, x: 6, y: 0 }
+            ],
+            schemaVersion: 1
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects off-grid geometry where x + cols exceeds 12 columns', async () => {
+      await expect(
+        validate({
+          layoutData: {
+            items: [{ cols: 6, moduleKey: 'holdings', rows: 4, x: 11, y: 0 }],
+            schemaVersion: 1
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects overlapping items with HTTP 400', async () => {
+      await expect(
+        validate({
+          layoutData: {
+            items: [
+              { cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 },
+              { cols: 6, moduleKey: 'summary', rows: 4, x: 3, y: 2 }
+            ],
+            schemaVersion: 1
+          }
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('accepts two distinct, in-bounds, non-overlapping modules', async () => {
+      const result = await validate({
+        layoutData: {
+          items: [
+            { cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 },
+            { cols: 6, moduleKey: 'summary', rows: 4, x: 6, y: 0 }
+          ],
+          schemaVersion: 1
+        }
+      });
+
+      expect(result).toBeInstanceOf(UpdateUserDashboardLayoutDto);
+      expect(result.layoutData.items).toHaveLength(2);
+    });
+
+    it('accepts vertically stacked modules in the same columns (no overlap)', async () => {
+      const result = await validate({
+        layoutData: {
+          items: [
+            { cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 },
+            { cols: 6, moduleKey: 'summary', rows: 4, x: 0, y: 4 }
+          ],
+          schemaVersion: 1
+        }
+      });
+
+      expect(result).toBeInstanceOf(UpdateUserDashboardLayoutDto);
+      expect(result.layoutData.items).toHaveLength(2);
+    });
+  });
 });

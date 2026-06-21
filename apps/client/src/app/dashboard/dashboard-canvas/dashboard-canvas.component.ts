@@ -12,14 +12,17 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  CUSTOM_ELEMENTS_SCHEMA,
   inject,
   OnInit,
   signal,
   viewChild
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
 import {
   Gridster,
   GridsterConfig,
@@ -28,6 +31,9 @@ import {
 } from 'angular-gridster2';
 import { Chart } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
+import { addIcons } from 'ionicons';
+import { addOutline, alertCircleOutline, gridOutline } from 'ionicons/icons';
+import ms from 'ms';
 
 // Fixed pixel row height for the grid (AAP § 0.1.1: "a fixed row height
 // (constant pixel value)"). With `GridType.VerticalFixed` ONLY the row height
@@ -86,10 +92,11 @@ const MIN_ITEM_ROWS = 2;
     GfModuleCatalogComponent,
     Gridster,
     GridsterItem,
+    IonIcon,
     MatButtonModule,
-    MatIconModule,
     MatTooltipModule
   ],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-dashboard-canvas',
   styleUrls: ['./dashboard-canvas.component.scss'],
   templateUrl: './dashboard-canvas.component.html'
@@ -122,6 +129,41 @@ export class GfDashboardCanvasComponent implements OnInit {
   public loadError = signal(false);
 
   /**
+   * Latches to `true` once angular-gridster2 reports non-zero computed cell
+   * dimensions (`curColWidth`/`curRowHeight`) after `initCallback` — see
+   * {@link latchGridReadyWhenSized}, which polls per animation frame until the
+   * engine has actually sized the cells (a single fixed frame is NOT enough,
+   * because `initCallback` can fire before the column width is computed). The
+   * template gates each module's `*ngComponentOutlet` content behind
+   * `@if (isGridReady())` so module components — and the chart/SVG libraries
+   * they embed — are created ONLY after their host cell has real dimensions.
+   *
+   * This is a defense-in-depth measure for QA Issue #6 ("InvalidStateError:
+   * Failed to execute 'inverse' on 'SVGMatrix': The matrix is not invertible"),
+   * emitted during all-12-module hydration by the Allocations module's world
+   * map (svgmap, via `GfWorldMapChartComponent`). Mounting heavy chart/SVG
+   * content only after the engine reports sized cells narrows the window in
+   * which a chart can initialize against an unsized grid. It does NOT by itself
+   * fully close that window, because angular-gridster2 applies each
+   * `<gridster-item>`'s pixel size asynchronously a frame AFTER the mount
+   * change-detection pass, while svgmap can construct synchronously within that
+   * same pass (driven by async data) — so the definitive, timing-independent
+   * fix is the width floor on `#svgMap` in the Allocations module wrapper
+   * (`apps/client/src/app/dashboard/modules/allocations/allocations.component.ts`),
+   * which guarantees a non-degenerate (invertible) viewport matrix regardless
+   * of when svgmap reads it. Both the world map component (`libs/ui`) and the
+   * Allocations page are out of scope, so each guard lives at an in-scope layer
+   * (this canvas composition root and the in-scope module wrapper).
+   *
+   * It is a one-way latch (mounting content never changes a `VerticalFixed`
+   * item's geometry, so it triggers no resize and no spurious persistence), and
+   * it is independent of the persistence baseline — {@link loadLayout} and the
+   * drag/resize callbacks operate on {@link dashboard} geometry regardless of
+   * whether inner content has mounted.
+   */
+  public isGridReady = signal(false);
+
+  /**
    * Static `angular-gridster2` configuration. Declared as a field initializer
    * (not in a constructor) so the `itemChangeCallback`/`itemResizeCallback`
    * arrows capture `this`. Both callbacks are ZERO-PARAM arrows: the engine's
@@ -147,6 +189,12 @@ export class GfDashboardCanvasComponent implements OnInit {
     // 6-column module was wider than the entire viewport (F3-001). With
     // `VerticalFixed` the columns fit the width with no horizontal overflow.
     gridType: GridType.VerticalFixed,
+    // Fires once the grid is initialized; we then latch `isGridReady` (one
+    // animation frame later) so module content mounts into already-sized cells
+    // (QA Issue #6 — see {@link isGridReady}). Zero-param arrow: the engine
+    // passes the grid instance, but the API is read via `viewChild(Gridster)`
+    // instead, and naming an unused parameter would fail `noUnusedParameters`.
+    initCallback: () => this.onGridInitialized(),
     // Persist after a drag-end or resize-end. Zero-param arrows (see above).
     itemChangeCallback: () => this.persistLayout(),
     itemResizeCallback: () => this.persistLayout(),
@@ -195,6 +243,7 @@ export class GfDashboardCanvasComponent implements OnInit {
     DashboardItem,
     { removeModule: () => void }
   >();
+  private readonly snackBar = inject(MatSnackBar);
 
   /**
    * The dashboard canvas is the composition root for every chart-bearing
@@ -226,6 +275,33 @@ export class GfDashboardCanvasComponent implements OnInit {
    */
   public constructor() {
     Chart.register(annotationPlugin);
+
+    // Register the Ionicons used by the canvas chrome (toolbar add control,
+    // recoverable-error state, empty/first-visit state). Ghostfolio renders
+    // icons via `<ion-icon>` (the Material icon *font* is not loaded), so each
+    // component registers the named icons it references — mirroring the header.
+    addIcons({ addOutline, alertCircleOutline, gridOutline });
+
+    // Surface debounced-save failures to the user (QA Issue #7). The layout
+    // service contains PATCH errors internally — a transient failure must NOT
+    // disable future grid-event-driven saves — and re-emits them on
+    // `saveError$`; without visible feedback an optimistic add/move/remove
+    // LOOKS persisted but is silently lost on reload. A MatSnackBar is the
+    // design-system-sanctioned transient-feedback surface (AAP § 0.5.2;
+    // MatSnackBarModule is provided in main.ts). The canvas is the sole
+    // persistence owner (it alone calls `queueSave`), so it is the correct
+    // place to own this feedback. `takeUntilDestroyed()` is invoked here in the
+    // constructor injection context and ties the subscription to this
+    // component's lifetime.
+    this.dashboardLayoutService.saveError$
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => {
+        this.snackBar.open(
+          $localize`Couldn’t save your dashboard changes. Please try again.`,
+          $localize`Dismiss`,
+          { duration: ms('6 seconds') }
+        );
+      });
   }
 
   public ngOnInit() {
@@ -331,6 +407,69 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   /**
+   * Entry point wired to angular-gridster2's `initCallback`. It is a one-way
+   * latch, so a second `initCallback` (e.g. after an options reassignment)
+   * short-circuits to a harmless no-op; otherwise it begins polling for real
+   * cell dimensions via {@link latchGridReadyWhenSized}.
+   */
+  private onGridInitialized() {
+    if (this.isGridReady()) {
+      return;
+    }
+
+    this.latchGridReadyWhenSized(0);
+  }
+
+  /**
+   * Polls (per animation frame, capped) until angular-gridster2 reports
+   * non-zero computed cell dimensions (`curColWidth`/`curRowHeight`), then
+   * latches {@link isGridReady} so the template mounts module content.
+   *
+   * Waiting for real cell dimensions — rather than a single fixed frame after
+   * `initCallback` — is what actually closes the QA Issue #6 window.
+   * `initCallback` can fire while the engine has not yet computed a column
+   * width (observed during all-12-module hydration), so a fixed-frame latch
+   * still mounted the Allocations world map (svgmap, via
+   * `GfWorldMapChartComponent`) into a 0-width cell. A 0-width cell collapses
+   * the map's `aspect-ratio: 16 / 9` container to 0 height, so svgmap's
+   * pan/zoom engine (svg-pan-zoom) inverts a degenerate viewport CTM
+   * (`viewport.getCTM().inverse()`) when it applies its initial zoom →
+   * "InvalidStateError: Failed to execute 'inverse' on 'SVGMatrix': The matrix
+   * is not invertible". Gating on `curColWidth > 0` guarantees the map only
+   * ever constructs into a sized cell, eliminating the degenerate matrix. The
+   * world map component (`libs/ui`) and the Allocations page are out of scope,
+   * so the guard lives here at the canvas (composition root) level.
+   *
+   * The retry count is capped (~60 frames, ≈1s) so a pathological perpetual
+   * zero-size can never leave the canvas blank: after the cap we latch anyway,
+   * degrading at worst to the previous behavior, never worse.
+   *
+   * `requestAnimationFrame` is patched by zone.js (Ghostfolio is zone-based),
+   * so each tick runs inside the Angular zone; the explicit `markForCheck`
+   * keeps the OnPush view correct regardless.
+   */
+  private latchGridReadyWhenSized(attempt: number) {
+    if (this.isGridReady()) {
+      return;
+    }
+
+    const gridInstance = this.grid();
+    const cellsAreSized =
+      !!gridInstance &&
+      gridInstance.curColWidth > 0 &&
+      gridInstance.curRowHeight > 0;
+
+    if (cellsAreSized || attempt >= 60) {
+      this.isGridReady.set(true);
+      this.changeDetectorRef.markForCheck();
+
+      return;
+    }
+
+    requestAnimationFrame(() => this.latchGridReadyWhenSized(attempt + 1));
+  }
+
+  /**
    * Loads the persisted layout and resolves the canvas's initial state.
    * Extracted from `ngOnInit` so {@link retryLoad} can re-run the exact same
    * sequence after a transient failure.
@@ -360,23 +499,29 @@ export class GfDashboardCanvasComponent implements OnInit {
           this.dashboard = [];
           this.shouldAutoOpenCatalog.set(true);
         } else {
-          // Hydrate the authoritative grid state from the persisted geometry,
-          // re-deriving per-item minimum dimensions from the registry so the
-          // engine continues to enforce them after a reload.
-          this.dashboard = layout.layoutData.items.map((item) => {
-            const definition = this.registry.get(item.moduleKey);
+          // Hydrate the authoritative grid state from the persisted geometry.
+          // The persisted payload is sanitized first (QA Issue #2): unknown
+          // module keys are dropped and duplicate keys are de-duplicated. The
+          // API now rejects such payloads at write time (DTO domain validation),
+          // but rows persisted before that hardening — or any externally
+          // tampered row — must still hydrate safely rather than rendering
+          // duplicate modules (Angular NG0955) or empty/clipped chrome for an
+          // unrenderable key.
+          const persistedItems = layout.layoutData?.items ?? [];
 
-            return {
-              cols: item.cols,
-              minItemCols: definition?.minItemCols ?? MIN_ITEM_COLS,
-              minItemRows: definition?.minItemRows ?? MIN_ITEM_ROWS,
-              moduleKey: item.moduleKey,
-              rows: item.rows,
-              x: item.x,
-              y: item.y
-            };
-          });
-          this.shouldAutoOpenCatalog.set(false);
+          this.dashboard = this.sanitizePersistedItems(persistedItems);
+
+          // QA Issue #3: a persisted layout whose items are ALL unknown or
+          // duplicate (a corrupt or adversarial row) sanitizes to an empty
+          // canvas. Treat that exactly like a first visit — auto-open the
+          // catalog so the user has an actionable recovery path: adding any
+          // module persists the clean layout on the next grid event, repairing
+          // the corrupt row. A layout legitimately saved with zero modules is
+          // NOT corrupt, so the catalog stays closed in that case.
+          const hasCorruptItems =
+            persistedItems.length > 0 && this.dashboard.length === 0;
+
+          this.shouldAutoOpenCatalog.set(hasCorruptItems);
         }
 
         // Baseline the persistence snapshot to the just-loaded geometry so the
@@ -395,6 +540,58 @@ export class GfDashboardCanvasComponent implements OnInit {
         this.changeDetectorRef.markForCheck();
       }
     });
+  }
+
+  /**
+   * Sanitizes a persisted `LayoutData.items` array into clean, renderable
+   * {@link DashboardItem}s before it becomes the authoritative grid state.
+   *
+   * Two defensive transforms run, both rooted in the registry as the single
+   * authoritative module vocabulary (registry-only introduction):
+   *
+   *   1. Unknown-key filter — an item whose `moduleKey` is not registered
+   *      cannot be resolved to a component, so it would render as empty/clipped
+   *      chrome (or be "silently skipped"). Such items are dropped.
+   *   2. Duplicate de-duplication — the template tracks `@for` by `moduleKey`;
+   *      a repeated key triggers Angular `NG0955` and renders two copies of one
+   *      module. Only the FIRST occurrence of each key is kept.
+   *
+   * Per-item minimum dimensions are re-derived from the registry so the engine
+   * continues to enforce them after a reload. The method does NOT persist its
+   * result: rule R4 mandates grid-event-driven persistence only, so the cleaned
+   * layout is written back on the next real grid event (the caller baselines
+   * {@link lastPersistedSnapshot} to the sanitized projection so that next
+   * event correctly overwrites the corrupt row).
+   */
+  private sanitizePersistedItems(items: LayoutData['items']): DashboardItem[] {
+    const seenKeys = new Set<string>();
+    const sanitized: DashboardItem[] = [];
+
+    for (const item of items) {
+      if (!this.registry.has(item.moduleKey)) {
+        continue;
+      }
+
+      if (seenKeys.has(item.moduleKey)) {
+        continue;
+      }
+
+      seenKeys.add(item.moduleKey);
+
+      const definition = this.registry.get(item.moduleKey);
+
+      sanitized.push({
+        cols: item.cols,
+        minItemCols: definition?.minItemCols ?? MIN_ITEM_COLS,
+        minItemRows: definition?.minItemRows ?? MIN_ITEM_ROWS,
+        moduleKey: item.moduleKey,
+        rows: item.rows,
+        x: item.x,
+        y: item.y
+      });
+    }
+
+    return sanitized;
   }
 
   /**

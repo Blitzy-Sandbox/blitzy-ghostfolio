@@ -110,16 +110,41 @@ the first observation onwards. Because the histogram carries the
 
 ### Outcome semantics
 
-| Outcome     | Meaning                                                                                                                 | Notes                                                                                                                                                            |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `success`   | `GET` returned a saved layout (HTTP 200), or `PATCH` persisted the upsert (HTTP 200).                                   | Steady-state happy path for returning users and for every save.                                                                                                  |
-| `not_found` | `GET` for a user who has no `UserDashboardLayout` row — first visit. The service raises `NotFoundException` → HTTP 404. | **Normal first-visit signal, not a failure.** It drives the client's catalog auto-open. Excluded from the error-rate alert and the GET success-rate denominator. |
-| `error`     | Any other failure of the read/upsert — Prisma/DB error, request-body validation failure, or an unexpected exception.    | The only genuine failure outcome; backs the error-rate alert.                                                                                                    |
+| Outcome     | Meaning                                                                                                                                                       | Notes                                                                                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `success`   | `GET` returned a saved layout (HTTP 200), or `PATCH` persisted the upsert (HTTP 200).                                                                         | Steady-state happy path for returning users and for every save.                                                                                                  |
+| `not_found` | `GET` for a user who has no `UserDashboardLayout` row — first visit. The service raises `NotFoundException` → HTTP 404.                                       | **Normal first-visit signal, not a failure.** It drives the client's catalog auto-open. Excluded from the error-rate alert and the GET success-rate denominator. |
+| `error`     | A failure of the read/upsert AFTER the request reached the service — a Prisma/DB error or an unexpected exception thrown inside `UserDashboardLayoutService`. | The only genuine failure outcome; backs the error-rate alert.                                                                                                    |
 
-`401 Unauthenticated` requests are rejected by `AuthGuard('jwt')` and
-`HasPermissionGuard` **before** the handler runs, so they never reach
-`UserDashboardLayoutService` and are therefore **not** counted by
-these handler-level metrics.
+### Metric scope (service-level only)
+
+These are **service-level** signals: the counter and histogram are
+emitted from inside `UserDashboardLayoutService`, so they record ONLY
+requests that actually reach the service. Failures that the NestJS
+request pipeline rejects **before** the service method runs are
+therefore **not** counted by these metrics (QA Issue #17):
+
+- **`400 Bad Request`** — request-body shape **and domain** validation
+  (the global `ValidationPipe` + the `UpdateUserDashboardLayoutDto`
+  `@IsIn`/`@Validate` domain constraints: unknown/empty `moduleKey`,
+  duplicate keys, off-grid or overlapping geometry) is performed by the
+  pipe **before** the controller handler is invoked, and malformed JSON
+  is rejected by the body parser even earlier. None of these reach
+  `UserDashboardLayoutService`, so they produce **no**
+  `outcome="error"` series. (This is why the `error` row above is
+  scoped to in-service failures only — a `400` is a _client_ error
+  caught upstream, not a service error.)
+- **`401 Unauthenticated`** — rejected by `AuthGuard('jwt')` before the
+  handler runs.
+- **`403 Forbidden`** — rejected by `HasPermissionGuard` before the
+  handler runs.
+
+To observe validation/auth/permission rejection rates, use the
+platform-wide HTTP request metrics / access logs (which count every
+request at the transport layer regardless of where it is rejected), or
+extend the controller with a dedicated interceptor-level counter. The
+service-level metrics here intentionally measure the **health of the
+persistence path**, not client-side request hygiene.
 
 ## Recommended Panels
 

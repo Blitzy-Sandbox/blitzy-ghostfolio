@@ -298,6 +298,79 @@ describe('UserDashboardLayoutService', () => {
   });
 
   // ------------------------------------------------------------------------
+  // Success-path structured logging (QA Issue #16)
+  //
+  // The runbook documents that EVERY layout request emits a
+  // `[UserDashboardLayoutService] [<correlationId>]` log line. These tests
+  // assert the success and first-visit paths now emit a `Logger.log` line with
+  // the correlation-id prefix and the service context, so a request is
+  // traceable end-to-end (not only on the error path).
+  // ------------------------------------------------------------------------
+
+  it('emits a success-path log with the correlation-id prefix when a layout is read', async () => {
+    const record = {
+      createdAt: new Date(),
+      layoutData: DTO.layoutData as unknown as Prisma.JsonValue,
+      updatedAt: new Date(),
+      userId: USER_1_ID
+    } as UserDashboardLayout;
+    const loggerLogSpy = jest
+      .spyOn(Logger, 'log')
+      .mockImplementation(() => undefined);
+    (
+      prismaService.userDashboardLayout.findUnique as jest.Mock
+    ).mockResolvedValueOnce(record);
+
+    await service.findByUserId(USER_1_ID, 'corr-read-1');
+
+    expect(loggerLogSpy).toHaveBeenCalledTimes(1);
+    const [message, context] = loggerLogSpy.mock.calls[0];
+    expect(message).toContain('[corr-read-1]');
+    expect(message).toContain(USER_1_ID);
+    expect(context).toBe('UserDashboardLayoutService');
+  });
+
+  it('emits a first-visit (not_found) log with the correlation-id prefix when no layout exists', async () => {
+    const loggerLogSpy = jest
+      .spyOn(Logger, 'log')
+      .mockImplementation(() => undefined);
+    (
+      prismaService.userDashboardLayout.findUnique as jest.Mock
+    ).mockResolvedValueOnce(null);
+
+    await service.findByUserId(USER_1_ID, 'corr-read-2');
+
+    expect(loggerLogSpy).toHaveBeenCalledTimes(1);
+    const [message, context] = loggerLogSpy.mock.calls[0];
+    expect(message).toContain('[corr-read-2]');
+    expect(message).toContain('first visit');
+    expect(context).toBe('UserDashboardLayoutService');
+  });
+
+  it('emits a success-path log with the correlation-id prefix when a layout is upserted', async () => {
+    const record = {
+      createdAt: new Date(),
+      layoutData: DTO.layoutData as unknown as Prisma.JsonValue,
+      updatedAt: new Date(),
+      userId: USER_1_ID
+    } as UserDashboardLayout;
+    const loggerLogSpy = jest
+      .spyOn(Logger, 'log')
+      .mockImplementation(() => undefined);
+    (
+      prismaService.userDashboardLayout.upsert as jest.Mock
+    ).mockResolvedValueOnce(record);
+
+    await service.upsertForUser(USER_1_ID, DTO, 'corr-write-1');
+
+    expect(loggerLogSpy).toHaveBeenCalledTimes(1);
+    const [message, context] = loggerLogSpy.mock.calls[0];
+    expect(message).toContain('[corr-write-1]');
+    expect(message).toContain(USER_1_ID);
+    expect(context).toBe('UserDashboardLayoutService');
+  });
+
+  // ------------------------------------------------------------------------
   // Observability metrics (AAP § 0.8.2 / decision-log D-017)
   //
   // The service emits `user_dashboard_layout_requests_total` (counter,

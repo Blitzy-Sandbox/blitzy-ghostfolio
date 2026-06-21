@@ -85,84 +85,84 @@ jest.mock('@ghostfolio/client/dashboard/modules/x-ray/x-ray.component', () => ({
 const EXPECTED_DEFINITIONS = [
   {
     displayName: 'Portfolio Overview',
-    icon: 'dashboard',
+    icon: 'grid-outline',
     key: 'portfolio-overview',
     minItemCols: 6,
     minItemRows: 4
   },
   {
     displayName: 'Holdings',
-    icon: 'account_balance_wallet',
+    icon: 'wallet-outline',
     key: 'holdings',
     minItemCols: 6,
     minItemRows: 4
   },
   {
     displayName: 'Summary',
-    icon: 'reorder',
+    icon: 'reorder-four-outline',
     key: 'summary',
     minItemCols: 3,
     minItemRows: 4
   },
   {
     displayName: 'Markets',
-    icon: 'trending_up',
+    icon: 'trending-up-outline',
     key: 'markets',
     minItemCols: 4,
     minItemRows: 3
   },
   {
     displayName: 'Watchlist',
-    icon: 'visibility',
+    icon: 'eye-outline',
     key: 'watchlist',
     minItemCols: 3,
     minItemRows: 4
   },
   {
     displayName: 'Portfolio Summary',
-    icon: 'pie_chart',
+    icon: 'pie-chart-outline',
     key: 'portfolio-summary',
     minItemCols: 4,
     minItemRows: 4
   },
   {
     displayName: 'Transactions',
-    icon: 'swap_horiz',
+    icon: 'swap-horizontal-outline',
     key: 'transactions',
     minItemCols: 6,
     minItemRows: 4
   },
   {
     displayName: 'Allocations',
-    icon: 'donut_large',
+    icon: 'aperture-outline',
     key: 'allocations',
     minItemCols: 6,
     minItemRows: 4
   },
   {
     displayName: 'Analysis',
-    icon: 'bar_chart',
+    icon: 'bar-chart-outline',
     key: 'analysis',
     minItemCols: 6,
     minItemRows: 4
   },
   {
     displayName: 'FIRE',
-    icon: 'local_fire_department',
+    icon: 'flame-outline',
     key: 'fire',
     minItemCols: 4,
     minItemRows: 4
   },
   {
     displayName: 'X-ray',
-    icon: 'biotech',
+    icon: 'scan-outline',
     key: 'x-ray',
     minItemCols: 6,
     minItemRows: 4
   },
   {
     displayName: 'AI Chat',
-    icon: 'chat',
+    icon: 'chatbubbles-outline',
     key: 'ai-chat',
     minItemCols: 3,
     minItemRows: 4

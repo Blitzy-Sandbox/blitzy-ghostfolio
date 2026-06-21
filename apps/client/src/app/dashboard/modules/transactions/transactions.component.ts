@@ -1,12 +1,19 @@
 import { GfActivitiesPageComponent } from '@ghostfolio/client/pages/portfolio/activities/activities-page.component';
 
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  CUSTOM_ELEMENTS_SCHEMA,
+  Input
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
-import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ActivatedRoute, Router } from '@angular/router';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { closeOutline } from 'ionicons/icons';
 import { of } from 'rxjs';
 
 @Component({
@@ -14,9 +21,9 @@ import { of } from 'rxjs';
   imports: [
     CommonModule,
     GfActivitiesPageComponent,
+    IonIcon,
     MatButtonModule,
     MatCardModule,
-    MatIconModule,
     MatTooltipModule
   ],
   // Module-isolation guard (F2-003): the embedded gf-activities-page is an
@@ -58,6 +65,7 @@ import { of } from 'rxjs';
       }
     }
   ],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-transactions-module',
   styles: [
     `
@@ -116,7 +124,7 @@ import { of } from 'rxjs';
           (click)="removeModule?.()"
           (mousedown)="$event.stopPropagation()"
         >
-          <mat-icon>close</mat-icon>
+          <ion-icon name="close-outline" />
         </button>
       </div>
       <div class="gf-module-content">
@@ -127,4 +135,8 @@ import { of } from 'rxjs';
 })
 export class GfTransactionsModuleComponent {
   @Input() removeModule?: () => void;
+
+  public constructor() {
+    addIcons({ closeOutline });
+  }
 }

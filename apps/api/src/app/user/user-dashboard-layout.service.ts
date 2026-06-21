@@ -109,6 +109,23 @@ export class UserDashboardLayoutService {
       // 404), distinct from both a hit and a thrown error.
       outcome = layout === null ? 'not_found' : 'success';
 
+      // Success-path structured log (QA Issue #16). The runbook documents that
+      // EVERY request emits a `[UserDashboardLayoutService] [<correlationId>]`
+      // line so operators can trace a request end-to-end by correlation id;
+      // previously only the error path logged, so successful reads were
+      // invisible in the logs. Emitted at LOG level on BOTH non-error outcomes
+      // (`success` and the normal first-visit `not_found`), carrying the
+      // correlation id propagated from the controller boundary.
+      Logger.log(
+        this.formatLogMessage(
+          layout === null
+            ? `No UserDashboardLayout found for user ${userId} (first visit)`
+            : `Read UserDashboardLayout for user ${userId}`,
+          correlationId
+        ),
+        'UserDashboardLayoutService'
+      );
+
       return layout;
     } catch (error) {
       outcome = 'error';
@@ -180,6 +197,18 @@ export class UserDashboardLayoutService {
       });
 
       outcome = 'success';
+
+      // Success-path structured log (QA Issue #16) — mirrors the read path so
+      // every PATCH that persists a layout emits a traceable
+      // `[UserDashboardLayoutService] [<correlationId>]` line, matching the
+      // runbook's documented logging contract.
+      Logger.log(
+        this.formatLogMessage(
+          `Upserted UserDashboardLayout for user ${userId}`,
+          correlationId
+        ),
+        'UserDashboardLayoutService'
+      );
 
       return layout;
     } catch (error) {

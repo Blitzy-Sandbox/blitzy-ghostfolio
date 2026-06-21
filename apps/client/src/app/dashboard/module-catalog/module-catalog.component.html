@@ -1,14 +1,12 @@
 @if (opened()) {
-  <mat-sidenav-container
-    class="catalog-container"
-    (dragover)="onCatalogDragOver($event)"
-    (drop)="onCatalogDrop($event)"
-  >
+  <mat-sidenav-container class="catalog-container" [hasBackdrop]="false">
     <mat-sidenav
       class="catalog-panel"
       mode="over"
       opened
       position="end"
+      (dragover)="onCatalogDragOver($event)"
+      (drop)="onCatalogDrop($event)"
       (openedChange)="onSidenavOpenedChange($event)"
     >
       <div class="catalog-header">
@@ -21,7 +19,7 @@
           type="button"
           (click)="close()"
         >
-          <mat-icon>close</mat-icon>
+          <ion-icon name="close-outline" />
         </button>
       </div>
 
@@ -49,11 +47,14 @@
             (click)="onAddModule(module.key)"
             (dragstart)="onModuleDragStart(module.key, $event)"
           >
-            <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
+            <ion-icon matListItemIcon [name]="module.icon" />
             <span matListItemTitle>{{ module.displayName }}</span>
-            <mat-icon i18n-matTooltip matListItemMeta matTooltip="Add module"
-              >add</mat-icon
-            >
+            <ion-icon
+              i18n-matTooltip
+              matListItemMeta
+              matTooltip="Add module"
+              name="add-outline"
+            />
           </button>
         } @empty {
           <p class="catalog-empty" data-testid="catalog-empty" i18n>

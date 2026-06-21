@@ -677,7 +677,10 @@
            ============================================================ -->
       <section class="content-slide architecture-slide">
         <h2><i data-lucide="network"></i> Integration Topology</h2>
-        <div class="mermaid">
+        <div
+          class="mermaid"
+          data-diagram-label="Integration topology: Angular client (router, dashboard canvas, module registry, catalog, layout service, wrappers, feature components, auth interceptor) calls the NestJS API layout controller and service through auth and permission guards into PrismaService, with the shared libs/common interface and permissions"
+        >
 graph LR
   subgraph Client["Angular Client"]
     Routes["Router single '/' route"]:::newNode
@@ -1143,7 +1146,7 @@ graph LR
         rankSpacing: 56,
         padding: 22,
         htmlLabels: true,
-        useMaxWidth: true,
+        useMaxWidth: false,
         diagramPadding: 18,
         wrappingWidth: 200
       },
@@ -1188,36 +1191,87 @@ graph LR
       }
     }
 
+    /* Remove Mermaid's generated noise from the accessibility tree.
+       Mermaid injects a large <style> block (theme CSS) inside every generated
+       <svg>; browsers and reveal.js's aria-live status announcer surface that
+       CSS as raw text ("live-region Mermaid CSS noise"). We mark those style
+       nodes aria-hidden so they are excluded from the accessibility tree, and
+       expose each diagram as a single labelled image so node labels are not
+       read as disconnected fragments. Visual rendering is unaffected because
+       <style> elements are display:none and aria-hidden has no visual effect. */
+    function hideMermaidA11yNoise(nodes) {
+      nodes.forEach(function (node) {
+        var svg = node.querySelector('svg');
+        if (!svg) {
+          return;
+        }
+        var styles = svg.querySelectorAll('style');
+        for (var i = 0; i < styles.length; i++) {
+          styles[i].setAttribute('aria-hidden', 'true');
+        }
+        if (!svg.getAttribute('role')) {
+          svg.setAttribute('role', 'img');
+        }
+        if (!svg.getAttribute('aria-label')) {
+          var label = node.getAttribute('data-diagram-label') || 'Architecture diagram';
+          svg.setAttribute('aria-label', label);
+        }
+      });
+    }
+
     function renderMermaid() {
       try {
-        var nodes = document.querySelectorAll('.mermaid');
-        if (nodes && nodes.length > 0) {
-          /* Self-healing pass for the reveal.js + Mermaid hidden-slide problem:
-             the architecture diagram lives on a slide that is display:none at
-             initial load, so Mermaid's first run() renders it into a zero-size
-             container ("translate(undefined, NaN)") and marks it
-             data-processed="true", which would normally prevent any retry.
-             We preserve the original graph source on first sight, then reset any
-             diagram that rendered with no/blank SVG so the run() below re-renders
-             it once its slide is actually visible (e.g. on slidechanged). */
-          nodes.forEach(function (node) {
-            if (node.getAttribute('data-mermaid-src') === null) {
-              node.setAttribute('data-mermaid-src', node.textContent);
+        /* Render ONLY the currently visible slide's diagram(s). Reveal.js keeps
+           non-active slides at display:none, so running Mermaid against every
+           .mermaid node (document-wide) renders hidden diagrams into a zero-size
+           container, producing "translate(undefined, NaN)" SVG transform errors.
+           Scoping to the present slide means a diagram is rendered only once its
+           slide actually has layout dimensions, eliminating those errors at the
+           source. mermaid.run() is idempotent (skips data-processed nodes). */
+        var current =
+          typeof Reveal !== 'undefined' && Reveal.getCurrentSlide
+            ? Reveal.getCurrentSlide()
+            : null;
+        var scope = current || document;
+        var nodes = Array.prototype.slice.call(
+          scope.querySelectorAll('.mermaid')
+        );
+        if (!nodes.length) {
+          return;
+        }
+        /* Self-healing safety net: if a diagram was ever rendered with no/blank
+           or NaN-transform SVG (e.g. a hash deep-link landed mid-transition),
+           reset it so the run() below re-renders it cleanly while visible. */
+        nodes.forEach(function (node) {
+          if (node.getAttribute('data-mermaid-src') === null) {
+            node.setAttribute('data-mermaid-src', node.textContent);
+          }
+          if (node.getAttribute('data-processed') === 'true') {
+            var svg = node.querySelector('svg');
+            var width = svg ? svg.getBoundingClientRect().width : 0;
+            var broken =
+              !svg || width < 100 || node.innerHTML.indexOf('NaN') !== -1;
+            if (broken) {
+              node.removeAttribute('data-processed');
+              node.textContent = node.getAttribute('data-mermaid-src');
             }
-            if (node.getAttribute('data-processed') === 'true') {
-              var svg = node.querySelector('svg');
-              var width = svg ? svg.getBoundingClientRect().width : 0;
-              var broken = !svg || width < 100 || node.innerHTML.indexOf('NaN') !== -1;
-              if (broken) {
-                node.removeAttribute('data-processed');
-                node.textContent = node.getAttribute('data-mermaid-src');
-              }
-            }
-          });
-          mermaid.run({ querySelector: '.mermaid' }).catch(function (err) {
+          }
+        });
+        var pending = nodes.filter(function (node) {
+          return node.getAttribute('data-processed') !== 'true';
+        });
+        if (!pending.length) {
+          hideMermaidA11yNoise(nodes);
+          return;
+        }
+        mermaid
+          .run({ nodes: pending })
+          .then(function () {
+            hideMermaidA11yNoise(nodes);
+          })
+          .catch(function (err) {
             console.warn('[mermaid] run rejected:', err);
           });
-        }
       } catch (err) {
         console.warn('[mermaid] run threw:', err);
       }

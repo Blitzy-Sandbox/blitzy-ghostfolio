@@ -28,12 +28,29 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 // `chat-panel.component.spec.ts`), while the functional requirement —
 // `$localize` defined before any test runs — is fully satisfied.
 import '@angular/localize/init';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { By } from '@angular/platform-browser';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { GridType } from 'angular-gridster2';
-import { of, throwError } from 'rxjs';
+import { addIcons } from 'ionicons';
+import {
+  chatbubblesOutline,
+  gridOutline,
+  trendingUpOutline,
+  walletOutline
+} from 'ionicons/icons';
+import { of, Subject, throwError } from 'rxjs';
 
 import { GfDashboardCanvasComponent } from './dashboard-canvas.component';
+
+// Register the Ionicons referenced by the mock module definitions below. In
+// production the REAL `ModuleRegistryService` constructor registers every
+// module icon via `addIcons(...)`; this spec replaces that service with a mock
+// (see `jest.mock` above), so it must register the mock fixtures' icon names
+// itself — otherwise the real catalog rendered inside the canvas emits
+// "Could not load icon" warnings for the unregistered names. Mirrors the real
+// registry's behavior; `addIcons` is global and idempotent.
+addIcons({ chatbubblesOutline, gridOutline, trendingUpOutline, walletOutline });
 
 // CRITICAL test-isolation seam. The REAL `ModuleRegistryService` statically
 // imports all twelve wrapper components in its constructor; those wrappers
@@ -87,7 +104,7 @@ const MOCK_DEFINITIONS = [
   {
     component: StubModuleComponent,
     displayName: 'Portfolio Overview',
-    icon: 'dashboard',
+    icon: 'grid-outline',
     key: 'portfolio-overview',
     minItemCols: 6,
     minItemRows: 4
@@ -95,7 +112,7 @@ const MOCK_DEFINITIONS = [
   {
     component: StubModuleComponent,
     displayName: 'Holdings',
-    icon: 'account_balance_wallet',
+    icon: 'wallet-outline',
     key: 'holdings',
     minItemCols: 6,
     minItemRows: 4
@@ -103,7 +120,7 @@ const MOCK_DEFINITIONS = [
   {
     component: StubModuleComponent,
     displayName: 'AI Chat',
-    icon: 'chat',
+    icon: 'chatbubbles-outline',
     key: 'ai-chat',
     minItemCols: 3,
     minItemRows: 4
@@ -136,7 +153,12 @@ describe('GfDashboardCanvasComponent', () => {
     has: jest.Mock;
     register: jest.Mock;
   };
-  let mockLayoutService: { get: jest.Mock; queueSave: jest.Mock };
+  let mockLayoutService: {
+    get: jest.Mock;
+    queueSave: jest.Mock;
+    saveError$: Subject<void>;
+  };
+  let snackBarMock: { open: jest.Mock };
 
   beforeAll(() => {
     global.ResizeObserver =
@@ -162,14 +184,23 @@ describe('GfDashboardCanvasComponent', () => {
     // so persistence calls (drag/resize/add/remove) can be asserted.
     mockLayoutService = {
       get: jest.fn(() => of(null)),
-      queueSave: jest.fn()
+      queueSave: jest.fn(),
+      // Backs the canvas's QA Issue #7 subscription. A real `Subject` so a test
+      // can emit a save failure and assert the resulting MatSnackBar opens.
+      saveError$: new Subject<void>()
     };
+
+    // The canvas opens a MatSnackBar on a save failure (QA Issue #7). A bare
+    // `open` spy resolves `inject(MatSnackBar)` without standing up the real
+    // overlay and lets the snackbar call be asserted.
+    snackBarMock = { open: jest.fn() };
 
     await TestBed.configureTestingModule({
       imports: [GfDashboardCanvasComponent, NoopAnimationsModule],
       providers: [
         { provide: ModuleRegistryService, useValue: mockRegistry },
-        { provide: DashboardLayoutService, useValue: mockLayoutService }
+        { provide: DashboardLayoutService, useValue: mockLayoutService },
+        { provide: MatSnackBar, useValue: snackBarMock }
       ]
     }).compileComponents();
   });
@@ -235,12 +266,14 @@ describe('GfDashboardCanvasComponent', () => {
     expect(component.shouldAutoOpenCatalog()).toBe(false);
   });
 
-  // Extra branch — Forward compatibility: a saved layout may reference a module
-  // key that is no longer registered (e.g. a module removed in a later
-  // release). The item still hydrates, falling back to the global 2x2 minimum
-  // dimensions (`definition?.minItemCols ?? MIN_ITEM_COLS`) rather than
-  // crashing; its geometry is preserved from the saved record.
-  it('hydrates an unregistered module key with fallback minimum dimensions', () => {
+  // Defensive hydration (QA Issue #2 / #3) — a persisted layout that references
+  // an UNREGISTERED module key (a corrupt/tampered row, or one persisted before
+  // the server-side DTO allow-list existed) must NOT render an unresolvable,
+  // empty/clipped module. `sanitizePersistedItems` drops it. When that leaves
+  // the canvas empty AND the persisted layout was non-empty, the canvas treats
+  // it as a corrupt layout: blank canvas + auto-open catalog (recovery path),
+  // exactly like a first visit.
+  it('drops an unregistered module key and auto-opens the catalog (corrupt layout recovery)', () => {
     mockLayoutService.get.mockReturnValue(
       of({
         createdAt: '2024-01-01T00:00:00.000Z',
@@ -257,15 +290,74 @@ describe('GfDashboardCanvasComponent', () => {
 
     createComponent();
 
+    // The unregistered item is filtered out — it is never placed on the grid.
+    expect(component.dashboard.length).toBe(0);
+    // Non-empty persisted layout that sanitizes to empty => corrupt => recover.
+    expect(component.shouldAutoOpenCatalog()).toBe(true);
+    expect(component.isInitialized()).toBe(true);
+  });
+
+  // Defensive hydration (QA Issue #2) — a persisted layout mixing registered and
+  // unregistered keys keeps only the registered modules; the unknown entry is
+  // dropped. Because at least one valid module survives, the canvas is NOT
+  // treated as corrupt and the catalog stays closed.
+  it('keeps registered modules and drops unregistered ones from a mixed layout', () => {
+    mockLayoutService.get.mockReturnValue(
+      of({
+        createdAt: '2024-01-01T00:00:00.000Z',
+        layoutData: {
+          items: [
+            { cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 },
+            { cols: 5, moduleKey: 'retired-module', rows: 3, x: 6, y: 0 }
+          ],
+          schemaVersion: 1
+        },
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        userId: 'user-1'
+      })
+    );
+
+    createComponent();
+
+    expect(component.dashboard.map((item) => item.moduleKey)).toEqual([
+      'holdings'
+    ]);
+    expect(component.shouldAutoOpenCatalog()).toBe(false);
+  });
+
+  // Defensive hydration (QA Issue #2) — duplicate module keys in a persisted
+  // layout are de-duplicated (first occurrence wins) so the `@for` track-by
+  // `moduleKey` never renders two copies of one module (the Angular NG0955
+  // warning observed by QA). Per-item minimums are re-derived from the registry.
+  it('de-duplicates repeated module keys during hydration (keeps the first)', () => {
+    mockLayoutService.get.mockReturnValue(
+      of({
+        createdAt: '2024-01-01T00:00:00.000Z',
+        layoutData: {
+          items: [
+            { cols: 6, moduleKey: 'holdings', rows: 4, x: 0, y: 0 },
+            { cols: 4, moduleKey: 'holdings', rows: 2, x: 6, y: 0 }
+          ],
+          schemaVersion: 1
+        },
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        userId: 'user-1'
+      })
+    );
+
+    createComponent();
+
     expect(component.dashboard.length).toBe(1);
 
     const hydrated = component.dashboard[0];
 
-    expect(hydrated.moduleKey).toBe('retired-module');
-    expect(hydrated.cols).toBe(5);
-    expect(hydrated.rows).toBe(3);
-    expect(hydrated.minItemCols).toBe(2);
-    expect(hydrated.minItemRows).toBe(2);
+    // The FIRST occurrence is kept (its geometry, not the duplicate's).
+    expect(hydrated.moduleKey).toBe('holdings');
+    expect(hydrated.cols).toBe(6);
+    expect(hydrated.rows).toBe(4);
+    expect(hydrated.minItemCols).toBe(6);
+    expect(hydrated.minItemRows).toBe(4);
+    expect(component.shouldAutoOpenCatalog()).toBe(false);
   });
 
   // Case 4 — Adding a module places one new item carrying the registry-sourced
@@ -628,5 +720,52 @@ describe('GfDashboardCanvasComponent', () => {
       undefined;
 
     expect(() => component.openCatalog()).not.toThrow();
+  });
+
+  // QA Issue #6 — module content must not mount until the grid has sized its
+  // cells, otherwise chart/SVG libraries (the Allocations world map's svgmap)
+  // initialize against a zero-size element and throw a non-invertible-
+  // SVGMatrix error. `isGridReady` is the one-way latch the template gates
+  // content on; it flips one animation frame after angular-gridster2's
+  // `initCallback`.
+  it('latches isGridReady one animation frame after the grid reports init (QA Issue #6)', () => {
+    createComponent();
+
+    // Neutralize any latch the REAL engine may have set during createComponent
+    // so this assertion deterministically exercises the init -> RAF -> latch
+    // path rather than racing the engine.
+    component.isGridReady.set(false);
+
+    // Run the queued animation-frame callback synchronously for this assertion
+    // only (installed AFTER createComponent so the engine's own init RAF is
+    // unaffected).
+    const rafSpy = jest
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+
+        return 0;
+      });
+
+    // Invoke the engine hook exactly as angular-gridster2 does on init.
+    const initCallback = component.options.initCallback as
+      | (() => void)
+      | undefined;
+    initCallback?.();
+
+    expect(component.isGridReady()).toBe(true);
+
+    rafSpy.mockRestore();
+  });
+
+  // QA Issue #7 — a debounced PATCH that fails must not be silent: the layout
+  // service re-surfaces it on `saveError$` and the canvas opens a MatSnackBar
+  // so the user knows an optimistic change did not persist.
+  it('opens a snackbar when a layout save fails (QA Issue #7)', () => {
+    createComponent();
+
+    mockLayoutService.saveError$.next();
+
+    expect(snackBarMock.open).toHaveBeenCalledTimes(1);
   });
 });

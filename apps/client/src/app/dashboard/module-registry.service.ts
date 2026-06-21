@@ -13,6 +13,21 @@ import { GfWatchlistModuleComponent } from '@ghostfolio/client/dashboard/modules
 import { GfXRayModuleComponent } from '@ghostfolio/client/dashboard/modules/x-ray/x-ray.component';
 
 import { Injectable } from '@angular/core';
+import { addIcons } from 'ionicons';
+import {
+  apertureOutline,
+  barChartOutline,
+  chatbubblesOutline,
+  eyeOutline,
+  flameOutline,
+  gridOutline,
+  pieChartOutline,
+  reorderFourOutline,
+  scanOutline,
+  swapHorizontalOutline,
+  trendingUpOutline,
+  walletOutline
+} from 'ionicons/icons';
 
 /**
  * Centralized registry of every dashboard module type.
@@ -44,10 +59,31 @@ export class ModuleRegistryService {
   private registry = new Map<string, ModuleDefinition>();
 
   public constructor() {
+    // Register every module icon with Ionicons so the catalog can render them
+    // via `<ion-icon [name]="module.icon">`. Registration is co-located with
+    // the `icon:` name declarations below: this is the SINGLE place the icon
+    // set is defined, so adding a module here can never desync from its icon
+    // (Ghostfolio renders icons through `<ion-icon>` — the Material icon font
+    // is not loaded — mirroring the header component's `addIcons` usage).
+    addIcons({
+      apertureOutline,
+      barChartOutline,
+      chatbubblesOutline,
+      eyeOutline,
+      flameOutline,
+      gridOutline,
+      pieChartOutline,
+      reorderFourOutline,
+      scanOutline,
+      swapHorizontalOutline,
+      trendingUpOutline,
+      walletOutline
+    });
+
     this.register({
       component: GfPortfolioOverviewModuleComponent,
       displayName: $localize`Portfolio Overview`,
-      icon: 'dashboard',
+      icon: 'grid-outline',
       key: 'portfolio-overview',
       minItemCols: 6,
       minItemRows: 4
@@ -56,7 +92,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfHoldingsModuleComponent,
       displayName: $localize`Holdings`,
-      icon: 'account_balance_wallet',
+      icon: 'wallet-outline',
       key: 'holdings',
       minItemCols: 6,
       minItemRows: 4
@@ -65,7 +101,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfSummaryModuleComponent,
       displayName: $localize`Summary`,
-      icon: 'reorder',
+      icon: 'reorder-four-outline',
       key: 'summary',
       minItemCols: 3,
       minItemRows: 4
@@ -74,7 +110,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfMarketsModuleComponent,
       displayName: $localize`Markets`,
-      icon: 'trending_up',
+      icon: 'trending-up-outline',
       key: 'markets',
       minItemCols: 4,
       minItemRows: 3
@@ -83,7 +119,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfWatchlistModuleComponent,
       displayName: $localize`Watchlist`,
-      icon: 'visibility',
+      icon: 'eye-outline',
       key: 'watchlist',
       minItemCols: 3,
       minItemRows: 4
@@ -92,7 +128,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfPortfolioSummaryModuleComponent,
       displayName: $localize`Portfolio Summary`,
-      icon: 'pie_chart',
+      icon: 'pie-chart-outline',
       key: 'portfolio-summary',
       minItemCols: 4,
       minItemRows: 4
@@ -101,7 +137,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfTransactionsModuleComponent,
       displayName: $localize`Transactions`,
-      icon: 'swap_horiz',
+      icon: 'swap-horizontal-outline',
       key: 'transactions',
       minItemCols: 6,
       minItemRows: 4
@@ -110,7 +146,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfAllocationsModuleComponent,
       displayName: $localize`Allocations`,
-      icon: 'donut_large',
+      icon: 'aperture-outline',
       key: 'allocations',
       minItemCols: 6,
       minItemRows: 4
@@ -119,7 +155,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfAnalysisModuleComponent,
       displayName: $localize`Analysis`,
-      icon: 'bar_chart',
+      icon: 'bar-chart-outline',
       key: 'analysis',
       minItemCols: 6,
       minItemRows: 4
@@ -128,7 +164,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfFireModuleComponent,
       displayName: $localize`FIRE`,
-      icon: 'local_fire_department',
+      icon: 'flame-outline',
       key: 'fire',
       minItemCols: 4,
       minItemRows: 4
@@ -137,7 +173,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfXRayModuleComponent,
       displayName: $localize`X-ray`,
-      icon: 'biotech',
+      icon: 'scan-outline',
       key: 'x-ray',
       minItemCols: 6,
       minItemRows: 4
@@ -146,7 +182,7 @@ export class ModuleRegistryService {
     this.register({
       component: GfAiChatModuleComponent,
       displayName: $localize`AI Chat`,
-      icon: 'chat',
+      icon: 'chatbubbles-outline',
       key: 'ai-chat',
       minItemCols: 3,
       minItemRows: 4

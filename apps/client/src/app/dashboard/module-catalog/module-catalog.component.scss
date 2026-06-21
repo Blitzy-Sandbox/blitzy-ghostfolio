@@ -18,8 +18,8 @@
   display: contents;
 }
 
-// Overlay the dashboard canvas so the over-mode drawer + backdrop float above
-// it (geometry only — bare numerics / `0` are allowed).
+// Overlay the dashboard canvas so the over-mode drawer floats above it
+// (geometry only — bare numerics / `0` are allowed).
 //
 // `top` is offset by the fixed `gf-header`'s height instead of `0` so the
 // drawer's header (the "Add module" title + Close button) is NOT occluded by
@@ -30,9 +30,23 @@
 // the app shell uses to size the header and offset `<main>`, so the catalog top
 // now aligns exactly with the bottom of the header (no gap, no overlap); the
 // `64px` fallback is Angular Material's default toolbar height.
+//
+// Non-modal composition (QA Issue #4): the catalog must NOT obscure the grid
+// while the user composes their dashboard. The `<mat-sidenav>` is rendered with
+// `[hasBackdrop]="false"` (no dimming scrim), and this full-viewport container
+// is made click-THROUGH with `pointer-events: none` so the empty region beside
+// the drawer does not intercept clicks/drags — the dashboard grid behind it
+// stays fully VISIBLE *and* INTERACTIVE (drag/resize/remove modules) with the
+// catalog open. The drawer surface itself re-enables pointer events below.
 .catalog-container {
+  // Transparent so Angular Material's default `.mat-drawer-container`
+  // background does not paint over the now-visible grid (`transparent` is an
+  // explicitly-allowed bare value under Decision D-020, alongside `0`/`none`/
+  // `auto`). The opaque drawer surface is restored on `.catalog-panel`.
+  background: transparent;
   bottom: 0;
   left: 0;
+  pointer-events: none;
   position: fixed;
   right: 0;
   top: var(--mat-toolbar-standard-height, 64px);
@@ -41,14 +55,21 @@
 
 // The drawer surface itself (applied to the <mat-sidenav>).
 //
+// `pointer-events: auto` re-enables interaction on the drawer after the
+// click-through `.catalog-container` disabled it (QA Issue #4): the container
+// is `pointer-events: none` so the grid behind it stays interactive, and this
+// rule restores clicks/drag-drop on the panel (search, rows, close button, and
+// the drag-to-add drop target now bound to this element).
+//
 // The fallback is an OPAQUE surface (not the near-transparent `rgba(0,0,0,0.04)`
-// used for in-grid module cards) because this is a modal panel that floats over
-// a dark backdrop scrim: a translucent fallback let the scrim bleed through and
-// made the panel nearly indistinguishable from the dimmed canvas (F3-006).
-// `surface-container` is semantically opaque, so the fallback is a solid light
-// surface — `rgb(255, 255, 255)`, matching the app's dialog/menu/select
-// surfaces (`--light-background`). The D-020 `var(--mat-sys-<token>, <fallback>)`
-// syntax is preserved; only the fallback value is made opaque.
+// used for in-grid module cards) because the drawer now floats directly over
+// the VISIBLE dashboard grid (the backdrop scrim was removed for non-modal
+// composition): a translucent fallback would let grid modules bleed through and
+// make the catalog rows hard to read (F3-006). `surface-container` is
+// semantically opaque, so the fallback is a solid light surface —
+// `rgb(255, 255, 255)`, matching the app's dialog/menu/select surfaces
+// (`--light-background`). The D-020 `var(--mat-sys-<token>, <fallback>)` syntax
+// is preserved; only the fallback value is made opaque.
 .catalog-panel {
   background-color: var(--mat-sys-surface-container, rgb(255, 255, 255));
   box-sizing: border-box;
@@ -57,6 +78,7 @@
   flex-direction: column;
   gap: 0.5rem;
   padding: 1rem;
+  pointer-events: auto;
   width: 20rem;
 }
 

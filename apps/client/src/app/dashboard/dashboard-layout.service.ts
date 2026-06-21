@@ -29,9 +29,25 @@ import { catchError, debounceTime, switchMap } from 'rxjs/operators';
   providedIn: 'root'
 })
 export class DashboardLayoutService {
+  /**
+   * Emits once for every debounced PATCH that fails (QA Issue #7). The PATCH
+   * error is contained INSIDE the inner stream (so a transient failure never
+   * terminates `persist$` and disables future grid-event-driven saves); this
+   * stream re-surfaces that failure to interested observers — specifically the
+   * canvas, which shows a `MatSnackBar` so an optimistic add/move/remove that
+   * did NOT persist is no longer silently lost on reload. A plain
+   * `Subject<void>` (not Behavior/Replay) so a late subscriber is never
+   * notified of a stale past failure; the canvas reacts only to NEW errors
+   * that occur while it is mounted.
+   */
+  public readonly saveError$: Observable<void>;
+
   private persist$ = new Subject<UserDashboardLayoutPatchPayload>();
+  private saveErrorSubject = new Subject<void>();
 
   public constructor(private http: HttpClient) {
+    this.saveError$ = this.saveErrorSubject.asObservable();
+
     this.persist$
       .pipe(
         debounceTime(500),
@@ -46,6 +62,14 @@ export class DashboardLayoutService {
                 // outer subscription stays alive; the next `queueSave(...)`
                 // is processed normally.
                 console.error('Failed to persist dashboard layout', error);
+
+                // Re-surface the failure to observers (the canvas ->
+                // MatSnackBar) so the user learns an optimistic change did NOT
+                // persist and can retry, instead of silently losing it on
+                // reload (QA Issue #7). Emitted AFTER logging and BEFORE
+                // swallowing the error so the inner stream still completes with
+                // EMPTY (keeping the outer subscription alive).
+                this.saveErrorSubject.next();
 
                 return EMPTY;
               })

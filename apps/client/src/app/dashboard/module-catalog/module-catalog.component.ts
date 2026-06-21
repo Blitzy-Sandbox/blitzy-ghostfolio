@@ -5,6 +5,7 @@ import { CommonModule } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  CUSTOM_ELEMENTS_SCHEMA,
   EventEmitter,
   Input,
   OnInit,
@@ -16,11 +17,13 @@ import {
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { addOutline, closeOutline } from 'ionicons/icons';
 
 /**
  * Custom `DataTransfer` MIME type that carries ONLY a module's stable registry
@@ -59,14 +62,15 @@ export const MODULE_KEY_DATA_TRANSFER_TYPE = 'application/x-gf-module-key';
   imports: [
     CommonModule,
     FormsModule,
+    IonIcon,
     MatButtonModule,
     MatFormFieldModule,
-    MatIconModule,
     MatInputModule,
     MatListModule,
     MatSidenavModule,
     MatTooltipModule
   ],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-module-catalog',
   styleUrls: ['./module-catalog.component.scss'],
   templateUrl: './module-catalog.component.html'
@@ -119,6 +123,14 @@ export class GfModuleCatalogComponent implements OnInit {
   });
 
   private readonly moduleRegistryService = inject(ModuleRegistryService);
+
+  public constructor() {
+    // Register the catalog's own chrome icons (the close-drawer control and the
+    // per-row "add" affordance). The 12 per-module icons rendered via
+    // `<ion-icon [name]="module.icon">` are registered by ModuleRegistryService
+    // alongside their name declarations, so the catalog only owns its chrome.
+    addIcons({ addOutline, closeOutline });
+  }
 
   public ngOnInit(): void {
     if (this.autoOpen) {

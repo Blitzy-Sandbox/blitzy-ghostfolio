@@ -7,6 +7,7 @@ import {
 } from '@ghostfolio/common/config';
 
 import {
+  HttpStatus,
   Logger,
   LogLevel,
   ValidationPipe,
@@ -43,6 +44,30 @@ async function bootstrap() {
   });
 
   app.enableCors();
+
+  // QA Issue #14 — security hardening (minimal, platform-safe subset).
+  //
+  // Two zero-/low-risk hardening measures applied globally to every response:
+  //   • Remove the framework-fingerprinting `X-Powered-By: Express` header,
+  //     which leaks the server technology to attackers.
+  //   • Set `X-Content-Type-Options: nosniff` so browsers do not MIME-sniff
+  //     response bodies (defense against content-type confusion attacks).
+  //
+  // Broader hardening — a full Helmet Content-Security-Policy, a non-wildcard
+  // CORS allow-list, and per-endpoint `Cache-Control` — is a PLATFORM-WIDE
+  // posture decision deliberately left out of this feature scope: the existing
+  // Ghostfolio public API intentionally serves wildcard CORS for its public
+  // consumers, and a strict CSP must be validated against the Angular client
+  // (inline styles/scripts) before it can be enabled without breaking the SPA.
+  // The two measures below are safe because they neither restrict origins nor
+  // alter response bodies.
+  app.disable('x-powered-by');
+  app.use((_request: Request, response: Response, next: NextFunction) => {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+
+    next();
+  });
+
   app.enableVersioning({
     defaultVersion: '1',
     type: VersioningType.URI
@@ -101,6 +126,46 @@ async function bootstrap() {
 
   // Support 10mb csv/json files for importing activities
   app.useBodyParser('json', { limit: '10mb' });
+
+  // QA Issue #1 — map malformed-JSON request bodies to HTTP 400.
+  //
+  // The global JSON body parser (above) throws a `SyntaxError` tagged
+  // `type: 'entity.parse.failed'` with `status: 400` when a request body is
+  // not valid JSON (e.g. `{"layoutData":` or trailing garbage). Without an
+  // explicit error-handling middleware that failure surfaced as a MISLEADING
+  // HTTP 404 `Cannot <METHOD> <url>` (the parse error propagated past the Nest
+  // router and fell through to the not-found handler) instead of a 400.
+  //
+  // This four-argument Express error-handling middleware (arity 4 marks it as
+  // an error handler) intercepts ONLY body-parse failures and returns a clear
+  // 400 with the standard Nest-style JSON error shape; every other error is
+  // forwarded untouched via `next(error)` so existing exception handling is
+  // unaffected. Registered immediately after the body parser so it sits in the
+  // middleware stack to catch the parser's `next(error)`.
+  app.use(
+    (
+      error: Error & { status?: number; statusCode?: number; type?: string },
+      _request: Request,
+      response: Response,
+      next: NextFunction
+    ) => {
+      const isBodyParseError =
+        error instanceof SyntaxError &&
+        (error.type === 'entity.parse.failed' ||
+          error.status === HttpStatus.BAD_REQUEST ||
+          error.statusCode === HttpStatus.BAD_REQUEST);
+
+      if (isBodyParseError) {
+        return response.status(HttpStatus.BAD_REQUEST).json({
+          error: 'Bad Request',
+          message: 'Malformed JSON in request body',
+          statusCode: HttpStatus.BAD_REQUEST
+        });
+      }
+
+      return next(error);
+    }
+  );
 
   app.use(cookieParser());
 

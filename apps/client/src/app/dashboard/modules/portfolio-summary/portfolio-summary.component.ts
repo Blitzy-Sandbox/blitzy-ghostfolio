@@ -10,6 +10,7 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  CUSTOM_ELEMENTS_SCHEMA,
   DestroyRef,
   Input,
   OnInit
@@ -17,8 +18,10 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
-import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { closeOutline } from 'ionicons/icons';
 import { DeviceDetectorService } from 'ngx-device-detector';
 
 /**
@@ -46,11 +49,12 @@ import { DeviceDetectorService } from 'ngx-device-detector';
   imports: [
     CommonModule,
     GfPortfolioSummaryComponent,
+    IonIcon,
     MatButtonModule,
     MatCardModule,
-    MatIconModule,
     MatTooltipModule
   ],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-portfolio-summary-module',
   styles: [
     `
@@ -109,7 +113,7 @@ import { DeviceDetectorService } from 'ngx-device-detector';
           (click)="removeModule?.()"
           (mousedown)="$event.stopPropagation()"
         >
-          <mat-icon>close</mat-icon>
+          <ion-icon name="close-outline" />
         </button>
       </div>
       <div class="gf-module-content">
@@ -149,6 +153,8 @@ export class GfPortfolioSummaryModuleComponent implements OnInit {
     private impersonationStorageService: ImpersonationStorageService,
     private userService: UserService
   ) {
+    addIcons({ closeOutline });
+
     this.userService.stateChanged
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((state) => {

@@ -8,7 +8,7 @@
     type="button"
     (click)="openCatalog()"
   >
-    <mat-icon>add</mat-icon>
+    <ion-icon name="add-outline" />
     <span i18n>Add module</span>
   </button>
 </div>
@@ -18,7 +18,7 @@
        non-404 error (DashboardLayoutService.get() re-throws those); keeps the
        canvas from being left blank/unrecoverable and offers an inline retry. -->
   <div class="dashboard-error" data-testid="dashboard-error" role="alert">
-    <mat-icon class="dashboard-error-icon">error_outline</mat-icon>
+    <ion-icon class="dashboard-error-icon" name="alert-circle-outline" />
     <p class="dashboard-error-message" i18n>
       We couldn’t load your dashboard. Please try again.
     </p>
@@ -36,12 +36,21 @@
   <gridster class="dashboard-grid" [options]="options">
     @for (item of dashboard; track item.moduleKey) {
       <gridster-item class="dashboard-grid-item" [item]="item">
-        <ng-container
-          *ngComponentOutlet="
-            registry.get(item.moduleKey)?.component;
-            inputs: getOutletInputs(item)
-          "
-        />
+        @if (isGridReady()) {
+          <!-- Mount module content only AFTER the grid has sized this cell (QA
+               Issue #6): chart/SVG libraries embedded in modules (the
+               Allocations world map's svgmap) call getScreenCTM().inverse() on
+               init, which throws on a zero-size element while gridster is still
+               settling the cell during hydration. The <gridster-item> itself is
+               always rendered so the engine can lay it out; only its content is
+               deferred by the one-frame readiness latch (isGridReady). -->
+          <ng-container
+            *ngComponentOutlet="
+              registry.get(item.moduleKey)?.component;
+              inputs: getOutletInputs(item)
+            "
+          />
+        }
       </gridster-item>
     }
   </gridster>
@@ -51,7 +60,7 @@
          but if it is closed the blank grid would offer no instruction; this CTA
          keeps "add a module" visible and screen-reader accessible. -->
     <div class="dashboard-empty" data-testid="dashboard-empty" role="status">
-      <mat-icon class="dashboard-empty-icon">dashboard_customize</mat-icon>
+      <ion-icon class="dashboard-empty-icon" name="grid-outline" />
       <p class="dashboard-empty-message" i18n>
         Your dashboard is empty. Add a module to get started.
       </p>
@@ -62,7 +71,7 @@
         type="button"
         (click)="openCatalog()"
       >
-        <mat-icon>add</mat-icon>
+        <ion-icon name="add-outline" />
         <span i18n>Add module</span>
       </button>
     </div>

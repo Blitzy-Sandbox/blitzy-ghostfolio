@@ -17,7 +17,9 @@
         <li class="d-inline-flex list-inline-item">
           <button
             #assistantTrigger="matMenuTrigger"
+            aria-label="Open assistant"
             class="h-100 no-min-width px-2"
+            i18n-aria-label
             matBadge="&NoBreak;"
             matBadgeSize="small"
             matButton
@@ -53,7 +55,9 @@
       }
       <li class="list-inline-item">
         <button
+          aria-label="Open account menu"
           class="no-min-width px-1"
+          i18n-aria-label
           mat-button
           [matMenuTriggerFor]="accountMenu"
           (menuClosed)="onMenuClosed()"
@@ -289,8 +293,10 @@
       }
       <li class="list-inline-item">
         <a
+          aria-label="Ghostfolio on GitHub"
           class="d-none d-sm-block no-min-width p-1"
           href="https://github.com/ghostfolio/ghostfolio"
+          i18n-aria-label
           mat-button
           ><ion-icon name="logo-github"
         /></a>
