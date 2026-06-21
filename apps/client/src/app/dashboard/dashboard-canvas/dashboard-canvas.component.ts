@@ -26,6 +26,8 @@ import {
   GridsterItem,
   GridType
 } from 'angular-gridster2';
+import { Chart } from 'chart.js';
+import annotationPlugin from 'chartjs-plugin-annotation';
 
 // Fixed pixel row height for the `GridType.Fixed` grid (AAP: "a fixed row
 // height (constant pixel value)").
@@ -167,6 +169,15 @@ export class GfDashboardCanvasComponent implements OnInit {
   // and is NOT attached to the `options` object (verified against v21.0.1), so
   // first-fit placement must read it from here (see {@link onAddModule}).
   private readonly grid = viewChild(Gridster);
+  // Serialized snapshot of the last `LayoutData` handed to `queueSave` (or the
+  // baseline captured right after a load). Used to suppress redundant no-op
+  // saves — most importantly the spurious PATCH that angular-gridster2 would
+  // otherwise trigger when its `itemChangeCallback`/`itemResizeCallback` fire
+  // during the post-hydration settle with geometry IDENTICAL to what was just
+  // loaded (F2-001). Persistence must be driven ONLY by real grid state changes
+  // (AAP R4 / § 0.1.1 "grid-event-driven only"), so a projection equal to this
+  // snapshot is skipped. `null` until the first load baselines it.
+  private lastPersistedSnapshot: string | null = null;
   // Memoizes the `*ngComponentOutlet` inputs object per item so OnPush change
   // detection does not observe a new reference every cycle (which would tear
   // down and re-create the rendered module). Entries are evicted on removal.
@@ -174,6 +185,38 @@ export class GfDashboardCanvasComponent implements OnInit {
     DashboardItem,
     { removeModule: () => void }
   >();
+
+  /**
+   * The dashboard canvas is the composition root for every chart-bearing
+   * feature module (it renders them all generically via `*ngComponentOutlet`),
+   * making it the earliest deterministic point at which
+   * `chartjs-plugin-annotation` can be registered BEFORE any module chart is
+   * constructed.
+   *
+   * Root cause this addresses (the "Cannot set properties of undefined (setting
+   * 'annotations')" TypeError seen on every canvas load): the annotation
+   * plugin's `beforeInit` hook seeds the per-chart state map, and its
+   * `beforeUpdate` hook then executes `state.annotations = []`. `beforeInit`
+   * only runs for charts created AFTER the plugin is globally registered. The
+   * plugin is otherwise registered lazily inside the `investment-chart` /
+   * `benchmark-comparator` constructors, so any chart created earlier — notably
+   * the doughnut `portfolio-proportion-chart`s embedded in the Allocations and
+   * Analysis modules — has NO annotation state; when such a chart later
+   * updates, `beforeUpdate` dereferences `undefined` and throws. On the
+   * single-canvas dashboard all modules mount together and their creation order
+   * is driven by the saved layout, so a proportion chart routinely mounts
+   * before the first annotation-using chart, surfacing this latent ordering bug
+   * as a burst of uncaught TypeErrors.
+   *
+   * Registering here (idempotently — `Chart.register` de-dupes, and the chart
+   * components retain their own registration for non-dashboard contexts)
+   * guarantees every chart composed under the canvas is created with the plugin
+   * already registered, so `beforeInit` always runs and `state` is always
+   * defined.
+   */
+  public constructor() {
+    Chart.register(annotationPlugin);
+  }
 
   public ngOnInit() {
     this.loadLayout();
@@ -326,6 +369,17 @@ export class GfDashboardCanvasComponent implements OnInit {
           this.shouldAutoOpenCatalog.set(false);
         }
 
+        // Baseline the persistence snapshot to the just-loaded geometry so the
+        // settle-time `itemChangeCallback`/`itemResizeCallback` events that
+        // angular-gridster2 emits while it positions items during hydration
+        // (carrying geometry IDENTICAL to what was loaded) are recognized as
+        // no-ops by `persistLayout()` and do NOT fire a redundant PATCH on a
+        // passive page load (F2-001). Captured here — after `this.dashboard`
+        // is assigned but before the view renders the grid — so it is in place
+        // before the engine's first callback. The empty/first-visit branch
+        // baselines an empty projection, so the first real add still persists.
+        this.lastPersistedSnapshot = JSON.stringify(this.projectLayoutData());
+
         this.loadError.set(false);
         this.isInitialized.set(true);
         this.changeDetectorRef.markForCheck();
@@ -335,13 +389,13 @@ export class GfDashboardCanvasComponent implements OnInit {
 
   /**
    * Projects the authoritative {@link dashboard} state into the versioned
-   * `LayoutData` contract and hands it to the layout service's debounced save.
-   * This is the ONLY persistence path; it is called exclusively from grid
-   * state-change events (drag/resize end, add, remove). Module components never
-   * call it.
+   * `LayoutData` contract (the exact shape persisted as JSONB). Extracted so
+   * both {@link persistLayout} and the post-load baseline in {@link loadLayout}
+   * derive their snapshot from one source of truth, keeping the F2-001 no-op
+   * comparison exact.
    */
-  private persistLayout() {
-    const layoutData: LayoutData = {
+  private projectLayoutData(): LayoutData {
+    return {
       items: this.dashboard.map((item) => ({
         cols: item.cols,
         moduleKey: item.moduleKey,
@@ -351,6 +405,32 @@ export class GfDashboardCanvasComponent implements OnInit {
       })),
       schemaVersion: LAYOUT_SCHEMA_VERSION
     };
+  }
+
+  /**
+   * Projects the authoritative {@link dashboard} state and hands it to the
+   * layout service's debounced save. This is the ONLY persistence path; it is
+   * called exclusively from grid state-change events (drag/resize end, add,
+   * remove). Module components never call it.
+   *
+   * Redundant no-op saves are suppressed (F2-001): when the projected geometry
+   * is byte-identical to the last persisted (or post-load baseline) snapshot,
+   * there is no real state change to persist and the save is skipped. This is
+   * what prevents the spurious PATCH that angular-gridster2's settle-time
+   * `itemChangeCallback`/`itemResizeCallback` would otherwise fire on a passive
+   * hydration, honoring the "grid-event-driven only" rule (AAP R4 / § 0.1.1).
+   * The check is purely content-based (no timer), so it is robust regardless of
+   * when the engine emits its callbacks.
+   */
+  private persistLayout() {
+    const layoutData = this.projectLayoutData();
+    const snapshot = JSON.stringify(layoutData);
+
+    if (snapshot === this.lastPersistedSnapshot) {
+      return;
+    }
+
+    this.lastPersistedSnapshot = snapshot;
 
     const payload: UserDashboardLayoutPatchPayload = { layoutData };
 

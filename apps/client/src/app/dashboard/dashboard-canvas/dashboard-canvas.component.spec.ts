@@ -340,16 +340,73 @@ describe('GfDashboardCanvasComponent', () => {
 
   // Case 6 — Drag-end and resize-end persistence: both gridster item callbacks
   // are zero-arg arrows that funnel through `persistLayout()` -> `queueSave`.
-  it('persists on drag-end and resize-end (item callbacks)', () => {
-    mockLayoutService.get.mockReturnValue(of(null));
+  // The engine fires them AFTER it has mutated the item's geometry in place, so
+  // the test mutates the authoritative state before invoking each callback (a
+  // real drag, then a real resize). With the F2-001 no-op guard, only genuine
+  // geometry changes persist, so each changed callback yields exactly one save.
+  it('persists on drag-end and resize-end after a geometry change (item callbacks)', () => {
+    mockLayoutService.get.mockReturnValue(
+      of({
+        createdAt: '2024-01-01T00:00:00.000Z',
+        layoutData: {
+          items: [
+            { cols: 6, moduleKey: 'portfolio-overview', rows: 4, x: 0, y: 0 }
+          ],
+          schemaVersion: 1
+        },
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        userId: 'user-1'
+      })
+    );
 
     createComponent();
-    // The gridster callbacks are zero-arg arrows (`() => this.persistLayout()`);
-    // cast away the engine's `(item, itemComponent)` signature to invoke them.
+    // Ignore the post-hydration baseline; assert only real changes persist.
+    mockLayoutService.queueSave.mockClear();
+
+    // Drag-end: gridster mutates the item geometry in place, THEN fires the
+    // zero-arg `itemChangeCallback` (cast away the engine's
+    // `(item, itemComponent)` signature to invoke it).
+    component.dashboard[0].x = 3;
     (component.options.itemChangeCallback as () => void)();
+
+    // Resize-end: the geometry changes again, THEN `itemResizeCallback` fires.
+    component.dashboard[0].cols = 8;
     (component.options.itemResizeCallback as () => void)();
 
     expect(mockLayoutService.queueSave).toHaveBeenCalledTimes(2);
+  });
+
+  // Case 6b — F2-001 regression lock: angular-gridster2 fires
+  // `itemChangeCallback`/`itemResizeCallback` during its post-hydration settle
+  // with geometry IDENTICAL to what was just loaded. Those no-op callbacks MUST
+  // NOT trigger a redundant PATCH — persistence is grid-event-driven ONLY
+  // (AAP R4 / § 0.1.1). `persistLayout()` diff-skips a projection equal to the
+  // post-load baseline snapshot, so a passive hydration fires zero saves.
+  it('does not persist when an item callback fires without a geometry change (F2-001)', () => {
+    mockLayoutService.get.mockReturnValue(
+      of({
+        createdAt: '2024-01-01T00:00:00.000Z',
+        layoutData: {
+          items: [
+            { cols: 6, moduleKey: 'portfolio-overview', rows: 4, x: 0, y: 0 },
+            { cols: 6, moduleKey: 'holdings', rows: 4, x: 6, y: 0 }
+          ],
+          schemaVersion: 1
+        },
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        userId: 'user-1'
+      })
+    );
+
+    createComponent();
+    mockLayoutService.queueSave.mockClear();
+
+    // Both settle callbacks fire WITHOUT any geometry mutation (exactly what
+    // gridster does while positioning hydrated items).
+    (component.options.itemChangeCallback as () => void)();
+    (component.options.itemResizeCallback as () => void)();
+
+    expect(mockLayoutService.queueSave).not.toHaveBeenCalled();
   });
 
   // Case 7 — Minimum-dimension enforcement: the engine is configured with the

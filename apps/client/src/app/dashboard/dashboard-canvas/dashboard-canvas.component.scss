@@ -11,12 +11,25 @@
 // apps/client/src/app/components/chat-panel/chat-panel.component.scss.
 
 // Host fills its router-outlet host. angular-gridster2 requires a sized parent
-// (a 0-height parent yields a 0-height grid), so the canvas claims the full
-// height and width provided by app.component's layout.
+// (a 0-height parent yields a 0-height grid), so the canvas must claim the full
+// height provided by app.component's layout.
+//
+// The host is a FLEX COLUMN that grows to fill the flex column established on
+// <main> (app.component.scss). This replaces the former `height: 100%`
+// percentage chain, which silently collapsed to `auto` (shrink-to-content):
+// <main> sizes itself via `min-height` only (no explicit `height`), so a
+// percentage height on the host had no definite containing block to resolve
+// against. The result was a ~20px-tall grid that clipped every placed module
+// out of the viewport (F2-002). `flex: 1 1 auto` claims the remaining column
+// space; `min-height: 0` lets the host shrink correctly within the flex
+// context (overriding the default `min-height: auto` that would otherwise force
+// it to its content size and re-introduce overflow).
 :host {
   box-sizing: border-box;
-  display: block;
-  height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
   // Positioning context for the absolutely-positioned empty-state overlay
   // (.dashboard-empty) so it can center over the otherwise-blank grid area.
   position: relative;
@@ -37,7 +50,13 @@
 .dashboard-grid {
   background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
   display: block;
-  height: calc(100% - 3rem);
+  // Fill the column space remaining below the fixed-height toolbar. Replaces
+  // the former `height: calc(100% - 3rem)`, which resolved to ~20px once the
+  // host's percentage-height chain broke (F2-002). `flex: 1 1 auto` +
+  // `min-height: 0` hand angular-gridster2 a real, non-zero-height parent so it
+  // computes correct cell sizes and every placed module is visible.
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
 }
 
@@ -47,10 +66,14 @@
 .dashboard-error {
   align-items: center;
   display: flex;
+  // Fill the area below the toolbar (replaces `height: calc(100% - 3rem)`,
+  // broken by the same host height-chain collapse as .dashboard-grid — F2-002)
+  // so the error/retry message stays centered in the available space.
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.75rem;
-  height: calc(100% - 3rem);
   justify-content: center;
+  min-height: 0;
   padding: 1rem;
   text-align: center;
 }

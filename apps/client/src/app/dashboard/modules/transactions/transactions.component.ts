@@ -6,6 +6,8 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { ActivatedRoute, Router } from '@angular/router';
+import { of } from 'rxjs';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -16,6 +18,45 @@ import { MatTooltipModule } from '@angular/material/tooltip';
     MatCardModule,
     MatIconModule,
     MatTooltipModule
+  ],
+  // Module-isolation guard (F2-003): the embedded gf-activities-page is an
+  // existing routed feature component that the AAP forbids us from modifying
+  // (§0.7.2 — "no internal refactoring of existing feature components beyond
+  // wrapping them"). On the route-based pages it used the global Router to
+  // auto-open the "Add activity" dialog for zero-activity users by navigating
+  // to `?createDialog=true`. Embedded at the single `''` canvas route it shares
+  // the global Router/ActivatedRoute, so that onboarding behaviour leaked into
+  // the dashboard — rewriting the canvas URL and popping a full-screen modal
+  // over every module on each load. We contain it here, in the in-scope
+  // wrapper, by shadowing both Router and ActivatedRoute with inert local
+  // scopes for this subtree only. Data still flows through the existing
+  // services (DataService/UserService), satisfying the module-isolation rule.
+  providers: [
+    {
+      // Inert Router for the embedded subtree. `navigate`/`navigateByUrl` become
+      // no-ops, so the page's auto `router.navigate([], { queryParams: {
+      // createDialog: true } })` can no longer mutate the canvas URL.
+      // Crucially this object intentionally omits `createUrlTree`: Angular's
+      // RouterLink._urlTree() returns null when `router.createUrlTree` is
+      // absent, which makes the page's "Add activity" FAB ([routerLink]="[]")
+      // inert (no href, no navigation) without throwing.
+      provide: Router,
+      useValue: {
+        navigate: () => Promise.resolve(true),
+        navigateByUrl: () => Promise.resolve(true)
+      }
+    },
+    {
+      // Inert ActivatedRoute for the embedded subtree. Emitting empty params
+      // means the page's `route.queryParams` subscription never matches
+      // `createDialog`/`editDialog`, so no dialog auto-opens over the canvas.
+      provide: ActivatedRoute,
+      useValue: {
+        params: of({}),
+        queryParams: of({}),
+        snapshot: { params: {}, queryParams: {} }
+      }
+    }
   ],
   selector: 'gf-transactions-module',
   styles: [

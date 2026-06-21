@@ -39,6 +39,20 @@
   }
 
   main {
+    // Flex column so the routed surface can grow to fill the height below the
+    // header. The dashboard canvas (gf-dashboard-canvas, rendered into the
+    // <router-outlet> here) sizes itself with `flex: 1 1 auto; min-height: 0`;
+    // it previously relied on a `height: 100%` percentage chain that silently
+    // collapsed because <main> declares `min-height` only (no explicit
+    // `height`), starving angular-gridster2 of a sized parent and clipping
+    // every module to a ~20px sliver (F2-002). Establishing the flex column
+    // here gives the canvas a real growth context without hardcoding the header
+    // height. Non-canvas routed pages remain flex items that stretch to full
+    // width and take their content height (equivalent to the prior block flow).
+    // `min-height` is retained so every page stays at least viewport-tall and
+    // the footer (a sibling OUTSIDE <main>) is unaffected.
+    display: flex;
+    flex-direction: column;
     min-height: calc(100svh - var(--mat-toolbar-standard-height));
   }
 }
