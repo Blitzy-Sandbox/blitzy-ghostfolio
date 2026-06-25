@@ -1,3 +1,4 @@
+import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 import { DashboardLayoutItem } from '@ghostfolio/common/interfaces';
 
@@ -38,14 +39,61 @@ describe('UserDashboardLayoutService', () => {
     { cols: 8, moduleKey: 'holdings', rows: 4, x: 4, y: 0 }
   ];
 
+  const METRIC_REQUESTS_TOTAL = 'user_dashboard_layout_requests_total';
+  const METRIC_LATENCY_SECONDS = 'user_dashboard_layout_latency_seconds';
+
+  let metricsService: jest.Mocked<
+    Pick<
+      MetricsService,
+      'incrementCounter' | 'observeHistogram' | 'registerHelp'
+    >
+  >;
   let prismaService: PrismaService;
   let service: UserDashboardLayoutService;
 
   beforeEach(() => {
-    // Re-create both collaborators per test so mock call history is never
+    // Re-create all collaborators per test so mock call history is never
     // carried across `it(...)` blocks.
+    metricsService = {
+      incrementCounter: jest.fn(),
+      observeHistogram: jest.fn(),
+      registerHelp: jest.fn()
+    };
     prismaService = new PrismaService(null);
-    service = new UserDashboardLayoutService(prismaService);
+    service = new UserDashboardLayoutService(
+      metricsService as unknown as MetricsService,
+      prismaService
+    );
+  });
+
+  // Convenience: assert the request counter was incremented once with the
+  // given fixed-cardinality labels and the latency histogram once for the
+  // operation. Keeps the per-test metric assertions terse and consistent.
+  const expectMetrics = (
+    operation: 'read' | 'write',
+    outcome: 'success' | 'not_found' | 'error'
+  ) => {
+    expect(metricsService.incrementCounter).toHaveBeenCalledWith(
+      METRIC_REQUESTS_TOTAL,
+      1,
+      { operation, outcome }
+    );
+    expect(metricsService.observeHistogram).toHaveBeenCalledWith(
+      METRIC_LATENCY_SECONDS,
+      expect.any(Number),
+      { operation }
+    );
+  };
+
+  it('registers metric HELP descriptions on construction', () => {
+    expect(metricsService.registerHelp).toHaveBeenCalledWith(
+      METRIC_REQUESTS_TOTAL,
+      expect.any(String)
+    );
+    expect(metricsService.registerHelp).toHaveBeenCalledWith(
+      METRIC_LATENCY_SECONDS,
+      expect.any(String)
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -65,6 +113,8 @@ describe('UserDashboardLayoutService', () => {
     expect(prismaService.userDashboardLayout.findUnique).toHaveBeenCalledWith({
       where: { userId: USER_1_ID }
     });
+    // A missing record is observed as a `not_found` read outcome, not an error.
+    expectMetrics('read', 'not_found');
   });
 
   it('scopes findByUserId to where: { userId } using the passed userId', async () => {
@@ -87,6 +137,8 @@ describe('UserDashboardLayoutService', () => {
     expect(prismaService.userDashboardLayout.findUnique).toHaveBeenCalledWith({
       where: { userId: USER_1_ID }
     });
+    // A returned record is observed as a `success` read outcome.
+    expectMetrics('read', 'success');
   });
 
   it("does not query another user's row when called with the authenticated user's ID", async () => {
@@ -139,6 +191,8 @@ describe('UserDashboardLayoutService', () => {
     // The `update` branch carries the same JSON payload and omits `userId`.
     expect(upsertArgs.update.layoutData).toEqual(LAYOUT);
     expect(upsertArgs.update.userId).toBeUndefined();
+    // A completed upsert is observed as a `success` write outcome.
+    expectMetrics('write', 'success');
   });
 
   it('is idempotent — calling upsertForUser twice uses prisma upsert, never create', async () => {
@@ -181,5 +235,35 @@ describe('UserDashboardLayoutService', () => {
     expect(upsertArgs.where).toEqual({ userId: USER_2_ID });
     expect(upsertArgs.where).not.toEqual({ userId: USER_1_ID });
     expect(upsertArgs.create.userId).toBe(USER_2_ID);
+  });
+
+  // -------------------------------------------------------------------------
+  // Error paths — rethrow + `error` outcome metric emission
+  // -------------------------------------------------------------------------
+
+  it('rethrows and records a read error metric when findUnique rejects', async () => {
+    const failure = new Error('db down');
+    (
+      prismaService.userDashboardLayout.findUnique as jest.Mock
+    ).mockRejectedValueOnce(failure);
+
+    await expect(service.findByUserId(USER_1_ID)).rejects.toThrow(failure);
+
+    // The failure is observed as a `read`/`error` outcome and the latency
+    // histogram is still recorded via the `finally` block.
+    expectMetrics('read', 'error');
+  });
+
+  it('rethrows and records a write error metric when upsert rejects', async () => {
+    const failure = new Error('write conflict');
+    (
+      prismaService.userDashboardLayout.upsert as jest.Mock
+    ).mockRejectedValueOnce(failure);
+
+    await expect(service.upsertForUser(USER_1_ID, LAYOUT)).rejects.toThrow(
+      failure
+    );
+
+    expectMetrics('write', 'error');
   });
 });

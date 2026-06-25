@@ -7,10 +7,9 @@ endpoints `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout`,
 served by `UserDashboardLayoutController` and backed by
 `UserDashboardLayoutService` (registered in `UserModule`). The
 dashboard tracks the two Prometheus metrics that
-`UserDashboardLayoutService` / `UserDashboardLayoutController` are
-**expected to emit** — the prescribed observability contract for the
-layout endpoints (see the implementation-status note below) — which,
-once wired, are exposed at `GET /api/v1/metrics`:
+`UserDashboardLayoutService` **emits** (verified on this branch — see
+the implementation-status note below), exposed at
+`GET /api/v1/metrics`:
 
 1. `user_dashboard_layout_requests_total` — terminal-outcome counter
    for every layout request, labelled by `operation`
@@ -30,35 +29,34 @@ metrics or inspect the structured logs (every line is prefixed with
 `[UserDashboardLayoutService] [<correlationId>]`).
 
 > **Implementation status / source-of-truth note.**
-> ⚠️ **Current status (verified by reading the source on this branch):
-> the layout endpoints do NOT yet emit these two metrics.**
-> `UserDashboardLayoutService` currently injects only `PrismaService`
-> and performs correlation-ID structured logging (via the NestJS
-> `Logger`); it does **not** yet inject `MetricsService` or call
-> `registerHelp(...)` / `incrementCounter(...)` /
-> `observeHistogram(...)`, and `UserDashboardLayoutController` does not
-> emit metrics either. The metric names, labels, and HELP text
-> documented here are therefore the **design contract** for the layout
-> endpoints, following the established repository convention
+> ✅ **Current status (verified by reading the source on this branch):
+> the layout endpoints emit both metrics.**
+> `UserDashboardLayoutService` injects `MetricsService` (alongside
+> `PrismaService`), declares the two static metric-name constants,
+> calls `registerHelp(...)` for each in its constructor, and emits
+> `incrementCounter(user_dashboard_layout_requests_total, 1, { operation, outcome })`
+> plus
+> `observeHistogram(user_dashboard_layout_latency_seconds, elapsedSeconds, { operation })`
+> from a `finally` block in both `findByUserId` (`operation: 'read'`)
+> and `upsertForUser` (`operation: 'write'`), so a metric fires on
+> every return path — `success`, `not_found` (read only), and `error`
+> alike. This follows the established repository convention
 > (`<feature>_requests_total` outcome-labelled counter +
 > `<feature>_latency_seconds` histogram, e.g. `RebalancingService`,
-> `SnowflakeSyncService`). Treat
+> `SnowflakeSyncService`). `MetricsModule` is imported by `UserModule`
+> so the singleton `MetricsService` is injectable. Treat
 > `apps/api/src/app/user/user-dashboard-layout.service.ts` as the
-> **authoritative source of truth**: if/when the implemented metric
-> name strings, label keys, label-value sets, or HELP text differ from
-> this document, reconcile every section below (Overview list, Emitted
-> Metrics table, Outcome semantics, all panel PromQL, all alert `expr`,
-> the runbook `grep` patterns, the Grafana JSON `expr` fields, and the
-> Metric Names list) against the names actually emitted, and record any
-> non-trivial divergence in the decision log
-> (`docs/decisions/dashboard-refactor-decisions.md`). To wire the
-> contract, follow the `RebalancingService` convention: declare static
-> metric-name constants, call `registerHelp(...)` in the constructor,
-> and emit `incrementCounter(...)` + `observeHistogram(...)` from a
-> `finally` block so a metric fires for every outcome (success and
-> error alike). The panel/alert/runbook/JSON scaffolding below is keyed
-> to the contract names so the dashboard becomes live the moment the
-> metrics are wired.
+> **authoritative source of truth**: if the implemented metric name
+> strings, label keys, label-value sets, or HELP text ever change,
+> reconcile every section below (Overview list, Emitted Metrics table,
+> Outcome semantics, all panel PromQL, all alert `expr`, the runbook
+> `grep` patterns, the Grafana JSON `expr` fields, and the Metric Names
+> list) against the names actually emitted, and record any non-trivial
+> divergence in the decision log
+> (`docs/decisions/dashboard-refactor-decisions.md`, D-102). Metric
+> labels are deliberately restricted to the fixed-cardinality
+> `operation`/`outcome` dimensions (never `userId` or `correlationId`)
+> so the `MetricsService` cardinality guard never drops a series.
 
 ### Reused vs Added
 
@@ -77,22 +75,31 @@ layout-specific signals on top of it:
   **correlation IDs** on the `UserDashboardLayoutController` →
   `UserDashboardLayoutService` path (log lines prefixed
   `[UserDashboardLayoutService] [<correlationId>]`, mirroring the
-  established `[RebalancingService] [<correlationId>]` convention) —
-  **present in the implementation today**; (2) **correlation/tracing**
-  across the controller → service boundary: the controller mints a
-  per-request `correlationId` (`randomUUID()`), returns it as the
-  `X-Correlation-ID` response header (on both the success and the 404
-  paths) and threads it into both service calls — **present today**;
-  (3) the **layout-endpoint metrics**
+  established `[RebalancingService] [<correlationId>]` convention),
+  including `DEBUG`-level read/write **span-boundary** lines
+  (`... read start` / `... read end outcome=<outcome> elapsedMs=<n>`)
+  that bracket the Prisma operation — **present in the implementation
+  today**; (2) **distributed correlation/tracing** across the
+  client → controller → service → Prisma boundary: the controller
+  **adopts an inbound `X-Correlation-ID` request header** when the
+  client supplies one (and otherwise mints a `randomUUID()`), returns
+  it as the `X-Correlation-ID` response header (on both the success and
+  the 404 paths) and threads it into the service call, which in turn
+  tags its span-boundary log lines with the same id — **present
+  today**; (3) the **layout-endpoint metrics**
   (`user_dashboard_layout_requests_total`,
-  `user_dashboard_layout_latency_seconds`) registered against the
-  reused `MetricsService` — **prescribed but NOT yet wired** (see the
-  implementation-status note above); and (4) this **Grafana dashboard
-  template + runbook** — **delivered by this document**. Items (1) and
-  (2), together with the reused `GET /api/v1/metrics` endpoint, are
-  verified to work in the local development environment per the runbook
-  below; the layout-specific metric series in (3) populate the panels
-  only once the service is wired.
+  `user_dashboard_layout_latency_seconds`) registered against and
+  emitted through the reused `MetricsService` from
+  `UserDashboardLayoutService` — **wired and verified** (see the
+  implementation-status note above; covered by
+  `user-dashboard-layout.service.spec.ts` which asserts the counter and
+  histogram fire with the correct `operation`/`outcome` labels for the
+  success, not-found, and error paths); and (4) this **Grafana
+  dashboard template + runbook** — **delivered by this document**. All
+  four items, together with the reused `GET /api/v1/metrics` endpoint,
+  are verified to work in the local development environment per the
+  runbook below; the layout-specific metric series in (3) populate the
+  panels as soon as the endpoints receive traffic.
 
 ## Audience
 
@@ -117,21 +124,22 @@ layout-specific signals on top of it:
   endpoint, and the health/readiness probes.
 - **Source of truth — service**:
   `apps/api/src/app/user/user-dashboard-layout.service.ts` (the
-  authoritative read/upsert path; currently emits correlation-ID
-  structured logs only. Once the observability contract is wired it is
-  **expected to register** the metrics and assign the
-  `operation`/`outcome` labels, emitting the counter and histogram on
-  the read/upsert paths).
+  authoritative read/upsert path; injects `MetricsService`, registers
+  the metrics, assigns the `operation`/`outcome` labels, and emits the
+  counter and histogram from a `finally` block on both the read and
+  upsert paths, alongside correlation-ID structured span logs).
 - **Source of truth — controller**:
   `apps/api/src/app/user/user-dashboard-layout.controller.ts`
   (`@Controller('user/layout')`; `GET()` + `PATCH()` guarded by
   `AuthGuard('jwt')` + `HasPermissionGuard`; current user via
-  `@Inject(REQUEST)`; mints and propagates the `correlationId` and the
-  `X-Correlation-ID` response header).
+  `@Inject(REQUEST)`; adopts an inbound `X-Correlation-ID` header or
+  mints one, propagates the `correlationId` into the service call, and
+  echoes the `X-Correlation-ID` response header).
 - **Source of truth — module wiring**:
   `apps/api/src/app/user/user.module.ts` (registers the controller in
-  `controllers[]` and the service in `providers[]`; `PrismaModule`
-  already imported).
+  `controllers[]` and the service in `providers[]`; imports
+  `MetricsModule` so `MetricsService` is injectable, and `PrismaModule`
+  for `PrismaService`).
 - **Source of truth — metrics registry**:
   `apps/api/src/app/metrics/metrics.service.ts`. Default histogram
   buckets (in seconds) are

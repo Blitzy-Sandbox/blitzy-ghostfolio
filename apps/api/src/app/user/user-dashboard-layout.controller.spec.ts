@@ -2,13 +2,23 @@ import { HasPermissionGuard } from '@ghostfolio/api/guards/has-permission.guard'
 import { UpdateUserDashboardLayoutDto } from '@ghostfolio/common/dtos';
 import type { RequestWithUser } from '@ghostfolio/common/types';
 
-import { HttpStatus, NotFoundException } from '@nestjs/common';
+import {
+  HttpStatus,
+  INestApplication,
+  Injectable,
+  NotFoundException,
+  ValidationPipe,
+  VersioningType
+} from '@nestjs/common';
 import { HTTP_CODE_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Reflector } from '@nestjs/core';
-import { AuthGuard } from '@nestjs/passport';
+import { AuthGuard, PassportModule, PassportStrategy } from '@nestjs/passport';
+import { Test } from '@nestjs/testing';
 import { UserDashboardLayout } from '@prisma/client';
 import type { Response } from 'express';
+import { sign } from 'jsonwebtoken';
+import { ExtractJwt, Strategy } from 'passport-jwt';
 
 import { UserDashboardLayoutController } from './user-dashboard-layout.controller';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
@@ -231,6 +241,35 @@ describe('UserDashboardLayoutController', () => {
     expect(firstId).not.toBe(secondId);
   });
 
+  it('adopts an inbound X-Correlation-ID header (client → API propagation)', async () => {
+    const inboundId = 'client-supplied-correlation-id-123';
+    // Build a request carrying an inbound correlation-id header.
+    const requestWithHeader = {
+      headers: { 'x-correlation-id': inboundId },
+      user: { id: USER_1_ID, permissions: [] }
+    } as unknown as RequestWithUser;
+    const controllerWithHeader = new UserDashboardLayoutController(
+      requestWithHeader,
+      userDashboardLayoutService
+    );
+    userDashboardLayoutService.findByUserId.mockResolvedValueOnce(
+      buildRecord()
+    );
+    const response = buildMockResponse();
+
+    await controllerWithHeader.getLayout(response);
+
+    // The inbound id is threaded into the service call ...
+    const [, correlationIdArg] =
+      userDashboardLayoutService.findByUserId.mock.calls[0];
+    expect(correlationIdArg).toBe(inboundId);
+    // ... and echoed back as the response header, rather than a fresh UUID.
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'X-Correlation-ID',
+      inboundId
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Rule 8 — guard stack on BOTH routes (unauthenticated -> 401)
   // -------------------------------------------------------------------------
@@ -306,5 +345,147 @@ describe('UserDashboardLayoutController', () => {
 
     expect(getMethod).toBe(RequestMethod.GET);
     expect(patchMethod).toBe(RequestMethod.PATCH);
+  });
+});
+
+/**
+ * Minimal `passport-jwt` strategy registered under the `'jwt'` name for the
+ * HTTP integration suite below. It mirrors the real `JwtStrategy`'s token
+ * extraction (`Authorization: Bearer <jwt>`) and signing secret but omits the
+ * heavy `UserService`/`PrismaService`/`ConfigurationService` dependency graph,
+ * so the suite can exercise the actual `AuthGuard('jwt')` rejection path
+ * without booting the whole application. A missing/invalid bearer token makes
+ * passport fail authentication, which `AuthGuard('jwt')` surfaces as HTTP 401
+ * before the route handler (or the `ValidationPipe`) runs.
+ */
+const TEST_JWT_SECRET = 'dashboard-layout-spec-secret';
+
+@Injectable()
+class TestJwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+  public constructor() {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: TEST_JWT_SECRET
+    });
+  }
+
+  // The real strategy resolves the full user; the integration suite only needs
+  // a principal with an `id` and `permissions` so `request.user.id` is defined
+  // and `HasPermissionGuard` (a no-op without permission metadata) passes.
+  public validate(payload: { id: string }) {
+    return { id: payload.id, permissions: [] };
+  }
+}
+
+describe('UserDashboardLayoutController (HTTP integration — Rule 8 401)', () => {
+  const USER_ID = 'user-1-uuid';
+  const LAYOUT_ROUTE = '/api/v1/user/layout';
+
+  // A controllable service double; the controller delegates persistence to it.
+  const serviceMock = {
+    findByUserId: jest.fn(),
+    upsertForUser: jest.fn()
+  };
+
+  let app: INestApplication;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [UserDashboardLayoutController],
+      imports: [PassportModule.register({ defaultStrategy: 'jwt' })],
+      providers: [
+        TestJwtStrategy,
+        { provide: UserDashboardLayoutService, useValue: serviceMock }
+      ]
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+
+    // Replicate the production HTTP surface from apps/api/src/main.ts so the
+    // route resolves at the real `/api/v1/user/layout` path and the guard
+    // stack executes exactly as it does in production.
+    app.setGlobalPrefix('api');
+    app.enableVersioning({ defaultVersion: '1', type: VersioningType.URI });
+    app.useGlobalPipes(
+      new ValidationPipe({
+        forbidNonWhitelisted: true,
+        transform: true,
+        whitelist: true
+      })
+    );
+
+    await app.init();
+    await app.listen(0);
+
+    const address = app.getHttpServer().address();
+    const port = typeof address === 'string' ? address : address.port;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    // Close the HTTP server + Nest context so Jest reports no open handles.
+    await app?.close();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns 401 for GET /api/v1/user/layout without a JWT', async () => {
+    const response = await fetch(`${baseUrl}${LAYOUT_ROUTE}`, {
+      method: 'GET'
+    });
+
+    expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    // The guard short-circuits before the handler — no service call occurs.
+    expect(serviceMock.findByUserId).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 for PATCH /api/v1/user/layout without a JWT', async () => {
+    const response = await fetch(`${baseUrl}${LAYOUT_ROUTE}`, {
+      body: JSON.stringify({ layout: [] }),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH'
+    });
+
+    // Guards run before the ValidationPipe, so a missing JWT yields 401
+    // regardless of the (here valid) body.
+    expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+    expect(serviceMock.upsertForUser).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 for GET with a malformed (non-Bearer) Authorization header', async () => {
+    const response = await fetch(`${baseUrl}${LAYOUT_ROUTE}`, {
+      headers: { authorization: 'Token not-a-jwt' },
+      method: 'GET'
+    });
+
+    expect(response.status).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it('does NOT return 401 for GET with a valid JWT (confirms the 401 is auth-driven)', async () => {
+    serviceMock.findByUserId.mockResolvedValueOnce({
+      createdAt: new Date(),
+      layoutData: [{ cols: 4, moduleKey: 'holdings', rows: 2, x: 0, y: 0 }],
+      updatedAt: new Date(),
+      userId: USER_ID
+    } as UserDashboardLayout);
+
+    const token = sign({ id: USER_ID }, TEST_JWT_SECRET);
+    const response = await fetch(`${baseUrl}${LAYOUT_ROUTE}`, {
+      headers: { authorization: `Bearer ${token}` },
+      method: 'GET'
+    });
+
+    // An authenticated request passes the guard stack and reaches the handler,
+    // proving the unauthenticated 401s above are produced by the auth guard
+    // rather than by a routing or wiring artifact.
+    expect(response.status).not.toBe(HttpStatus.UNAUTHORIZED);
+    expect(response.status).toBe(HttpStatus.OK);
+    expect(serviceMock.findByUserId).toHaveBeenCalledWith(
+      USER_ID,
+      expect.any(String)
+    );
   });
 });

@@ -217,3 +217,17 @@ export {
   WatchlistResponse,
   XRayRulesSettings
 };
+
+// Runtime value constants of the dashboard-layout contract. Re-exported with a
+// value `export { ... } from` (NOT the type-only block above) so consumers — the
+// `UpdateUserDashboardLayoutDto` validation in particular — can read them at
+// runtime. See decision D-105.
+export {
+  DASHBOARD_GRID_COLUMNS,
+  DASHBOARD_MAX_GRID_ROW_INDEX,
+  DASHBOARD_MAX_LAYOUT_ITEMS,
+  DASHBOARD_MAX_ROW_SPAN,
+  DASHBOARD_MIN_CELL_DIMENSION,
+  DASHBOARD_MODULE_KEYS
+} from './user-dashboard-layout.interface';
+export type { DashboardModuleKey } from './user-dashboard-layout.interface';

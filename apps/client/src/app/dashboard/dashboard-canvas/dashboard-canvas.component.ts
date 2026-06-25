@@ -22,6 +22,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import {
   Gridster,
+  GridsterApi,
   GridsterConfig,
   GridsterItem,
   GridsterItemConfig,
@@ -49,10 +50,10 @@ const FIXED_ROW_HEIGHT = 120;
 const GRID_MARGIN = 16;
 
 /**
- * Hard floor for a module footprint when the registry cannot resolve a
- * persisted item's `moduleKey` (AAP Rule 6: 2×2 minimum). The registry already
- * clamps every registered module's `minCols`/`minRows` to `>= 2`, so this only
- * guards the defensive `createGridsterItem` fallback path.
+ * Hard floor (2 cells) for a module footprint when the registry cannot resolve
+ * a persisted item's `moduleKey`. The registry already clamps every registered
+ * module's `minCols`/`minRows` to `>= 2`, so this only guards the defensive
+ * `createGridsterItem` fallback path.
  */
 const FALLBACK_MIN_CELL_DIMENSION = 2;
 
@@ -82,22 +83,26 @@ interface DashboardGridsterItem extends GridsterItemConfig {
  * Root dashboard grid canvas rendered at the single `/` route.
  *
  * Hosts an `angular-gridster2` v21 drag/resize grid in which each placed module
- * renders inside an outlined `MatCard`. Responsibilities:
- * - Load the persisted layout on init; a `null` result (HTTP 404) is the
- *   first-visit signal that blanks the canvas and auto-opens the catalog
- *   (Rule 10).
- * - Hold the authoritative `items` array — the grid is the single source of
- *   truth for module positions/sizes; modules never hold layout state (Rule 2).
- * - Resolve each module's component exclusively through `ModuleRegistryService`
- *   (Rule 3) — this canvas imports none of the 12 module wrappers.
- * - Persist layout changes through `DashboardLayoutService.save(...)`, triggered
- *   ONLY by the four grid-state events (drag, resize, add, remove); the service
- *   owns the 500 ms debounce and the PATCH (Rule 4).
+ * renders inside an outlined `MatCard`. Behaviour:
+ * - Loads the persisted layout on init; a `null` result (HTTP 404) blanks the
+ *   canvas and auto-opens the catalog (first-visit experience).
+ * - Holds the authoritative `items` array — the grid owns module
+ *   positions/sizes; modules hold no layout state.
+ * - Resolves each module's component through `ModuleRegistryService`; this
+ *   canvas imports none of the module wrappers.
+ * - Persists layout changes through `DashboardLayoutService.save(...)` on every
+ *   grid-state change (drag, resize, add, remove, keyboard move/resize); the
+ *   service owns the 500 ms debounce and the PATCH.
+ * - Offers keyboard-operable move/resize controls (via the module menu) as a
+ *   pointer-free alternative to gridster's drag/resize, which has no built-in
+ *   keyboard support.
  *
- * All grid chrome (header, drag handle, resize handles, drop-zone indicators)
- * is styled in the co-located SCSS via the load-bearing
- * `var(--mat-sys-<token>, <fallback>)` pattern, and glyphs use `<ion-icon>`
- * web components (hence `CUSTOM_ELEMENTS_SCHEMA`) per Rule 7 / Decision D-020.
+ * All grid chrome is styled via the `var(--mat-sys-<token>, <fallback>)` pattern
+ * and glyphs use `<ion-icon>` web components (hence `CUSTOM_ELEMENTS_SCHEMA`).
+ * Design rationale (module isolation, grid-as-single-source-of-truth, the
+ * registry introduction mechanism, the event-driven persistence funnel, token
+ * discipline, and the keyboard-accessibility controls) is recorded in
+ * `docs/decisions/dashboard-refactor-decisions.md` (D-106).
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -118,14 +123,20 @@ interface DashboardGridsterItem extends GridsterItemConfig {
 })
 export class GfDashboardCanvasComponent implements OnInit {
   /**
-   * The single source of truth for module positions and sizes (Rule 2).
-   * angular-gridster2 mutates each item's `x`/`y`/`cols`/`rows` in place during
-   * drag and resize, so reading this array always reflects the latest geometry.
+   * Holds module positions and sizes. angular-gridster2 mutates each item's
+   * `x`/`y`/`cols`/`rows` in place during drag and resize, so reading this array
+   * always reflects the latest geometry.
    */
   public items: DashboardGridsterItem[] = [];
 
   /** Gridster engine configuration; built once in the constructor. */
   public options: GridsterConfig;
+
+  /**
+   * Grid API captured from `initCallback`; used to re-render the grid after a
+   * programmatic (keyboard) item change. Undefined until the grid initializes.
+   */
+  private gridsterApi?: GridsterApi;
 
   private readonly changeDetectorRef = inject(ChangeDetectorRef);
   private readonly dashboardLayoutService = inject(DashboardLayoutService);
@@ -136,16 +147,18 @@ export class GfDashboardCanvasComponent implements OnInit {
   public constructor() {
     this.options = {
       draggable: {
-        // Only the header drag-handle initiates a drag, so interacting with the
-        // module body or its buttons never moves the tile.
+        // Drag is initiated only from the header drag-handle element.
         dragHandleClass: 'dashboard-module__drag-handle',
         enabled: true,
         ignoreContent: true
       },
       fixedRowHeight: FIXED_ROW_HEIGHT,
       gridType: GridType.VerticalFixed,
-      // Two of the four save triggers (Rule 4). Arrow functions bind `this` to
-      // the component so `onLayoutChanged` reaches the injected service.
+      // Capture the grid API so keyboard move/resize can re-render the grid.
+      initCallback: (_gridster, gridsterApi) => {
+        this.gridsterApi = gridsterApi;
+      },
+      // Drag and resize completion persist the layout via onLayoutChanged().
       itemChangeCallback: () => {
         this.onLayoutChanged();
       },
@@ -162,16 +175,14 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   public ngOnInit() {
-    // Activate the debounced PATCH pipeline (Rule 4). The service owns the
-    // 500 ms debounce and the actual PATCH; subscribing here exactly once is
-    // what makes every subsequent `save(...)` actually persist. The stream is
-    // long-lived (root-scoped service) so it is torn down with the component.
+    // Subscribe once to activate the service's debounced PATCH pipeline; the
+    // subscription is torn down with the component.
     this.dashboardLayoutService.savedLayout$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe();
 
-    // Load the persisted layout. A `null` response (HTTP 404) is the canonical
-    // new-user signal: blank the canvas and auto-open the catalog (Rule 10).
+    // Load the persisted layout. A `null` response (HTTP 404) blanks the canvas
+    // and auto-opens the catalog (first-visit experience).
     this.dashboardLayoutService
       .get()
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -180,10 +191,8 @@ export class GfDashboardCanvasComponent implements OnInit {
           this.items = [];
           this.openCatalog();
         } else {
-          // `UserDashboardLayout` is the `{ layout }` envelope, so read
-          // `response.layout`. Filter out any item whose `moduleKey` is no
-          // longer registered (defends against a removed module type leaving an
-          // empty, untitled card behind).
+          // Read the `{ layout }` envelope and drop any item whose `moduleKey`
+          // is no longer registered (avoids an empty, untitled card).
           this.items = response.layout
             .filter((layoutItem) =>
               Boolean(this.moduleRegistryService.get(layoutItem.moduleKey))
@@ -197,9 +206,9 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   /**
-   * Resolves the wrapper component for a placed module (Rule 3). Fed to the
-   * template's `*ngComponentOutlet`. Returns `undefined` only if the key is
-   * unregistered, which the load-time filter already prevents.
+   * Resolves the wrapper component for a placed module, fed to the template's
+   * `*ngComponentOutlet`. Returns `undefined` for an unregistered key (the
+   * load-time filter already prevents that).
    */
   public getModuleComponent(moduleKey: string): Type<unknown> | undefined {
     return this.moduleRegistryService.get(moduleKey)?.component;
@@ -211,18 +220,55 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   /**
-   * Persists the current arrangement. The single funnel for all four grid-state
-   * triggers (drag, resize, add, remove); modules never call save (Rule 4).
+   * Persists the current arrangement. The single entry point through which every
+   * grid-state change (drag, resize, add, remove, keyboard move/resize) is saved.
    */
   public onLayoutChanged() {
     this.dashboardLayoutService.save(this.serializeLayout());
   }
 
   /**
+   * Keyboard-accessible reposition: shifts a module by `(dx, dy)` grid cells,
+   * clamped so the module stays within the grid (column index in
+   * `[0, columns - cols]`, row index `>= 0`), then re-renders and persists.
+   * Provides a pointer-free alternative to gridster drag, which ships no
+   * keyboard support.
+   */
+  public moveModule(item: DashboardGridsterItem, dx: number, dy: number) {
+    const cols = item.cols ?? FALLBACK_MIN_CELL_DIMENSION;
+
+    item.x = Math.min(Math.max(item.x + dx, 0), GRID_COLUMNS - cols);
+    item.y = Math.max(item.y + dy, 0);
+
+    this.applyProgrammaticItemChange();
+  }
+
+  /**
+   * Keyboard-accessible resize: grows/shrinks a module by `(dCols, dRows)` grid
+   * cells, clamped to the module's minimum footprint and the remaining grid
+   * width, then re-renders and persists. Pointer-free alternative to gridster
+   * resize.
+   */
+  public resizeModule(
+    item: DashboardGridsterItem,
+    dCols: number,
+    dRows: number
+  ) {
+    const minCols = item.minItemCols ?? FALLBACK_MIN_CELL_DIMENSION;
+    const minRows = item.minItemRows ?? FALLBACK_MIN_CELL_DIMENSION;
+    // Upper bound never drops below the minimum even for an edge-anchored item.
+    const maxCols = Math.max(GRID_COLUMNS - item.x, minCols);
+
+    item.cols = Math.min(Math.max(item.cols + dCols, minCols), maxCols);
+    item.rows = Math.max(item.rows + dRows, minRows);
+
+    this.applyProgrammaticItemChange();
+  }
+
+  /**
    * Opens the searchable module catalog overlay. Used both for the first-visit
-   * auto-open (Rule 10) and the toolbar "Add module" button. On a non-empty
-   * result the chosen module is added; dismissal resolves `undefined` and is a
-   * no-op.
+   * auto-open and the toolbar "Add module" button. On a non-empty result the
+   * chosen module is added; dismissal resolves `undefined` and is a no-op.
    */
   public openCatalog() {
     const dialogRef = this.dialog.open<
@@ -247,8 +293,8 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   /**
-   * Removes a placed module (one of the four save triggers, Rule 4). Compares by
-   * reference so only the targeted tile is dropped, then persists.
+   * Removes a placed module, comparing by reference so only the targeted tile is
+   * dropped, then persists.
    */
   public removeModule(item: DashboardGridsterItem) {
     this.items = this.items.filter((existingItem) => existingItem !== item);
@@ -258,13 +304,26 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   /**
-   * Places a new module on the canvas (one of the four save triggers, Rule 4).
+   * Re-renders the grid after an in-place (keyboard) item mutation and persists.
+   * Reassigns `items` for OnPush change detection, asks gridster to recompute
+   * item positions, then routes through the single persistence entry point.
+   */
+  private applyProgrammaticItemChange() {
+    this.items = [...this.items];
+
+    this.changeDetectorRef.markForCheck();
+    this.gridsterApi?.calculateLayout();
+    this.onLayoutChanged();
+  }
+
+  /**
+   * Places a new module on the canvas and persists.
    *
    * Guards: an unregistered key is ignored, and a duplicate key is rejected so
    * `moduleKey` stays unique for the template's `track item.moduleKey`. The new
    * tile stacks directly below the lowest existing item at column 0, sized to
-   * the registry minimum (already `>= 2`), and carries `minItemCols`/
-   * `minItemRows` so the engine never shrinks it below that footprint (Rule 6).
+   * the registry minimum, and carries `minItemCols`/`minItemRows` so the engine
+   * never shrinks it below that footprint.
    */
   private addModule(moduleKey: string) {
     const definition = this.moduleRegistryService.get(moduleKey);
@@ -302,7 +361,7 @@ export class GfDashboardCanvasComponent implements OnInit {
    * Builds a grid item from a persisted layout entry, clamping `cols`/`rows` up
    * to the current registry minimum (a module's minimum may have grown since the
    * layout was saved) and stamping `minItemCols`/`minItemRows` so the engine
-   * enforces the floor going forward (Rule 6).
+   * enforces the floor going forward.
    */
   private createGridsterItem(
     layoutItem: DashboardLayoutItem
@@ -325,8 +384,8 @@ export class GfDashboardCanvasComponent implements OnInit {
   /**
    * Projects the live grid items down to the shared `DashboardLayoutItem` wire
    * shape (`{ cols, moduleKey, rows, x, y }`), stripping `minItemCols`/
-   * `minItemRows` and any gridster internals so only the documented contract is
-   * persisted.
+   * `minItemRows` and any gridster internals so only the persisted contract
+   * leaves the canvas.
    */
   private serializeLayout(): DashboardLayoutItem[] {
     return this.items.map(({ cols, moduleKey, rows, x, y }) => ({

@@ -23,33 +23,22 @@ import { randomUUID } from 'node:crypto';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
 
 /**
- * `UserDashboardLayoutController` exposes the per-user dashboard-layout
- * endpoints introduced by the single-canvas modular-dashboard refactor:
+ * Per-user dashboard-layout endpoints:
  *
  *     GET   /api/v1/user/layout  → 200 (row) | 404 (no row)
  *     PATCH /api/v1/user/layout  → 200 (upserted row)
  *
- * The route prefix `'user/layout'` is auto-prefixed at runtime with the
- * global `/api/v1` URI version configured in `apps/api/src/main.ts`.
+ * Both endpoints are guarded by `AuthGuard('jwt')` and `HasPermissionGuard`
+ * (no `@HasPermission(...)` decorator — any authenticated user may read/write
+ * their own layout). `userId` is sourced exclusively from
+ * `this.request.user.id`; the body carries no `userId`. Persistence is
+ * delegated to `UserDashboardLayoutService`.
  *
- * AUTH (Rule 8): both endpoints are guarded by `AuthGuard('jwt')` (HTTP 401
- * when the JWT is missing/invalid) and `HasPermissionGuard`. Following the
- * `getUser()` precedent in `UserController`, NO `@HasPermission(...)`
- * decorator is applied — any authenticated user may read/write their own
- * layout (`permissions.ts` is intentionally not extended). `HasPermissionGuard`
- * is a no-op when no permission metadata is present.
- *
- * SECURITY: the `userId` is sourced EXCLUSIVELY from `this.request.user.id`
- * (JWT-derived) — never from the body, query, or params. The DTO has no
- * `userId` field, so a client cannot impersonate another user.
- *
- * OBSERVABILITY (AAP § 0.7.2): a per-request correlation id is generated at
- * the controller boundary, surfaced as the `X-Correlation-ID` response header
- * (on both success and the 404 error path), and threaded into both service
- * calls for controller→service log tracing.
- *
- * RULE 8 (controller thinness): no Prisma calls here; each method delegates
- * persistence to `UserDashboardLayoutService`.
+ * Tracing: each request adopts an inbound `X-Correlation-ID` header when the
+ * client supplies one (client → API propagation) and otherwise mints a new id;
+ * the id is echoed back as `X-Correlation-ID` and threaded into the service
+ * call. Design rationale lives in
+ * `docs/decisions/dashboard-refactor-decisions.md` (D-103).
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {
@@ -59,17 +48,16 @@ export class UserDashboardLayoutController {
   ) {}
 
   /**
-   * Returns the authenticated user's persisted dashboard layout, or throws
-   * `NotFoundException` (HTTP 404) when none exists. The client translates
-   * the 404 to `null` to drive the blank-canvas / catalog-auto-open
-   * first-visit experience (Rule 10). `userId` is JWT-derived.
+   * Returns the authenticated user's persisted layout, or throws
+   * `NotFoundException` (HTTP 404) when none exists. The client maps the 404
+   * to `null` to drive the first-visit blank-canvas experience.
    */
   @Get()
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
   public async getLayout(
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
+    const correlationId = this.resolveCorrelationId();
     response.setHeader('X-Correlation-ID', correlationId);
 
     const userId = this.request.user.id;
@@ -88,12 +76,10 @@ export class UserDashboardLayoutController {
   }
 
   /**
-   * Creates or updates the authenticated user's dashboard layout. The body is
-   * validated against `UpdateUserDashboardLayoutDto` by the global
-   * `ValidationPipe` (an invalid body short-circuits with HTTP 400 before this
-   * method runs). On success the upserted row is returned with HTTP 200
-   * (`@HttpCode(HttpStatus.OK)` makes the success status deterministic).
-   * `userId` is JWT-derived; the persisted array is `dto.layout`.
+   * Creates or updates the authenticated user's layout. The body is validated
+   * against `UpdateUserDashboardLayoutDto` by the global `ValidationPipe` (an
+   * invalid body short-circuits with HTTP 400 before this method runs). Returns
+   * the upserted row with HTTP 200.
    */
   @HttpCode(HttpStatus.OK)
   @Patch()
@@ -102,7 +88,7 @@ export class UserDashboardLayoutController {
     @Body() dto: UpdateUserDashboardLayoutDto,
     @Res({ passthrough: true }) response: Response
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
+    const correlationId = this.resolveCorrelationId();
     response.setHeader('X-Correlation-ID', correlationId);
 
     return this.userDashboardLayoutService.upsertForUser(
@@ -110,5 +96,18 @@ export class UserDashboardLayoutController {
       dto.layout,
       correlationId
     );
+  }
+
+  /**
+   * Adopts a client-supplied `X-Correlation-ID` request header (normalizing an
+   * array-valued header to its first entry) when present and non-empty,
+   * otherwise mints a fresh UUID. Enables a single correlation id to span
+   * client → API → service/Prisma log lines.
+   */
+  private resolveCorrelationId(): string {
+    const inbound = this.request.headers?.['x-correlation-id'];
+    const candidate = Array.isArray(inbound) ? inbound[0] : inbound;
+
+    return candidate?.trim() ? candidate : randomUUID();
   }
 }
