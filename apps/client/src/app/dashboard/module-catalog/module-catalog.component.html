@@ -1,0 +1,51 @@
+<h2 i18n mat-dialog-title>Add a module</h2>
+
+<mat-dialog-content class="module-catalog">
+  <mat-form-field appearance="outline" class="search-field w-100 without-hint">
+    <mat-label i18n>Search modules</mat-label>
+    <ion-icon aria-hidden="true" matPrefix name="search-outline" />
+    <input
+      data-testid="module-search"
+      i18n-placeholder
+      matInput
+      placeholder="Search by name…"
+      type="text"
+      [ngModel]="searchTerm()"
+      [ngModelOptions]="{ standalone: true }"
+      (ngModelChange)="searchTerm.set($event)"
+    />
+  </mat-form-field>
+
+  @if (filteredModules().length === 0) {
+    <p class="no-results" data-testid="no-results" i18n>
+      No modules match your search.
+    </p>
+  } @else {
+    <mat-action-list class="module-list">
+      @for (module of filteredModules(); track module.key) {
+        <button
+          class="module-list-item"
+          mat-list-item
+          type="button"
+          [attr.data-testid]="'module-' + module.key"
+          (click)="onAddModule(module.key)"
+        >
+          <span matListItemTitle>{{ module.name }}</span>
+          <ion-icon aria-hidden="true" matListItemMeta name="add-outline" />
+        </button>
+      }
+    </mat-action-list>
+  }
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button
+    data-testid="close-button"
+    i18n
+    mat-button
+    type="button"
+    (click)="onClose()"
+  >
+    Close
+  </button>
+</mat-dialog-actions>

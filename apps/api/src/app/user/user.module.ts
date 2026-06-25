@@ -11,11 +11,13 @@ import { TagModule } from '@ghostfolio/api/services/tag/tag.module';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 
+import { UserDashboardLayoutController } from './user-dashboard-layout.controller';
+import { UserDashboardLayoutService } from './user-dashboard-layout.service';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
 
 @Module({
-  controllers: [UserController],
+  controllers: [UserController, UserDashboardLayoutController],
   exports: [UserService],
   imports: [
     ActivitiesModule,
@@ -32,6 +34,6 @@ import { UserService } from './user.service';
     SubscriptionModule,
     TagModule
   ],
-  providers: [UserService]
+  providers: [UserService, UserDashboardLayoutService]
 })
 export class UserModule {}
