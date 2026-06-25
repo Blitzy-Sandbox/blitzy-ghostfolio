@@ -1,0 +1,72 @@
+<div class="dashboard-canvas">
+  <div class="dashboard-canvas__toolbar">
+    <button
+      color="primary"
+      mat-flat-button
+      type="button"
+      (click)="openCatalog()"
+    >
+      <ion-icon name="add-outline"></ion-icon>
+      <span i18n>Add module</span>
+    </button>
+  </div>
+
+  @if (items.length === 0) {
+    <div class="dashboard-canvas__empty-state" data-testid="empty-state">
+      <ion-icon
+        class="dashboard-canvas__empty-icon"
+        name="grid-outline"
+      ></ion-icon>
+      <p i18n>Your dashboard is empty. Add a module to get started.</p>
+    </div>
+  }
+
+  <gridster class="dashboard-canvas__grid" [options]="options">
+    @for (item of items; track item.moduleKey) {
+      <gridster-item class="dashboard-canvas__item" [item]="item">
+        <mat-card appearance="outlined" class="dashboard-module">
+          <div class="dashboard-module__header">
+            <ion-icon
+              class="dashboard-module__drag-handle"
+              i18n-matTooltip
+              matTooltip="Drag to move"
+              name="reorder-two-outline"
+            ></ion-icon>
+
+            <span class="dashboard-module__title">{{
+              getModuleName(item.moduleKey)
+            }}</span>
+
+            <button
+              class="dashboard-module__menu-trigger"
+              mat-icon-button
+              type="button"
+              [attr.aria-label]="getModuleName(item.moduleKey)"
+              [matMenuTriggerFor]="moduleMenu"
+            >
+              <ion-icon name="ellipsis-horizontal"></ion-icon>
+            </button>
+
+            <mat-menu #moduleMenu="matMenu">
+              <button
+                data-testid="remove-module"
+                mat-menu-item
+                type="button"
+                (click)="removeModule(item)"
+              >
+                <ion-icon name="trash-outline"></ion-icon>
+                <span i18n>Remove</span>
+              </button>
+            </mat-menu>
+          </div>
+
+          <div class="dashboard-module__body">
+            <ng-container
+              *ngComponentOutlet="getModuleComponent(item.moduleKey)"
+            ></ng-container>
+          </div>
+        </mat-card>
+      </gridster-item>
+    }
+  </gridster>
+</div>

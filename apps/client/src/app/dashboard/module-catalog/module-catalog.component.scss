@@ -1,0 +1,83 @@
+// Rule 7 / Decision D-020: the host theme uses mat.all-component-themes(),
+// NOT mat.theme(), so --mat-sys-* tokens are not emitted at runtime and the
+// fallbacks below are the values that actually render. A bare --mat-sys-*
+// without a fallback is prohibited. Vocabulary mirrors chat-panel.component.scss.
+:host {
+  display: block;
+}
+
+.search-field {
+  width: 100%;
+}
+
+.module-list {
+  background-color: var(--mat-sys-surface-container, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
+  border-radius: 0.5rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  padding: 0.25rem;
+}
+
+.module-list-item {
+  border-radius: 0.5rem;
+  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+
+  ion-icon {
+    color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+    font-size: 1.25rem;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+    color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
+
+    ion-icon {
+      color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
+    }
+  }
+}
+
+.no-results {
+  color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+  font-style: italic;
+  margin: 0;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+:host-context(.theme-dark) {
+  .module-list {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+    border-color: var(--mat-sys-outline, rgba(255, 255, 255, 0.12));
+  }
+
+  .module-list-item {
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+
+    ion-icon {
+      color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+    }
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(
+        --mat-sys-primary-container,
+        rgba(71, 219, 215, 0.16)
+      );
+      color: var(--mat-sys-on-primary-container, var(--light-primary-text));
+
+      ion-icon {
+        color: var(--mat-sys-on-primary-container, var(--light-primary-text));
+      }
+    }
+  }
+
+  .no-results {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+}

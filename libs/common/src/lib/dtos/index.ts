@@ -22,6 +22,7 @@ import { UpdatePlatformDto } from './update-platform.dto';
 import { UpdatePropertyDto } from './update-property.dto';
 import { UpdateTagDto } from './update-tag.dto';
 import { UpdateUserSettingDto } from './update-user-setting.dto';
+import { UpdateUserDashboardLayoutDto } from './user/update-user-dashboard-layout.dto';
 
 export {
   AuthDeviceDto,
@@ -47,5 +48,6 @@ export {
   UpdatePlatformDto,
   UpdatePropertyDto,
   UpdateTagDto,
+  UpdateUserDashboardLayoutDto,
   UpdateUserSettingDto
 };

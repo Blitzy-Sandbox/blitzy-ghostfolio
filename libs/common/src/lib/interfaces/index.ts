@@ -103,6 +103,10 @@ import type { SymbolMetrics } from './symbol-metrics.interface';
 import type { SystemMessage } from './system-message.interface';
 import type { TabConfiguration } from './tab-configuration.interface';
 import type { ToggleOption } from './toggle-option.interface';
+import type {
+  DashboardLayoutItem,
+  UserDashboardLayout
+} from './user-dashboard-layout.interface';
 import type { UserItem } from './user-item.interface';
 import type { UserSettings } from './user-settings.interface';
 import type { User } from './user.interface';
@@ -142,6 +146,7 @@ export {
   ChatMessageRole,
   Coupon,
   CreateStripeCheckoutSessionResponse,
+  DashboardLayoutItem,
   DataEnhancerHealthResponse,
   DataProviderGhostfolioAssetProfileResponse,
   DataProviderGhostfolioStatusResponse,
@@ -206,6 +211,7 @@ export {
   TabConfiguration,
   ToggleOption,
   User,
+  UserDashboardLayout,
   UserItem,
   UserSettings,
   WatchlistResponse,
