@@ -5,9 +5,9 @@
  * (`x`, `y`, `cols`, `rows`) plus the `moduleKey` that maps the cell to a
  * module type registered in the client `ModuleRegistryService`. The grid is
  * the single source of truth for positions/sizes (no module holds layout
- * state). The whole `UserDashboardLayout` array serializes cleanly to ONE
- * PostgreSQL JSONB column (`UserDashboardLayout.layoutData`), matching the
- * `FinancialProfile.investmentGoals Json` precedent.
+ * state). The `layout` array carried by `UserDashboardLayout` serializes
+ * cleanly to ONE PostgreSQL JSONB column (`UserDashboardLayout.layoutData`),
+ * matching the `FinancialProfile.investmentGoals Json` precedent.
  */
 export interface DashboardLayoutItem {
   cols: number;
@@ -17,4 +17,6 @@ export interface DashboardLayoutItem {
   y: number;
 }
 
-export type UserDashboardLayout = DashboardLayoutItem[];
+export interface UserDashboardLayout {
+  layout: DashboardLayoutItem[];
+}

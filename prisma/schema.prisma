@@ -259,8 +259,8 @@ model Tag {
 }
 
 model User {
-  accessesGet      Access[]             @relation("accessGet")
-  accessesGive     Access[]             @relation("accessGive")
+  accessesGet      Access[]          @relation("accessGet")
+  accessesGive     Access[]          @relation("accessGive")
   accessToken      String?
   accounts         Account[]
   activities       Order[]
@@ -268,18 +268,18 @@ model User {
   apiKeys          ApiKey[]
   authChallenge    String?
   authDevices      AuthDevice[]
-  createdAt        DateTime             @default(now())
+  createdAt        DateTime          @default(now())
   dashboardLayout  UserDashboardLayout?
   financialProfile FinancialProfile?
-  id               String               @id @default(uuid())
-  provider         Provider             @default(ANONYMOUS)
-  role             Role                 @default(USER)
+  id               String            @id @default(uuid())
+  provider         Provider          @default(ANONYMOUS)
+  role             Role              @default(USER)
   settings         Settings?
   subscriptions    Subscription[]
   tags             Tag[]
   thirdPartyId     String?
-  updatedAt        DateTime             @updatedAt
-  watchlist        SymbolProfile[]      @relation("UserWatchlist")
+  updatedAt        DateTime          @updatedAt
+  watchlist        SymbolProfile[]   @relation("UserWatchlist")
   SymbolProfile    SymbolProfile[]
 
   @@index([accessToken])
