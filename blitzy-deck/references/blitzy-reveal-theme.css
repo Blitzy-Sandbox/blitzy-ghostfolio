@@ -1,0 +1,569 @@
+/*
+ * Blitzy reveal.js Executive Deck Theme — canonical reusable copy.
+ * Source of truth extracted verbatim from the inline style block of the
+ * blitzy-deck executive decks (agent-action-plan.html / dashboard-refactor.html).
+ * The decks remain self-contained and embed this theme inline; this file is the
+ * standalone, reusable copy (AAP Section 0.6.1 Group 10 / Section 0.7.1).
+ */
+    /* ============================================================
+       Blitzy Theme Override
+       Palette sourced from AAP Section 0.7.2 + Section 0.4.2 Mermaid classDef:
+         primary    #5B39F3 (purple)
+         mint       #94FAD5
+         dark       #1A105F (deep navy)
+         accent     #2D1C77
+         light      #F2F0FE
+         off-white  #F4EFF6
+       ============================================================ */
+    :root {
+      --blitzy-primary: #5B39F3;
+      --blitzy-mint: #94FAD5;
+      --blitzy-dark: #1A105F;
+      --blitzy-accent: #2D1C77;
+      --blitzy-light: #F2F0FE;
+      --blitzy-off-white: #F4EFF6;
+      --blitzy-warning: #FFB547;
+      --blitzy-danger: #FF5C7A;
+      --blitzy-text: #FFFFFF;
+      --blitzy-muted: rgba(255, 255, 255, 0.72);
+    }
+
+    html, body {
+      background: var(--blitzy-dark);
+    }
+
+    .reveal {
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(91, 57, 243, 0.35) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 100%, rgba(148, 250, 213, 0.18) 0%, transparent 55%),
+        linear-gradient(135deg, var(--blitzy-dark) 0%, var(--blitzy-accent) 100%);
+      font-family: 'Helvetica Neue', 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: var(--blitzy-text);
+      letter-spacing: -0.005em;
+    }
+
+    /* Generic typography */
+    .reveal h1,
+    .reveal h2,
+    .reveal h3,
+    .reveal h4 {
+      color: var(--blitzy-text);
+      font-family: inherit;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      text-transform: none;
+      text-shadow: 0 2px 24px rgba(0, 0, 0, 0.25);
+    }
+    .reveal h1 { font-size: 3.4em; line-height: 1.05; }
+    .reveal h2 { font-size: 2.0em; line-height: 1.15; }
+    .reveal h3 { font-size: 1.25em; color: var(--blitzy-mint); }
+    .reveal p, .reveal li {
+      font-size: 0.92em;
+      line-height: 1.55;
+      color: var(--blitzy-text);
+    }
+    .reveal a { color: var(--blitzy-mint); }
+    .reveal code {
+      background: rgba(244, 239, 246, 0.10);
+      color: var(--blitzy-mint);
+      padding: 0.06em 0.42em;
+      border-radius: 4px;
+      font-size: 0.86em;
+      font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+      border: 1px solid rgba(148, 250, 213, 0.20);
+    }
+
+    /* Lucide icon sizing helpers (Lucide replaces <i data-lucide="..."> with <svg>) */
+    .reveal i[data-lucide],
+    .reveal svg.lucide {
+      display: inline-block;
+      vertical-align: -0.18em;
+      width: 0.95em;
+      height: 0.95em;
+      stroke-width: 2;
+      color: var(--blitzy-mint);
+    }
+    .reveal h1 i[data-lucide], .reveal h1 svg.lucide,
+    .reveal h2 i[data-lucide], .reveal h2 svg.lucide {
+      width: 0.92em; height: 0.92em; margin-right: 0.18em;
+    }
+    .reveal li i[data-lucide], .reveal li svg.lucide {
+      width: 1.05em; height: 1.05em; margin-right: 0.45em;
+    }
+
+    /* ============================================================
+       Universal slide sizing: include padding inside the 1920x1080
+       reveal.js coordinate space so content never overflows.
+       ============================================================ */
+    .reveal .slides section.title-slide,
+    .reveal .slides section.section-divider,
+    .reveal .slides section.content-slide,
+    .reveal .slides section.closing-slide {
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    /* ============================================================
+       Slide type 1: TITLE
+       ============================================================ */
+    .reveal .title-slide {
+      text-align: center;
+      padding: 0 6%;
+    }
+    .reveal .title-slide .lucide-icon-large {
+      display: inline-block;
+      margin-bottom: 0.35em;
+    }
+    .reveal .title-slide .lucide-icon-large svg.lucide,
+    .reveal .title-slide .lucide-icon-large i[data-lucide] {
+      width: 96px;
+      height: 96px;
+      color: var(--blitzy-mint);
+      filter: drop-shadow(0 0 24px rgba(148, 250, 213, 0.45));
+    }
+    .reveal .title-slide h1 {
+      font-size: 4.0em;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.1em 0 0.3em 0;
+    }
+    .reveal .title-slide h3 {
+      font-size: 1.4em;
+      color: var(--blitzy-light);
+      font-weight: 500;
+      margin-bottom: 0.5em;
+    }
+    .reveal .title-slide .subtitle {
+      font-size: 1.05em;
+      color: var(--blitzy-muted);
+      max-width: 60%;
+      margin: 0.6em auto 1.2em;
+      font-weight: 400;
+    }
+    .reveal .title-slide .footer-note {
+      font-size: 0.65em;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--blitzy-mint);
+      margin-top: 1.6em;
+      opacity: 0.85;
+    }
+
+    /* ============================================================
+       Slide type 2: SECTION DIVIDER
+       ============================================================ */
+    .reveal .section-divider {
+      text-align: left;
+      padding: 0 8%;
+      position: relative;
+    }
+    .reveal .section-divider .chapter-number {
+      display: block;
+      font-size: 9em;
+      font-weight: 800;
+      line-height: 0.9;
+      color: rgba(91, 57, 243, 0.55);
+      background: linear-gradient(135deg, var(--blitzy-primary) 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.04em;
+      margin-bottom: -0.05em;
+    }
+    .reveal .section-divider .chapter-icon {
+      display: inline-block;
+      margin: 0.2em 0;
+    }
+    .reveal .section-divider .chapter-icon svg.lucide,
+    .reveal .section-divider .chapter-icon[data-lucide] {
+      width: 72px;
+      height: 72px;
+      color: var(--blitzy-mint);
+      stroke-width: 1.6;
+    }
+    .reveal .section-divider h1 {
+      font-size: 3.2em;
+      margin: 0.1em 0 0;
+      color: var(--blitzy-text);
+    }
+    .reveal .section-divider h2 {
+      font-size: 1.8em;
+      margin: 0.1em 0 0.3em 0;
+      color: var(--blitzy-mint);
+      font-weight: 500;
+    }
+    .reveal .section-divider .chapter-tagline {
+      font-size: 1.0em;
+      color: var(--blitzy-muted);
+      max-width: 70%;
+      margin-top: 0.6em;
+      font-weight: 400;
+    }
+
+    /* ============================================================
+       Slide type 3: CONTENT
+       ============================================================ */
+    .reveal .content-slide {
+      text-align: left;
+      padding: 0 6%;
+    }
+    .reveal .content-slide h2 {
+      color: var(--blitzy-text);
+      border-bottom: 2px solid var(--blitzy-primary);
+      padding-bottom: 0.28em;
+      margin-bottom: 0.5em;
+      display: inline-block;
+      font-size: 1.7em;
+      line-height: 1.12;
+    }
+    .reveal .content-slide h2 i[data-lucide],
+    .reveal .content-slide h2 svg.lucide {
+      color: var(--blitzy-mint);
+    }
+    .reveal .content-slide h3 {
+      font-size: 0.85em;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--blitzy-mint);
+      margin-bottom: 0.35em;
+    }
+
+    /* Feature lists */
+    .reveal .feature-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .reveal .feature-list li {
+      margin: 0.30em 0;
+      padding: 0.42em 0.85em;
+      background: rgba(244, 239, 246, 0.05);
+      border-left: 3px solid var(--blitzy-mint);
+      border-radius: 6px;
+      font-size: 0.78em;
+      line-height: 1.42;
+      transition: background 0.2s ease;
+    }
+    .reveal .feature-list li:hover {
+      background: rgba(244, 239, 246, 0.12);
+    }
+    .reveal .feature-list li i[data-lucide],
+    .reveal .feature-list li svg.lucide {
+      color: var(--blitzy-mint);
+      width: 1em;
+      height: 1em;
+      vertical-align: -0.12em;
+    }
+    /* Tighter feature-list spacing inside multi-column layouts. */
+    .reveal .two-col .feature-list li,
+    .reveal .three-col .feature-list li {
+      font-size: 0.72em;
+      padding: 0.36em 0.75em;
+      margin: 0.24em 0;
+    }
+
+    /* Multi-column layout */
+    .reveal .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.2em;
+      margin: 0.45em 0;
+    }
+    .reveal .three-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.9em;
+      margin: 0.45em 0;
+    }
+    .reveal .col {
+      background: rgba(91, 57, 243, 0.08);
+      border: 1px solid rgba(148, 250, 213, 0.18);
+      border-radius: 12px;
+      padding: 0.75em 0.9em;
+    }
+
+    /* Callout */
+    .reveal .callout {
+      margin-top: 0.55em;
+      padding: 0.6em 0.95em;
+      background: rgba(148, 250, 213, 0.08);
+      border: 1px solid rgba(148, 250, 213, 0.30);
+      border-radius: 10px;
+      font-size: 0.68em;
+      line-height: 1.45;
+      color: var(--blitzy-light);
+    }
+    .reveal .callout i[data-lucide],
+    .reveal .callout svg.lucide {
+      color: var(--blitzy-mint);
+      margin-right: 0.3em;
+    }
+
+    /* ============================================================
+       KPI Grid (slide 12)
+       ============================================================ */
+    .reveal .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1.0em;
+      margin: 0.7em 0;
+    }
+    .reveal .kpi-grid.second-row {
+      margin-top: 0.6em;
+    }
+    .reveal .kpi-card {
+      background: linear-gradient(160deg, rgba(91, 57, 243, 0.55) 0%, rgba(45, 28, 119, 0.35) 100%);
+      border: 1px solid rgba(148, 250, 213, 0.30);
+      border-radius: 14px;
+      padding: 1.2em 0.6em 1.0em;
+      text-align: center;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      position: relative;
+      overflow: hidden;
+    }
+    .reveal .kpi-card.secondary {
+      background: linear-gradient(160deg, rgba(45, 28, 119, 0.55) 0%, rgba(26, 16, 95, 0.55) 100%);
+      border-color: rgba(148, 250, 213, 0.20);
+    }
+    .reveal .kpi-card .kpi-icon {
+      display: inline-block;
+      margin-bottom: 0.35em;
+    }
+    .reveal .kpi-card .kpi-icon svg.lucide,
+    .reveal .kpi-card .kpi-icon[data-lucide] {
+      width: 32px;
+      height: 32px;
+      color: var(--blitzy-mint);
+    }
+    .reveal .kpi-card .kpi-value {
+      font-size: 3.4em;
+      font-weight: 800;
+      line-height: 1;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0.05em 0 0.15em;
+      letter-spacing: -0.03em;
+    }
+    .reveal .kpi-card .kpi-label {
+      font-size: 0.65em;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--blitzy-muted);
+      font-weight: 500;
+    }
+
+    /* ============================================================
+       Risk Table
+       ============================================================ */
+    .reveal table.risk-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin-top: 0.25em;
+      background: rgba(244, 239, 246, 0.06);
+      border-radius: 12px;
+      overflow: hidden;
+      font-size: 0.62em;
+      line-height: 1.32;
+    }
+    .reveal table.risk-table thead {
+      background: rgba(91, 57, 243, 0.55);
+    }
+    .reveal table.risk-table thead th {
+      padding: 0.55em 0.9em;
+      text-align: left;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.88em;
+      color: var(--blitzy-text);
+      border-bottom: 2px solid var(--blitzy-mint);
+    }
+    .reveal table.risk-table tbody td {
+      padding: 0.42em 0.9em;
+      border-bottom: 1px solid rgba(148, 250, 213, 0.10);
+      vertical-align: top;
+    }
+    .reveal table.risk-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .reveal table.risk-table tbody tr:nth-child(even) {
+      background: rgba(244, 239, 246, 0.04);
+    }
+    .reveal table.risk-table tbody tr:hover {
+      background: rgba(148, 250, 213, 0.08);
+    }
+    .reveal table.risk-table td i[data-lucide],
+    .reveal table.risk-table td svg.lucide {
+      color: var(--blitzy-mint);
+      margin-right: 0.35em;
+      width: 14px;
+      height: 14px;
+    }
+
+    /* ============================================================
+       Slide type 4: CLOSING
+       ============================================================ */
+    .reveal .closing-slide {
+      text-align: left;
+      padding: 0 8%;
+    }
+    .reveal .closing-slide h2 {
+      font-size: 1.9em;
+      margin-bottom: 0.3em;
+      padding-bottom: 0.22em;
+      line-height: 1.12;
+      background: linear-gradient(135deg, #FFFFFF 0%, var(--blitzy-mint) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      border-bottom: 3px solid var(--blitzy-mint);
+    }
+    .reveal .onboarding-list {
+      list-style: none;
+      counter-reset: step-counter;
+      padding: 0;
+      margin: 0.35em 0 0.5em;
+    }
+    .reveal .onboarding-list li {
+      counter-increment: step-counter;
+      position: relative;
+      padding: 0.42em 0.95em 0.42em 3.0em;
+      margin-bottom: 0.32em;
+      background: rgba(244, 239, 246, 0.06);
+      border-left: 3px solid var(--blitzy-primary);
+      border-radius: 8px;
+      font-size: 0.66em;
+      line-height: 1.45;
+    }
+    .reveal .onboarding-list li::before {
+      content: counter(step-counter);
+      position: absolute;
+      left: 0.65em;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 1.7em;
+      height: 1.7em;
+      line-height: 1.7em;
+      text-align: center;
+      background: var(--blitzy-primary);
+      color: var(--blitzy-text);
+      font-weight: 700;
+      border-radius: 50%;
+      font-size: 0.95em;
+    }
+    .reveal .onboarding-list li i[data-lucide],
+    .reveal .onboarding-list li svg.lucide {
+      color: var(--blitzy-mint);
+      margin-right: 0.3em;
+      width: 14px;
+      height: 14px;
+    }
+    .reveal .closing-footer {
+      margin-top: 0.6em;
+      padding-top: 0.55em;
+      border-top: 1px solid rgba(148, 250, 213, 0.20);
+    }
+    .reveal .closing-footer .contact-line,
+    .reveal .closing-footer .thanks-line {
+      font-size: 0.72em;
+      margin: 0.18em 0;
+      color: var(--blitzy-light);
+      line-height: 1.4;
+    }
+    .reveal .closing-footer .thanks-line {
+      color: var(--blitzy-mint);
+      font-weight: 500;
+    }
+
+    /* ============================================================
+       Mermaid container
+       ------------------------------------------------------------
+       When the natural SVG width exceeds the container, we let the
+       SVG scale down responsively (preserveAspectRatio="xMidYMid").
+       ============================================================ */
+    .reveal .mermaid {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: rgba(244, 239, 246, 0.04);
+      border: 1px solid rgba(148, 250, 213, 0.18);
+      border-radius: 12px;
+      padding: 0.6em;
+      margin: 0.4em 0;
+      min-height: 720px;
+      max-height: 880px;
+      overflow: hidden;
+    }
+    .reveal .mermaid svg {
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      max-height: 860px;
+    }
+    /* Force the same font on Mermaid's foreignObject HTML labels that Mermaid
+       used during text-width measurement. This guarantees the calculated rect
+       widths match the actually-rendered glyphs and avoids the 1-char clip
+       that occurs when the parent reveal.js CSS injects a different font. */
+    .reveal .mermaid svg foreignObject *,
+    .reveal .mermaid svg foreignObject {
+      font-family: Arial, Helvetica, sans-serif !important;
+    }
+    .reveal .mermaid svg foreignObject {
+      overflow: visible !important;
+    }
+    .reveal .mermaid svg foreignObject > div,
+    .reveal .mermaid svg foreignObject > span {
+      overflow: visible !important;
+      white-space: nowrap !important;
+    }
+    /* Labels remain crisp on dark theme. */
+    .reveal .mermaid .nodeLabel,
+    .reveal .mermaid .edgeLabel,
+    .reveal .mermaid .cluster-label {
+      color: #FFFFFF;
+      fill: #FFFFFF;
+      font-family: Arial, Helvetica, sans-serif !important;
+    }
+    .reveal .mermaid .nodeLabel p,
+    .reveal .mermaid .edgeLabel p,
+    .reveal .mermaid .cluster-label p {
+      font-family: Arial, Helvetica, sans-serif !important;
+      white-space: nowrap !important;
+    }
+    .reveal .architecture-slide h2 {
+      margin-bottom: 0.3em;
+    }
+
+    /* ============================================================
+       Reveal.js controls / progress bar Blitzy tint
+       ============================================================ */
+    .reveal .progress {
+      color: var(--blitzy-mint);
+      height: 4px;
+    }
+    .reveal .controls {
+      color: var(--blitzy-mint);
+    }
+    .reveal .slide-number {
+      background: rgba(91, 57, 243, 0.55);
+      color: var(--blitzy-text);
+      padding: 0.25em 0.55em;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.55em;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    /* ============================================================
+       Print / PDF export hint
+       ============================================================ */
+    @media print {
+      .reveal .progress, .reveal .controls { display: none !important; }
+    }

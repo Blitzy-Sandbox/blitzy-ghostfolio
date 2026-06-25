@@ -1,10 +1,7 @@
 import { getCssVariable } from '@ghostfolio/common/helper';
-import { InfoItem, User } from '@ghostfolio/common/interfaces';
+import { User } from '@ghostfolio/common/interfaces';
 import { hasPermission, permissions } from '@ghostfolio/common/permissions';
-import { internalRoutes, publicRoutes } from '@ghostfolio/common/routes/routes';
 import { ColorScheme } from '@ghostfolio/common/types';
-import { NotificationService } from '@ghostfolio/ui/notifications';
-import { DataService } from '@ghostfolio/ui/services';
 
 import {
   ChangeDetectionStrategy,
@@ -12,29 +9,17 @@ import {
   Component,
   DestroyRef,
   DOCUMENT,
-  HostBinding,
   inject,
   OnInit
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatDialog } from '@angular/material/dialog';
-import { Title } from '@angular/platform-browser';
-import {
-  ActivatedRoute,
-  NavigationEnd,
-  PRIMARY_OUTLET,
-  Router,
-  RouterLink,
-  RouterOutlet
-} from '@angular/router';
+import { ActivatedRoute, Router, RouterOutlet } from '@angular/router';
 import { DataSource } from '@prisma/client';
 import { addIcons } from 'ionicons';
 import { openOutline } from 'ionicons/icons';
 import { DeviceDetectorService } from 'ngx-device-detector';
-import { filter } from 'rxjs/operators';
 
-import { GfFooterComponent } from './components/footer/footer.component';
-import { GfHeaderComponent } from './components/header/header.component';
 import { GfHoldingDetailDialogComponent } from './components/holding-detail-dialog/holding-detail-dialog.component';
 import { GfAppQueryParams } from './interfaces/interfaces';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
@@ -42,30 +27,17 @@ import { UserService } from './services/user/user.service';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [GfFooterComponent, GfHeaderComponent, RouterLink, RouterOutlet],
+  imports: [RouterOutlet],
   selector: 'gf-root',
   styleUrls: ['./app.component.scss'],
   templateUrl: './app.component.html'
 })
 export class GfAppComponent implements OnInit {
-  public canCreateAccount: boolean;
-  public currentRoute: string;
-  public currentSubRoute: string;
   public deviceType: string;
   public hasImpersonationId: boolean;
-  public hasInfoMessage: boolean;
-  public hasPermissionToChangeDateRange: boolean;
-  public hasPermissionToChangeFilters: boolean;
-  public hasPromotion = false;
-  public hasTabs = false;
-  public info: InfoItem;
-  public pageTitle: string;
-  public routerLinkRegister = publicRoutes.register.routerLink;
-  public showFooter = false;
   public user: User | undefined;
 
   private readonly changeDetectorRef = inject(ChangeDetectorRef);
-  private readonly dataService = inject(DataService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly deviceService = inject(DeviceDetectorService);
   private readonly dialog = inject(MatDialog);
@@ -73,25 +45,19 @@ export class GfAppComponent implements OnInit {
   private readonly impersonationStorageService = inject(
     ImpersonationStorageService
   );
-  private readonly notificationService = inject(NotificationService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
-  private readonly title = inject(Title);
   private readonly userService = inject(UserService);
 
   public constructor() {
     this.initializeTheme();
-    this.user = undefined;
 
     this.route.queryParams
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(
         ({ dataSource, holdingDetailDialog, symbol }: GfAppQueryParams) => {
           if (dataSource && holdingDetailDialog && symbol) {
-            this.openHoldingDetailDialog({
-              dataSource,
-              symbol
-            });
+            this.openHoldingDetailDialog({ dataSource, symbol });
           }
         }
       );
@@ -99,13 +65,8 @@ export class GfAppComponent implements OnInit {
     addIcons({ openOutline });
   }
 
-  @HostBinding('class.has-info-message') get getHasMessage() {
-    return this.hasInfoMessage;
-  }
-
   public ngOnInit() {
     this.deviceType = this.deviceService.getDeviceInfo().deviceType;
-    this.info = this.dataService.fetchInfo();
 
     this.impersonationStorageService
       .onChangeHasImpersonation()
@@ -114,138 +75,15 @@ export class GfAppComponent implements OnInit {
         this.hasImpersonationId = !!impersonationId;
       });
 
-    this.router.events
-      .pipe(filter((event) => event instanceof NavigationEnd))
-      .subscribe(() => {
-        const urlTree = this.router.parseUrl(this.router.url);
-        const urlSegmentGroup = urlTree.root.children[PRIMARY_OUTLET];
-        const urlSegments = urlSegmentGroup.segments;
-        this.currentRoute = urlSegments[0].path;
-        this.currentSubRoute = urlSegments[1]?.path;
-
-        if (
-          ((this.currentRoute === internalRoutes.home.path &&
-            !this.currentSubRoute) ||
-            (this.currentRoute === internalRoutes.home.path &&
-              this.currentSubRoute ===
-                internalRoutes.home.subRoutes?.holdings.path) ||
-            (this.currentRoute === internalRoutes.portfolio.path &&
-              !this.currentSubRoute)) &&
-          this.user?.settings?.viewMode !== 'ZEN'
-        ) {
-          this.hasPermissionToChangeDateRange = true;
-        } else {
-          this.hasPermissionToChangeDateRange = false;
-        }
-
-        if (
-          (this.currentRoute === internalRoutes.home.path &&
-            this.currentSubRoute ===
-              internalRoutes.home.subRoutes?.holdings.path) ||
-          (this.currentRoute === internalRoutes.portfolio.path &&
-            !this.currentSubRoute) ||
-          (this.currentRoute === internalRoutes.portfolio.path &&
-            this.currentSubRoute ===
-              internalRoutes.portfolio.subRoutes?.activities.path) ||
-          (this.currentRoute === internalRoutes.portfolio.path &&
-            this.currentSubRoute ===
-              internalRoutes.portfolio.subRoutes?.allocations.path) ||
-          (this.currentRoute === internalRoutes.zen.path &&
-            this.currentSubRoute ===
-              internalRoutes.home.subRoutes?.holdings.path)
-        ) {
-          this.hasPermissionToChangeFilters = true;
-        } else {
-          this.hasPermissionToChangeFilters = false;
-        }
-
-        this.hasTabs =
-          (this.currentRoute === publicRoutes.about.path ||
-            this.currentRoute === publicRoutes.faq.path ||
-            this.currentRoute === publicRoutes.resources.path ||
-            this.currentRoute === internalRoutes.account.path ||
-            this.currentRoute === internalRoutes.adminControl.path ||
-            this.currentRoute === internalRoutes.home.path ||
-            this.currentRoute === internalRoutes.portfolio.path ||
-            this.currentRoute === internalRoutes.zen.path) &&
-          this.deviceType !== 'mobile';
-
-        this.showFooter =
-          (this.currentRoute === publicRoutes.blog.path ||
-            this.currentRoute === publicRoutes.features.path ||
-            this.currentRoute === publicRoutes.markets.path ||
-            this.currentRoute === publicRoutes.openStartup.path ||
-            this.currentRoute === publicRoutes.public.path ||
-            this.currentRoute === publicRoutes.pricing.path ||
-            this.currentRoute === publicRoutes.register.path ||
-            this.currentRoute === publicRoutes.start.path) &&
-          this.deviceType !== 'mobile';
-
-        if (this.deviceType === 'mobile') {
-          setTimeout(() => {
-            const index = this.title.getTitle().indexOf('–');
-            const title =
-              index === -1
-                ? ''
-                : this.title.getTitle().substring(0, index).trim();
-            this.pageTitle = title.length <= 15 ? title : 'Ghostfolio';
-
-            this.changeDetectorRef.markForCheck();
-          });
-        }
-
-        this.changeDetectorRef.markForCheck();
-      });
-
     this.userService.stateChanged
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((state) => {
         this.user = state.user;
 
-        this.canCreateAccount = hasPermission(
-          this.user?.permissions,
-          permissions.createUserAccount
-        );
-
-        this.hasInfoMessage =
-          this.canCreateAccount || !!this.user?.systemMessage;
-
-        this.hasPromotion = this.user
-          ? !!this.user.subscription?.offer?.coupon ||
-            !!this.user.subscription?.offer?.durationExtension
-          : !!this.info?.subscriptionOffer?.coupon ||
-            !!this.info?.subscriptionOffer?.durationExtension;
-
         this.initializeTheme(this.user?.settings.colorScheme);
 
         this.changeDetectorRef.markForCheck();
       });
-  }
-
-  public onClickSystemMessage() {
-    const systemMessage = this.user?.systemMessage;
-
-    if (!systemMessage) {
-      return;
-    }
-
-    if (systemMessage.routerLink) {
-      void this.router.navigate(systemMessage.routerLink);
-    } else {
-      this.notificationService.alert({
-        title: systemMessage.message
-      });
-    }
-  }
-
-  public onCreateAccount() {
-    this.userService.signOut();
-  }
-
-  public onSignOut() {
-    this.userService.signOut();
-
-    document.location.href = `/${document.documentElement.lang}`;
   }
 
   private initializeTheme(userPreferredColorScheme?: ColorScheme) {
@@ -278,10 +116,9 @@ export class GfAppComponent implements OnInit {
         const dialogRef = this.dialog.open(GfHoldingDetailDialogComponent, {
           autoFocus: false,
           data: {
-            dataSource,
-            symbol,
             baseCurrency: this.user?.settings?.baseCurrency,
             colorScheme: this.user?.settings?.colorScheme,
+            dataSource,
             deviceType: this.deviceType,
             hasImpersonationId: this.hasImpersonationId,
             hasPermissionToAccessAdminControl: hasPermission(
@@ -306,7 +143,8 @@ export class GfAppComponent implements OnInit {
                 permissions.updateActivity
               ) &&
               !this.user?.settings?.isRestrictedView,
-            locale: this.user?.settings?.locale
+            locale: this.user?.settings?.locale,
+            symbol
           },
           height: this.deviceType === 'mobile' ? '98vh' : '80vh',
           width: this.deviceType === 'mobile' ? '100vw' : '50rem'
