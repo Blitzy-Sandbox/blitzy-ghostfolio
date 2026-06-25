@@ -1,0 +1,144 @@
+// Rule 7 / Decision D-020: the host theme (apps/client/src/styles/theme.scss)
+// uses mat.all-component-themes(), NOT mat.theme(), so the --mat-sys-* system
+// custom properties are NOT emitted at runtime. Every var(--mat-sys-*, <fallback>)
+// therefore resolves to its FALLBACK, which is the value that actually renders.
+// Consequently a bare --mat-sys-* reference without a fallback is PROHIBITED —
+// it would render nothing. The fallbacks below are load-bearing and reuse the
+// verified cyan-teal vocabulary from components/chat-panel/chat-panel.component.scss
+// (the source reference for this file). Declarations are alphabetized within
+// every rule block to match the repository's established SCSS ordering, and the
+// :host-context(.theme-dark) block re-declares the dark-mode fallbacks.
+:host {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+// Root canvas. position: relative anchors the absolutely-positioned empty-state
+// overlay (below) to the canvas rather than the viewport.
+.dashboard-canvas {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+  width: 100%;
+
+  // Top action bar hosting the "Add module" button, right-aligned.
+  &__toolbar {
+    align-items: center;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    padding: 0.75rem 1rem;
+  }
+
+  // Blank-canvas hint shown when no modules are placed (first-visit experience).
+  // pointer-events: none lets clicks pass through to the grid beneath.
+  &__empty-state {
+    align-items: center;
+    color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    inset: 0;
+    justify-content: center;
+    pointer-events: none;
+    position: absolute;
+    text-align: center;
+  }
+
+  &__empty-icon {
+    font-size: 3rem;
+  }
+
+  // angular-gridster2 host fills the remaining canvas height; its own surface
+  // is transparent so module cards (.dashboard-module) provide the visible chrome.
+  &__grid {
+    background: transparent;
+    flex: 1 1 auto;
+  }
+}
+
+// Per-module card surface (a MatCard appearance="outlined" in the template).
+// overflow: hidden clips the composed feature component to the grid tile bounds.
+.dashboard-module {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+
+  // Compact header bar: drag affordance, title, and overflow menu trigger.
+  &__header {
+    align-items: center;
+    border-bottom: 1px solid var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
+    color: var(--mat-sys-on-surface, var(--dark-primary-text));
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  &__drag-handle {
+    color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+    cursor: move;
+    flex-shrink: 0;
+  }
+
+  &__title {
+    flex: 1 1 auto;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__menu-trigger {
+    color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
+    flex-shrink: 0;
+  }
+
+  // Scrollable region that renders the composed feature component.
+  &__body {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 0.5rem;
+  }
+}
+
+// gridster v21 renders its drag/resize/drop-zone chrome with its own globally
+// scoped styles. A minimal ::ng-deep block restyles that chrome to the M3 token
+// vocabulary; each property still carries a token+fallback per Rule 7 / D-020.
+::ng-deep {
+  // Drop-zone preview shown while dragging/resizing a module.
+  .gridster-preview {
+    background: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+    border: 1px dashed var(--mat-sys-outline, rgba(0, 0, 0, 0.24));
+  }
+
+  // Resize grips on each gridster item.
+  .gridster-item-resizable-handler {
+    border-color: var(--mat-sys-outline, rgba(0, 0, 0, 0.24));
+  }
+}
+
+// Dark-mode fallbacks. The host applies .theme-dark on an ancestor; these
+// re-declare the load-bearing fallbacks with the dark cyan-teal vocabulary.
+:host-context(.theme-dark) {
+  .dashboard-canvas__empty-state {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .dashboard-module__header {
+    border-bottom-color: var(--mat-sys-outline, rgba(255, 255, 255, 0.12));
+    color: var(--mat-sys-on-surface, var(--light-primary-text));
+  }
+
+  .dashboard-module__drag-handle,
+  .dashboard-module__menu-trigger {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  ::ng-deep .gridster-preview {
+    background: var(--mat-sys-primary-container, rgba(71, 219, 215, 0.16));
+  }
+}
