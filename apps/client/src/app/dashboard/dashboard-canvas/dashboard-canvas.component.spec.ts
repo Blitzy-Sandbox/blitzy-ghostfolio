@@ -354,4 +354,101 @@ describe('GfDashboardCanvasComponent', () => {
       component.items.filter((item) => item.moduleKey === 'holdings').length
     ).toBe(1);
   });
+
+  it('persists on a gridster drag (itemChangeCallback) and resize (itemResizeCallback) (Rule 4)', () => {
+    const item = {
+      cols: 4,
+      minItemCols: 4,
+      minItemRows: 2,
+      moduleKey: 'portfolio-overview',
+      rows: 2,
+      x: 0,
+      y: 0
+    };
+    component.items = [item];
+
+    // The grid engine fires these callbacks at the end of a pointer drag and a
+    // pointer resize; both MUST funnel through the single persistence entry
+    // point (Rule 4). The callback arguments are ignored by the component, so
+    // they are cast through `never` to satisfy the gridster signatures.
+    component.options.itemChangeCallback?.(item as never, undefined as never);
+    expect(layoutServiceMock.save).toHaveBeenCalledTimes(1);
+
+    component.options.itemResizeCallback?.(item as never, undefined as never);
+    expect(layoutServiceMock.save).toHaveBeenCalledTimes(2);
+
+    // Only the persisted contract (no gridster internals) leaves the canvas.
+    expect(layoutServiceMock.save).toHaveBeenLastCalledWith([
+      { cols: 4, moduleKey: 'portfolio-overview', rows: 2, x: 0, y: 0 }
+    ]);
+  });
+
+  it('captures the gridster API on init and recalculates the layout on a keyboard change', () => {
+    const calculateLayout = jest.fn();
+
+    // Simulate the grid engine handing back its API through `initCallback`.
+    component.options.initCallback?.(
+      undefined as never,
+      { calculateLayout } as never
+    );
+
+    const item = {
+      cols: 4,
+      minItemCols: 4,
+      minItemRows: 2,
+      moduleKey: 'portfolio-overview',
+      rows: 2,
+      x: 0,
+      y: 0
+    };
+    component.items = [item];
+
+    component.moveModule(item, 1, 0);
+
+    // A programmatic (keyboard) change must ask the captured grid API to
+    // recompute item positions, then persist through the single entry point.
+    expect(calculateLayout).toHaveBeenCalled();
+    expect(layoutServiceMock.save).toHaveBeenCalled();
+  });
+
+  it('ignores an unregistered module key returned by the catalog', () => {
+    dialogMock.open.mockReturnValue({ afterClosed: () => of('ghost-module') });
+
+    component.openCatalog();
+
+    // `ghost-module` is not in the registry, so nothing is placed and no save
+    // is triggered.
+    expect(component.items).toEqual([]);
+    expect(layoutServiceMock.save).not.toHaveBeenCalled();
+  });
+
+  it('stacks a newly added module below the lowest existing module', () => {
+    // Seed a placed module so the new tile computes its row from a non-empty
+    // grid (nextY = the lowest existing item's bottom edge).
+    component.items = [
+      {
+        cols: 4,
+        minItemCols: 4,
+        minItemRows: 4,
+        moduleKey: 'holdings',
+        rows: 4,
+        x: 0,
+        y: 2
+      }
+    ];
+
+    dialogMock.open.mockReturnValue({
+      afterClosed: () => of('portfolio-overview')
+    });
+
+    component.openCatalog();
+
+    const added = component.items.find(
+      (item) => item.moduleKey === 'portfolio-overview'
+    );
+    expect(added).toBeDefined();
+    // nextY = max(0, holdings.y + holdings.rows) = 2 + 4 = 6, anchored at x = 0.
+    expect(added?.x).toBe(0);
+    expect(added?.y).toBe(6);
+  });
 });
