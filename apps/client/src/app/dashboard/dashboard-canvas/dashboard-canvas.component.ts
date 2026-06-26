@@ -11,6 +11,7 @@ import {
   CUSTOM_ELEMENTS_SCHEMA,
   DestroyRef,
   inject,
+  NgZone,
   OnInit,
   Type
 } from '@angular/core';
@@ -28,6 +29,7 @@ import {
   GridsterItemConfig,
   GridType
 } from 'angular-gridster2';
+import { take } from 'rxjs/operators';
 
 import { DashboardLayoutService } from '../dashboard-layout.service';
 import { GfModuleCatalogComponent } from '../module-catalog/module-catalog.component';
@@ -140,11 +142,37 @@ export class GfDashboardCanvasComponent implements OnInit {
    */
   private gridsterApi?: GridsterApi;
 
+  /**
+   * Gates persistence to genuine, post-load grid-state changes (QA F2-LOW-01).
+   *
+   * angular-gridster2 invokes `itemResizeCallback` for every item during its
+   * initial placement and `itemChangeCallback` whenever its deferred
+   * `calculateLayout` repositions items (e.g. when `pushItems` normalizes an
+   * overlapping persisted layout). Those load-time invocations are
+   * indistinguishable from a user drag/resize at the callback site, so without
+   * this flag the canvas would PATCH the layout on every page load — violating
+   * Rule 4 ("persistence is event-driven only") and silently re-persisting a
+   * gridster-normalized arrangement on read. The flag is flipped to `true`
+   * exactly once, after the first `NgZone.onStable` following the layout load,
+   * by which point gridster's deferred layout pass has settled.
+   */
+  private isLayoutInitialized = false;
+
+  /**
+   * Serialized snapshot (`JSON.stringify` of the grid items) of the most
+   * recently persisted — or freshly loaded — layout. `persistLayout()`
+   * deep-compares against this before issuing a PATCH, so an idempotent
+   * gridster re-fire (e.g. a window resize that does not change any geometry)
+   * does not produce a redundant save. `null` until the first load settles.
+   */
+  private lastPersistedLayout: string | null = null;
+
   private readonly changeDetectorRef = inject(ChangeDetectorRef);
   private readonly dashboardLayoutService = inject(DashboardLayoutService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly dialog = inject(MatDialog);
   private readonly moduleRegistryService = inject(ModuleRegistryService);
+  private readonly ngZone = inject(NgZone);
 
   public constructor() {
     this.options = {
@@ -160,12 +188,14 @@ export class GfDashboardCanvasComponent implements OnInit {
       initCallback: (_gridster, gridsterApi) => {
         this.gridsterApi = gridsterApi;
       },
-      // Drag and resize completion persist the layout via onLayoutChanged().
+      // Drag and resize completion route through the gated handler so only
+      // genuine, post-load changes persist (QA F2-LOW-01); gridster also fires
+      // these during initial placement and collision normalization.
       itemChangeCallback: () => {
-        this.onLayoutChanged();
+        this.onGridItemChanged();
       },
       itemResizeCallback: () => {
-        this.onLayoutChanged();
+        this.onGridItemChanged();
       },
       margin: GRID_MARGIN,
       maxCols: GRID_COLUMNS,
@@ -188,22 +218,47 @@ export class GfDashboardCanvasComponent implements OnInit {
     this.dashboardLayoutService
       .get()
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((response: UserDashboardLayout | null) => {
-        if (response === null) {
-          this.items = [];
-          this.openCatalog();
-        } else {
-          // Read the `{ layout }` envelope and drop any item whose `moduleKey`
-          // is no longer registered (avoids an empty, untitled card).
-          this.items = response.layout
-            .filter((layoutItem) =>
-              Boolean(this.moduleRegistryService.get(layoutItem.moduleKey))
-            )
-            .map((layoutItem) => this.createGridsterItem(layoutItem));
-        }
+      .subscribe({
+        next: (response: UserDashboardLayout | null) => {
+          if (response === null) {
+            this.items = [];
+            this.openCatalog();
+          } else {
+            // Read the `{ layout }` envelope and drop any item whose `moduleKey`
+            // is no longer registered (avoids an empty, untitled card).
+            this.items = response.layout
+              .filter((layoutItem) =>
+                Boolean(this.moduleRegistryService.get(layoutItem.moduleKey))
+              )
+              .map((layoutItem) => this.createGridsterItem(layoutItem));
+          }
 
-        // OnPush + async resolution: request a check so the grid renders.
-        this.changeDetectorRef.markForCheck();
+          // OnPush + async resolution: request a check so the grid renders.
+          this.changeDetectorRef.markForCheck();
+
+          // Only now arm persistence: gridster's initial placement and any
+          // collision normalization fire their callbacks before the grid
+          // settles, and must NOT be persisted (Rule 4 / QA F2-LOW-01).
+          this.armLayoutPersistence();
+        },
+        error: () => {
+          // A failed layout load must not strand the canvas with an unhandled
+          // error. This is reached when the layout GET resolves to a status
+          // other than 404 — most notably the 401 an unauthenticated visitor
+          // receives now that the preserved AuthGuard allows them onto the
+          // single root route `/` (QA F2-HIGH-01), but also any transient
+          // server/network failure. Render a safe, empty grid and request a
+          // check. Deliberately do NOT auto-open the catalog: unlike the 404
+          // "first-visit" path (Rule 10), a load FAILURE is not a confirmed
+          // "no saved layout" signal, so surfacing the catalog would be
+          // misleading.
+          this.items = [];
+          this.changeDetectorRef.markForCheck();
+
+          // Arm persistence on the failure path too, so any later user action
+          // still persists; the baseline snapshot reflects the empty grid.
+          this.armLayoutPersistence();
+        }
       });
   }
 
@@ -231,11 +286,13 @@ export class GfDashboardCanvasComponent implements OnInit {
   }
 
   /**
-   * Persists the current arrangement. The single entry point through which every
-   * grid-state change (drag, resize, add, remove, keyboard move/resize) is saved.
+   * Persists the current arrangement for every EXPLICIT, user-driven grid-state
+   * change (add, remove, keyboard move/resize). Pointer drag/resize instead
+   * arrive through the gated `onGridItemChanged()`; both funnel into the
+   * deduplicating `persistLayout()`, the single persistence entry point (Rule 4).
    */
   public onLayoutChanged() {
-    this.dashboardLayoutService.save(this.serializeLayout());
+    this.persistLayout();
   }
 
   /**
@@ -312,6 +369,74 @@ export class GfDashboardCanvasComponent implements OnInit {
 
     this.changeDetectorRef.markForCheck();
     this.onLayoutChanged();
+  }
+
+  /**
+   * Arms layout persistence exactly once, after the grid has finished its first
+   * render (QA F2-LOW-01).
+   *
+   * `NgZone.onStable` emits when the Angular zone has no further pending work.
+   * By the time it first fires after the layout load, angular-gridster2 has
+   * completed its deferred `calculateLayout` pass — including the per-item
+   * `itemResizeCallback`s of initial placement and any `itemChangeCallback`s
+   * from `pushItems` collision normalization. Flipping `isLayoutInitialized`
+   * here therefore lets those load-time callbacks no-op (they run while the
+   * flag is still `false`) while every genuine, user-driven change afterward
+   * persists. The snapshot of the settled layout becomes the deep-compare
+   * baseline so the first real change is detected correctly.
+   *
+   * `take(1)` makes this a strict one-shot; `takeUntilDestroyed` ties the
+   * subscription's lifetime to the component.
+   */
+  private armLayoutPersistence() {
+    this.ngZone.onStable
+      .pipe(take(1), takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.isLayoutInitialized = true;
+        this.lastPersistedLayout = JSON.stringify(this.serializeLayout());
+      });
+  }
+
+  /**
+   * Entry point for angular-gridster2 pointer callbacks (drag/resize
+   * completion), gated to genuine post-load changes (QA F2-LOW-01).
+   *
+   * gridster also invokes `itemChangeCallback`/`itemResizeCallback` during its
+   * initial item placement and `pushItems` collision normalization. Those fire
+   * while `isLayoutInitialized` is still `false` (it flips only after the first
+   * `NgZone.onStable` post-load), so they no-op here — preventing a redundant
+   * load-time PATCH and the silent re-persistence of a normalized layout on
+   * read. Once the grid has settled, real drag/resize changes funnel into
+   * `persistLayout()`.
+   */
+  private onGridItemChanged() {
+    if (!this.isLayoutInitialized) {
+      return;
+    }
+
+    this.persistLayout();
+  }
+
+  /**
+   * Deduplicating persistence funnel.
+   *
+   * Serializes the current grid items and compares them against the last
+   * persisted/loaded snapshot. An unchanged layout — e.g. an idempotent gridster
+   * re-fire from a window resize that moved nothing — is skipped, so only real
+   * geometry changes reach the debounced PATCH pipeline. On a genuine change the
+   * snapshot is advanced BEFORE delegating to the service, so a follow-up
+   * gridster callback for that same change deduplicates instead of issuing a
+   * second save.
+   */
+  private persistLayout() {
+    const serializedLayout = JSON.stringify(this.serializeLayout());
+
+    if (serializedLayout === this.lastPersistedLayout) {
+      return;
+    }
+
+    this.lastPersistedLayout = serializedLayout;
+    this.dashboardLayoutService.save(this.serializeLayout());
   }
 
   /**

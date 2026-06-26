@@ -413,7 +413,7 @@ describe('GfDashboardCanvasComponent', () => {
     ).toBe(1);
   });
 
-  it('persists on a gridster drag (itemChangeCallback) and resize (itemResizeCallback) (Rule 4)', () => {
+  it('does NOT persist on gridster callbacks fired before the grid settles (load-time placement / normalization) (Rule 4 / F2-LOW-01)', () => {
     const item = {
       cols: 4,
       minItemCols: 4,
@@ -425,20 +425,86 @@ describe('GfDashboardCanvasComponent', () => {
     };
     component.items = [item];
 
-    // The grid engine fires these callbacks at the end of a pointer drag and a
-    // pointer resize; both MUST funnel through the single persistence entry
-    // point (Rule 4). The callback arguments are ignored by the component, so
-    // they are cast through `never` to satisfy the gridster signatures.
-    component.options.itemChangeCallback?.(item as never, undefined as never);
-    expect(layoutServiceMock.save).toHaveBeenCalledTimes(1);
-
+    // `isLayoutInitialized` is still false here (the post-load NgZone.onStable
+    // flip has not run). angular-gridster2 fires `itemResizeCallback` for every
+    // item during initial placement and `itemChangeCallback` from `pushItems`
+    // collision normalization; both arrive in this pre-settled window and MUST
+    // NOT persist, otherwise the canvas would PATCH on every page load and
+    // silently re-persist a normalized layout on read.
     component.options.itemResizeCallback?.(item as never, undefined as never);
-    expect(layoutServiceMock.save).toHaveBeenCalledTimes(2);
+    component.options.itemChangeCallback?.(item as never, undefined as never);
 
-    // Only the persisted contract (no gridster internals) leaves the canvas.
-    expect(layoutServiceMock.save).toHaveBeenLastCalledWith([
+    expect(layoutServiceMock.save).not.toHaveBeenCalled();
+  });
+
+  it('persists a genuine post-settle gridster drag/resize and deduplicates idempotent re-fires (Rule 4 / F2-LOW-01)', () => {
+    const item = {
+      cols: 4,
+      minItemCols: 4,
+      minItemRows: 2,
+      moduleKey: 'portfolio-overview',
+      rows: 2,
+      x: 0,
+      y: 0
+    };
+    component.items = [item];
+
+    // Simulate the settled post-load state: the one-shot NgZone.onStable flip
+    // has armed persistence and snapshotted the loaded layout as the
+    // deep-compare baseline. (Private state is reached through a typed cast to
+    // avoid `any` while exercising the gating contract directly.)
+    const internals = component as unknown as {
+      isLayoutInitialized: boolean;
+      lastPersistedLayout: string | null;
+    };
+    internals.isLayoutInitialized = true;
+    internals.lastPersistedLayout = JSON.stringify([
       { cols: 4, moduleKey: 'portfolio-overview', rows: 2, x: 0, y: 0 }
     ]);
+
+    // An idempotent re-fire (no geometry change, e.g. a window resize) matches
+    // the snapshot and is skipped.
+    component.options.itemChangeCallback?.(item as never, undefined as never);
+    expect(layoutServiceMock.save).not.toHaveBeenCalled();
+
+    // A genuine pointer drag changes geometry → exactly one persist carrying
+    // only the serialized contract (no gridster internals).
+    item.x = 3;
+    component.options.itemChangeCallback?.(item as never, undefined as never);
+    expect(layoutServiceMock.save).toHaveBeenCalledTimes(1);
+    expect(layoutServiceMock.save).toHaveBeenLastCalledWith([
+      { cols: 4, moduleKey: 'portfolio-overview', rows: 2, x: 3, y: 0 }
+    ]);
+
+    // A genuine pointer resize changes size → a second persist.
+    item.rows = 5;
+    component.options.itemResizeCallback?.(item as never, undefined as never);
+    expect(layoutServiceMock.save).toHaveBeenCalledTimes(2);
+    expect(layoutServiceMock.save).toHaveBeenLastCalledWith([
+      { cols: 4, moduleKey: 'portfolio-overview', rows: 5, x: 3, y: 0 }
+    ]);
+  });
+
+  it('does not persist merely by loading a saved layout, even as gridster fires its initial callbacks (Rule 4 / F2-LOW-01)', () => {
+    const saved: UserDashboardLayout = {
+      layout: [{ cols: 4, moduleKey: 'holdings', rows: 4, x: 0, y: 0 }]
+    };
+    layoutServiceMock.get.mockReturnValue(of(saved));
+
+    // ngOnInit loads the saved layout and arms the one-shot persistence flip.
+    fixture.detectChanges();
+
+    expect(component.items.length).toBe(1);
+
+    // The post-load NgZone.onStable flip has not fired synchronously, so the
+    // initial-placement resize and any normalization change callbacks gridster
+    // emits while rendering the loaded layout must be gated out — no load-time
+    // PATCH.
+    const item = component.items[0];
+    component.options.itemResizeCallback?.(item as never, undefined as never);
+    component.options.itemChangeCallback?.(item as never, undefined as never);
+
+    expect(layoutServiceMock.save).not.toHaveBeenCalled();
   });
 
   it('captures the gridster API on init and recalculates the layout on a keyboard change', () => {
