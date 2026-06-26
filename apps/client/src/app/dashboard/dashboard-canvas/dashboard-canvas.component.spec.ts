@@ -70,6 +70,40 @@ jest.mock('../modules/x-ray/x-ray-module.component', () => ({
   GfXRayModuleComponent: class GfXRayModuleComponent {}
 }));
 
+// The canvas now imports `IonIcon` from `@ionic/angular/standalone` and lists it
+// in its `imports` array, and registers its chrome glyphs through `addIcons(...)`
+// from `ionicons`/`ionicons/icons` (QA F3 FINDING-1). `@ionic/angular/standalone`
+// is untransformed `.mjs` ESM that Jest cannot parse under the project's
+// `transformIgnorePatterns` (the same reason the catalog is stubbed above), so it
+// is mocked here. `IonIcon` MUST be a real standalone directive (not a bare class)
+// because Angular validates every entry in a component's `imports` array; a
+// minimal `@Directive({ selector: 'ion-icon' })` satisfies that — the JIT test
+// environment (`setupZoneTestEnv`) compiles its runtime decorator — and lets the
+// template's `<ion-icon>` elements render as inert stand-ins. `ionicons` and
+// `ionicons/icons` are stubbed so the constructor's `addIcons(...)` call is an
+// inert no-op in this isolated unit environment.
+jest.mock('@ionic/angular/standalone', () => {
+  // jest.mock factories are hoisted above all imports, so `@angular/core` must be
+  // pulled in with require() here — a top-level ES import binding cannot be
+  // referenced from a hoisted factory. The `as typeof import(...)` cast keeps
+  // `Directive` fully typed (so no no-unsafe-* lint warnings fire).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  const { Directive } =
+    require('@angular/core') as typeof import('@angular/core');
+
+  // The real <ion-icon> is a third-party ELEMENT-selector component; this stub
+  // mirrors that element selector so the canvas's `<ion-icon>` usages resolve to
+  // it. The element-selector lint rule targets first-party directives and is not
+  // meaningful for a third-party element stub, hence the narrow disable.
+  // eslint-disable-next-line @angular-eslint/directive-selector
+  @Directive({ selector: 'ion-icon' })
+  class IonIcon {}
+
+  return { IonIcon };
+});
+jest.mock('ionicons', () => ({ addIcons: jest.fn() }));
+jest.mock('ionicons/icons', () => ({}));
+
 /**
  * angular-gridster2 v21 observes its host element with `ResizeObserver` to react
  * to container size changes. The jest-preset-angular (jsdom) environment does not

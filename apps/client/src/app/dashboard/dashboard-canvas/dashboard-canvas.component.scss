@@ -16,10 +16,23 @@
 
 // Root canvas. position: relative anchors the absolutely-positioned empty-state
 // overlay (below) to the canvas rather than the viewport.
+//
+// min-height: 100svh gives the canvas a DEFINITE height (QA F3 FINDING-3). The
+// ancestor `main` (apps/client/src/app/app.component.scss) declares only
+// `min-height: 100svh`, so its `height` computes to `auto`; a percentage
+// `height: 100%` therefore has no definite containing-block height to resolve
+// against and collapses to content height (~84px), which in turn collapses the
+// flex `&__grid` (the angular-gridster2 host) so it clips every module card. A
+// small-viewport-height floor here makes the flex column at least one viewport
+// tall, so `&__grid { flex: 1 1 auto }` receives a real height and the grid
+// (GridType.VerticalFixed → overflow-y: auto) scrolls its rows internally
+// instead of clipping them. It also re-centres the absolutely-positioned
+// empty-state within the full viewport rather than a collapsed band.
 .dashboard-canvas {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 100svh;
   position: relative;
   width: 100%;
 
@@ -72,7 +85,13 @@
   &__header {
     align-items: center;
     border-bottom: 1px solid var(--mat-sys-outline, rgba(0, 0, 0, 0.12));
-    color: var(--mat-sys-on-surface, var(--dark-primary-text));
+    // QA F3 FINDING-2 / Rule 7: --dark-primary-text is a BARE channel list
+    // ("0, 0, 0, 0.87"), so an unwrapped fallback resolves to the invalid
+    // declaration `color: 0, 0, 0, 0.87`, which is dropped at computed-value
+    // time and silently inherits the ancestor colour. Wrapping it in rgba()
+    // (the repo-wide convention in styles.scss) makes the load-bearing fallback
+    // actually paint the documented rgba(0, 0, 0, 0.87) on-surface value.
+    color: var(--mat-sys-on-surface, rgba(var(--dark-primary-text)));
     display: flex;
     gap: 0.5rem;
     padding: 0.25rem 0.5rem;
@@ -130,7 +149,9 @@
 
   .dashboard-module__header {
     border-bottom-color: var(--mat-sys-outline, rgba(255, 255, 255, 0.12));
-    color: var(--mat-sys-on-surface, var(--light-primary-text));
+    // QA F3 FINDING-2 / Rule 7: rgba()-wrap the bare-channel --light-primary-text
+    // fallback so it paints white (rgba(255, 255, 255, 1)) instead of dropping.
+    color: var(--mat-sys-on-surface, rgba(var(--light-primary-text)));
   }
 
   .dashboard-module__drag-handle,

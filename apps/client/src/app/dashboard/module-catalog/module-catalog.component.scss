@@ -21,7 +21,13 @@
 
 .module-list-item {
   border-radius: 0.5rem;
-  color: var(--mat-sys-on-surface, var(--dark-primary-text));
+  // QA F3 FINDING-2 / Rule 7: --dark-primary-text is a BARE channel list
+  // ("0, 0, 0, 0.87"). Used unwrapped, the load-bearing fallback resolves to the
+  // invalid declaration `color: 0, 0, 0, 0.87`, which is dropped at
+  // computed-value time so the colour silently inherits. rgba()-wrapping it (the
+  // repo-wide convention in styles.scss) makes the fallback paint the documented
+  // on-surface value.
+  color: var(--mat-sys-on-surface, rgba(var(--dark-primary-text)));
 
   ion-icon {
     color: var(--mat-sys-on-surface-variant, rgba(0, 0, 0, 0.6));
@@ -31,10 +37,13 @@
   &:hover,
   &:focus-visible {
     background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
-    color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
+    color: var(--mat-sys-on-primary-container, rgba(var(--dark-primary-text)));
 
     ion-icon {
-      color: var(--mat-sys-on-primary-container, var(--dark-primary-text));
+      color: var(
+        --mat-sys-on-primary-container,
+        rgba(var(--dark-primary-text))
+      );
     }
   }
 }
@@ -57,7 +66,9 @@
   }
 
   .module-list-item {
-    color: var(--mat-sys-on-surface, var(--light-primary-text));
+    // QA F3 FINDING-2 / Rule 7: rgba()-wrap the bare-channel --light-primary-text
+    // fallback so it paints white (rgba(255, 255, 255, 1)) instead of dropping.
+    color: var(--mat-sys-on-surface, rgba(var(--light-primary-text)));
 
     ion-icon {
       color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
@@ -69,10 +80,16 @@
         --mat-sys-primary-container,
         rgba(71, 219, 215, 0.16)
       );
-      color: var(--mat-sys-on-primary-container, var(--light-primary-text));
+      color: var(
+        --mat-sys-on-primary-container,
+        rgba(var(--light-primary-text))
+      );
 
       ion-icon {
-        color: var(--mat-sys-on-primary-container, var(--light-primary-text));
+        color: var(
+          --mat-sys-on-primary-container,
+          rgba(var(--light-primary-text))
+        );
       }
     }
   }

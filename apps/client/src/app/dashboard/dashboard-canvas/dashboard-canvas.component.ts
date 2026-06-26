@@ -21,6 +21,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatDialog } from '@angular/material/dialog';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
 import {
   Gridster,
   GridsterApi,
@@ -29,6 +30,21 @@ import {
   GridsterItemConfig,
   GridType
 } from 'angular-gridster2';
+import { addIcons } from 'ionicons';
+import {
+  addOutline,
+  arrowBackOutline,
+  arrowDownOutline,
+  arrowForwardOutline,
+  arrowUpOutline,
+  ellipsisHorizontal,
+  gridOutline,
+  moveOutline,
+  removeOutline,
+  reorderTwoOutline,
+  resizeOutline,
+  trashOutline
+} from 'ionicons/icons';
 import { take } from 'rxjs/operators';
 
 import { DashboardLayoutService } from '../dashboard-layout.service';
@@ -113,6 +129,7 @@ interface DashboardGridsterItem extends GridsterItemConfig {
   imports: [
     Gridster,
     GridsterItem,
+    IonIcon,
     MatButtonModule,
     MatCardModule,
     MatMenuModule,
@@ -175,6 +192,33 @@ export class GfDashboardCanvasComponent implements OnInit {
   private readonly ngZone = inject(NgZone);
 
   public constructor() {
+    // Register every Ionicons glyph the canvas template references (QA F3
+    // FINDING-1). Ghostfolio configures no Ionicons asset path, so an
+    // unregistered glyph cannot lazy-fetch and silently fails to render
+    // (logging "[Ionicons Warning]: Could not load icon ..."). Registering them
+    // here — in the constructor, before the template renders — mirrors the
+    // established convention (e.g. components/footer/footer.component.ts and the
+    // sibling module-catalog.component.ts) and deterministically renders the
+    // toolbar add icon, the empty-state grid icon, the per-module drag handle
+    // and overflow-menu trigger, and every move/resize/remove menu glyph. The
+    // `IonIcon` import in this component's `imports` array also guarantees the
+    // <ion-icon> custom element is defined on the returning-user path, where the
+    // module catalog (which would otherwise define it) never auto-opens.
+    addIcons({
+      addOutline,
+      arrowBackOutline,
+      arrowDownOutline,
+      arrowForwardOutline,
+      arrowUpOutline,
+      ellipsisHorizontal,
+      gridOutline,
+      moveOutline,
+      removeOutline,
+      reorderTwoOutline,
+      resizeOutline,
+      trashOutline
+    });
+
     this.options = {
       draggable: {
         // Drag is initiated only from the header drag-handle element.
