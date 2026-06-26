@@ -53,7 +53,7 @@ metrics or inspect the structured logs (every line is prefixed with
 > `grep` patterns, the Grafana JSON `expr` fields, and the Metric Names
 > list) against the names actually emitted, and record any non-trivial
 > divergence in the decision log
-> (`docs/decisions/dashboard-refactor-decisions.md`, D-102). Metric
+> (`docs/decisions/dashboard-refactor-decisions.md`, D-012). Metric
 > labels are deliberately restricted to the fixed-cardinality
 > `operation`/`outcome` dimensions (never `userId` or `correlationId`)
 > so the `MetricsService` cardinality guard never drops a series.

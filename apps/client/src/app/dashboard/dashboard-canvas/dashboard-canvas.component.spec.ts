@@ -1,8 +1,15 @@
 import { UserDashboardLayout } from '@ghostfolio/common/interfaces';
 
-import { NO_ERRORS_SCHEMA } from '@angular/core';
+import { Component } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+// Initializes the global `$localize` function used by Angular i18n. The live
+// canvas template compiles its `i18n` attributes and the component's
+// `$localize` aria-label helpers to `$localize` tagged-template calls, so
+// rendering the (now un-stripped) template through TestBed throws
+// `ReferenceError: $localize is not defined` without this side-effect import.
+import '@angular/localize/init';
 import { MatDialog } from '@angular/material/dialog';
+import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { Observable, Subject, of } from 'rxjs';
 
 import { DashboardLayoutService } from '../dashboard-layout.service';
@@ -64,11 +71,36 @@ jest.mock('../modules/x-ray/x-ray-module.component', () => ({
 }));
 
 /**
- * Stand-in component referenced by the mocked registry. It is never instantiated
- * because the canvas template is stripped (see `overrideComponent` below), so a
- * bare class is sufficient.
+ * angular-gridster2 v21 observes its host element with `ResizeObserver` to react
+ * to container size changes. The jest-preset-angular (jsdom) environment does not
+ * implement it, so creating the live `<gridster>` template would throw without
+ * this deterministic stand-in. It is installed once, at module load, before any
+ * `TestBed` configuration runs; it records nothing and never fires, because the
+ * canvas behaviour under test does not depend on resize notifications.
  */
-class DummyModuleComponent {}
+const ResizeObserverMock = jest.fn().mockImplementation(() => ({
+  disconnect: jest.fn(),
+  observe: jest.fn(),
+  unobserve: jest.fn()
+}));
+
+globalThis.ResizeObserver =
+  ResizeObserverMock as unknown as typeof ResizeObserver;
+
+/**
+ * Standalone stand-in projected through the canvas's live `*ngComponentOutlet`.
+ * The mocked registry resolves its registered module keys to this component, so
+ * the spec exercises the real template + registry + component-outlet rendering
+ * path (instead of stripping the template) while the heavy feature wrappers stay
+ * mocked. The `data-testid` marker lets a test assert that real rendering of the
+ * resolved module actually occurred inside the grid.
+ */
+@Component({
+  selector: 'gf-stub-module',
+  standalone: true,
+  template: '<div data-testid="stub-module">stub module</div>'
+})
+class StubModuleComponent {}
 
 /**
  * Minimal registry the canvas reads through `ModuleRegistryService.get(...)`.
@@ -78,14 +110,14 @@ class DummyModuleComponent {}
  */
 const REGISTRY: Record<string, RegisteredModule | undefined> = {
   holdings: {
-    component: DummyModuleComponent,
+    component: StubModuleComponent,
     key: 'holdings',
     minCols: 4,
     minRows: 4,
     name: 'Holdings'
   },
   'portfolio-overview': {
-    component: DummyModuleComponent,
+    component: StubModuleComponent,
     key: 'portfolio-overview',
     minCols: 4,
     minRows: 2,
@@ -118,8 +150,15 @@ describe('GfDashboardCanvasComponent', () => {
       get: (key: string) => REGISTRY[key]
     };
 
+    // The canvas template is kept LIVE (not stripped): TestBed pulls in the
+    // component's real angular-gridster2 imports and template, so the grid, the
+    // module cards, and the `*ngComponentOutlet` projection render for real.
+    // Only the external collaborators are mocked — the layout service, the
+    // dialog, and the registry (which resolves to `StubModuleComponent`) — while
+    // `NoopAnimationsModule` satisfies the Material menu/tooltip animation
+    // dependency in jsdom.
     TestBed.configureTestingModule({
-      imports: [GfDashboardCanvasComponent],
+      imports: [GfDashboardCanvasComponent, NoopAnimationsModule],
       providers: [
         { provide: DashboardLayoutService, useValue: layoutServiceMock },
         { provide: MatDialog, useValue: dialogMock },
@@ -127,21 +166,21 @@ describe('GfDashboardCanvasComponent', () => {
       ]
     });
 
-    // Strip the angular-gridster2 imports and template so the component class can
-    // be exercised in jsdom without the grid engine rendering. Keyboard
-    // move/resize logic is pure geometry math and does not need the live grid;
-    // `gridsterApi` simply stays undefined and its `calculateLayout()` call is
-    // optional-chained to a no-op.
-    TestBed.overrideComponent(GfDashboardCanvasComponent, {
-      set: {
-        imports: [],
-        schemas: [NO_ERRORS_SCHEMA],
-        template: ''
-      }
-    });
-
     fixture = TestBed.createComponent(GfDashboardCanvasComponent);
     component = fixture.componentInstance;
+  });
+
+  afterEach(() => {
+    // The live `<gridster>` is a top-level element, so the real angular-gridster2
+    // v21 `Gridster` component is instantiated at `createComponent`. Its
+    // `Gridster.ngOnDestroy` reads a *required* `options` signal input, which is
+    // only bound during change detection. Pure-unit tests below intentionally
+    // exercise the component instance without rendering, so a trailing
+    // `detectChanges()` here binds `[options]="options"` before the fixture is
+    // torn down — otherwise gridster's teardown throws NG0950. It runs after each
+    // test's assertions, so it cannot alter any expectation, and it keeps the
+    // grid engine real rather than stubbing or suppressing teardown errors.
+    fixture.detectChanges();
   });
 
   it('should create', () => {
@@ -185,9 +224,28 @@ describe('GfDashboardCanvasComponent', () => {
 
   it('resolves module name and component through the registry', () => {
     expect(component.getModuleName('holdings')).toBe('Holdings');
-    expect(component.getModuleComponent('holdings')).toBe(DummyModuleComponent);
+    expect(component.getModuleComponent('holdings')).toBe(StubModuleComponent);
     expect(component.getModuleName('ghost-module')).toBe('');
     expect(component.getModuleComponent('ghost-module')).toBeUndefined();
+  });
+
+  it('renders the resolved module into the live grid via ngComponentOutlet', () => {
+    const saved: UserDashboardLayout = {
+      layout: [{ cols: 4, moduleKey: 'holdings', rows: 4, x: 0, y: 0 }]
+    };
+    layoutServiceMock.get.mockReturnValue(of(saved));
+
+    // Render the LIVE template (no override/strip): the canvas must resolve
+    // `holdings` through the registry and project `StubModuleComponent` through
+    // `*ngComponentOutlet` inside the grid card — proving the real
+    // template/registry/outlet integration, not a bypassed stub.
+    fixture.detectChanges();
+
+    expect(component.items.length).toBe(1);
+
+    const rootElement = fixture.nativeElement as HTMLElement;
+    const projected = rootElement.querySelector('[data-testid="stub-module"]');
+    expect(projected).not.toBeNull();
   });
 
   it('moveModule shifts a module within the grid and persists the new geometry', () => {

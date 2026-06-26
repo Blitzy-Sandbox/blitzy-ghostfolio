@@ -221,7 +221,7 @@ export {
 // Runtime value constants of the dashboard-layout contract. Re-exported with a
 // value `export { ... } from` (NOT the type-only block above) so consumers — the
 // `UpdateUserDashboardLayoutDto` validation in particular — can read them at
-// runtime. See decision D-105.
+// runtime. See decision D-011.
 export {
   DASHBOARD_GRID_COLUMNS,
   DASHBOARD_MAX_GRID_ROW_INDEX,

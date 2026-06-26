@@ -55,7 +55,7 @@ export const DASHBOARD_MAX_LAYOUT_ITEMS = 50;
  * The authoritative set of module keys a persisted layout may reference. MUST
  * mirror the keys registered in the client `ModuleRegistryService`. Used as the
  * server-side whitelist for `DashboardLayoutItem.moduleKey` so a direct API
- * caller cannot persist an unknown module key (see decision D-104).
+ * caller cannot persist an unknown module key (see decision D-011).
  */
 export const DASHBOARD_MODULE_KEYS = [
   'portfolio-overview',

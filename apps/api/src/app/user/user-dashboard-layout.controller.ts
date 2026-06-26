@@ -38,7 +38,9 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * client supplies one (client → API propagation) and otherwise mints a new id;
  * the id is echoed back as `X-Correlation-ID` and threaded into the service
  * call. Design rationale lives in
- * `docs/decisions/dashboard-refactor-decisions.md` (D-103).
+ * `docs/decisions/dashboard-refactor-decisions.md` (D-003 for the separate
+ * guarded controller and any-authenticated-user auth model; D-012 for the
+ * correlation-ID tracing/observability design).
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {

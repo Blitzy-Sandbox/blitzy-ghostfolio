@@ -7,7 +7,6 @@ import {
   User
 } from '@ghostfolio/common/interfaces';
 import { hasPermission, permissions } from '@ghostfolio/common/permissions';
-import { internalRoutes } from '@ghostfolio/common/routes/routes';
 import { HoldingType, HoldingsViewMode } from '@ghostfolio/common/types';
 import { GfHoldingsTableComponent } from '@ghostfolio/ui/holdings-table';
 import { DataService } from '@ghostfolio/ui/services';
@@ -24,9 +23,8 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
-import { Router, RouterModule } from '@angular/router';
+import { Router } from '@angular/router';
 import { IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { gridOutline, reorderFourOutline } from 'ionicons/icons';
@@ -40,10 +38,8 @@ import { DeviceDetectorService } from 'ngx-device-detector';
     GfToggleComponent,
     GfTreemapChartComponent,
     IonIcon,
-    MatButtonModule,
     MatButtonToggleModule,
-    ReactiveFormsModule,
-    RouterModule
+    ReactiveFormsModule
   ],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-home-holdings',
@@ -63,8 +59,6 @@ export class GfHomeHoldingsComponent implements OnInit {
     { label: $localize`Active`, value: 'ACTIVE' },
     { label: $localize`Closed`, value: 'CLOSED' }
   ];
-  public routerLinkPortfolioActivities =
-    internalRoutes.portfolio.subRoutes.activities.routerLink;
   public user: User;
   public viewModeFormControl = new FormControl<HoldingsViewMode>(
     GfHomeHoldingsComponent.DEFAULT_HOLDINGS_VIEW_MODE

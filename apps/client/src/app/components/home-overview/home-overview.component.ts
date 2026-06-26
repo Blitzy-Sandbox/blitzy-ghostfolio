@@ -10,7 +10,6 @@ import {
   User
 } from '@ghostfolio/common/interfaces';
 import { hasPermission, permissions } from '@ghostfolio/common/permissions';
-import { internalRoutes } from '@ghostfolio/common/routes/routes';
 import { GfLineChartComponent } from '@ghostfolio/ui/line-chart';
 import { DataService } from '@ghostfolio/ui/services';
 
@@ -23,17 +22,13 @@ import {
   OnInit
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatButtonModule } from '@angular/material/button';
-import { RouterModule } from '@angular/router';
 import { DeviceDetectorService } from 'ngx-device-detector';
 
 @Component({
   imports: [
     CommonModule,
     GfLineChartComponent,
-    GfPortfolioPerformanceComponent,
-    MatButtonModule,
-    RouterModule
+    GfPortfolioPerformanceComponent
   ],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   selector: 'gf-home-overview',
@@ -53,10 +48,6 @@ export class GfHomeOverviewComponent implements OnInit {
   public performance: PortfolioPerformance;
   public performanceLabel = $localize`Performance`;
   public precision = 2;
-  public routerLinkAccounts = internalRoutes.accounts.routerLink;
-  public routerLinkPortfolio = internalRoutes.portfolio.routerLink;
-  public routerLinkPortfolioActivities =
-    internalRoutes.portfolio.subRoutes.activities.routerLink;
   public showDetails = false;
   public unit: string;
   public user: User;

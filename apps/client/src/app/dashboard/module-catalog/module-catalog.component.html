@@ -27,6 +27,7 @@
           class="module-list-item"
           mat-list-item
           type="button"
+          [attr.aria-label]="getAddModuleLabel(module.name)"
           [attr.data-testid]="'module-' + module.key"
           (click)="onAddModule(module.key)"
         >

@@ -16,8 +16,10 @@ import { Prisma, UserDashboardLayout } from '@prisma/client';
  * for end-to-end request tracing, and request/latency metrics are emitted to
  * the shared `MetricsService` registry.
  *
- * Design rationale (metric location, tracing approach, first-visit semantics)
- * is recorded in `docs/decisions/dashboard-refactor-decisions.md` (D-102, D-103).
+ * Design rationale is recorded in
+ * `docs/decisions/dashboard-refactor-decisions.md`: D-004 (model + Prisma
+ * `upsert` keyed by `userId`), D-010 (first-visit/`null`-when-absent
+ * semantics), and D-012 (metric location and correlation-ID tracing approach).
  */
 @Injectable()
 export class UserDashboardLayoutService {
@@ -62,12 +64,10 @@ export class UserDashboardLayoutService {
     const startTime = Date.now();
     let outcome: 'success' | 'not_found' | 'error' = 'success';
 
-    // Span boundary (read): trace entry into the Prisma read operation.
+    // Span boundary (read): trace entry into the Prisma read operation. The
+    // request-scoped correlation id (not the raw userId) provides traceability.
     Logger.debug(
-      this.formatLogMessage(
-        `UserDashboardLayout read start userId=${userId}`,
-        correlationId
-      ),
+      this.formatLogMessage('UserDashboardLayout read start', correlationId),
       'UserDashboardLayoutService'
     );
 
@@ -84,7 +84,7 @@ export class UserDashboardLayoutService {
 
       Logger.error(
         this.formatLogMessage(
-          `Failed to read UserDashboardLayout for user ${userId}: ${
+          `Failed to read UserDashboardLayout: ${
             error instanceof Error ? error.message : String(error)
           }`,
           correlationId
@@ -113,7 +113,7 @@ export class UserDashboardLayoutService {
       // Span boundary (read): trace exit with resolved outcome and elapsed time.
       Logger.debug(
         this.formatLogMessage(
-          `UserDashboardLayout read end userId=${userId} outcome=${outcome} ` +
+          `UserDashboardLayout read end outcome=${outcome} ` +
             `elapsedMs=${Date.now() - startTime}`,
           correlationId
         ),
@@ -139,10 +139,11 @@ export class UserDashboardLayoutService {
     const startTime = Date.now();
     let outcome: 'success' | 'error' = 'success';
 
-    // Span boundary (write): trace entry into the Prisma upsert operation.
+    // Span boundary (write): trace entry into the Prisma upsert operation. The
+    // request-scoped correlation id (not the raw userId) provides traceability.
     Logger.debug(
       this.formatLogMessage(
-        `UserDashboardLayout write start userId=${userId} items=${layout.length}`,
+        `UserDashboardLayout write start items=${layout.length}`,
         correlationId
       ),
       'UserDashboardLayoutService'
@@ -167,7 +168,7 @@ export class UserDashboardLayoutService {
 
       Logger.error(
         this.formatLogMessage(
-          `Failed to upsert UserDashboardLayout for user ${userId}: ${
+          `Failed to upsert UserDashboardLayout: ${
             error instanceof Error ? error.message : String(error)
           }`,
           correlationId
@@ -193,7 +194,7 @@ export class UserDashboardLayoutService {
       // Span boundary (write): trace exit with resolved outcome and elapsed time.
       Logger.debug(
         this.formatLogMessage(
-          `UserDashboardLayout write end userId=${userId} outcome=${outcome} ` +
+          `UserDashboardLayout write end outcome=${outcome} ` +
             `elapsedMs=${Date.now() - startTime}`,
           correlationId
         ),

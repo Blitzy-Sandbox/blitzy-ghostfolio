@@ -60,6 +60,15 @@ export class GfModuleCatalogComponent {
     this.allModules = this.moduleRegistryService.getAll();
   }
 
+  /**
+   * Action-oriented accessible label for a catalog entry's add button (e.g.
+   * "Add Holdings module"), so assistive technology announces the button's
+   * action rather than relying on the visible module name plus add icon alone.
+   */
+  protected getAddModuleLabel(name: string): string {
+    return $localize`Add ${name} module`;
+  }
+
   protected onAddModule(moduleKey: string): void {
     this.dialogRef.close(moduleKey);
   }

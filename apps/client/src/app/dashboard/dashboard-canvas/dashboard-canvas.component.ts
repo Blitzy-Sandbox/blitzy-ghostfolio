@@ -99,10 +99,12 @@ interface DashboardGridsterItem extends GridsterItemConfig {
  *
  * All grid chrome is styled via the `var(--mat-sys-<token>, <fallback>)` pattern
  * and glyphs use `<ion-icon>` web components (hence `CUSTOM_ELEMENTS_SCHEMA`).
- * Design rationale (module isolation, grid-as-single-source-of-truth, the
- * registry introduction mechanism, the event-driven persistence funnel, token
- * discipline, and the keyboard-accessibility controls) is recorded in
- * `docs/decisions/dashboard-refactor-decisions.md` (D-106).
+ * Design rationale is recorded in
+ * `docs/decisions/dashboard-refactor-decisions.md`: module isolation,
+ * grid-as-single-source-of-truth, the registry introduction mechanism, and the
+ * event-driven persistence funnel (D-008); the `var(--mat-sys-*, <fallback>)`
+ * token discipline (D-006); the enforced 2x2 minimum cell dimensions (D-009);
+ * and the first-visit catalog auto-open over a blank canvas (D-010).
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -217,6 +219,15 @@ export class GfDashboardCanvasComponent implements OnInit {
   /** Resolves the human-readable module title for the header and aria-label. */
   public getModuleName(moduleKey: string): string {
     return this.moduleRegistryService.get(moduleKey)?.name ?? '';
+  }
+
+  /**
+   * Action-oriented accessible label for a module's overflow-menu trigger (e.g.
+   * "Open actions for Holdings"), so assistive technology announces the
+   * button's action rather than only the module name.
+   */
+  public getModuleMenuLabel(moduleKey: string): string {
+    return $localize`Open actions for ${this.getModuleName(moduleKey)}`;
   }
 
   /**

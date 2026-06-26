@@ -15,6 +15,18 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// Scope note (dashboard refactor): the application's route TABLE was collapsed
+// to a single root route `/` in `apps/client/src/app/app.routes.ts` (Rule 5).
+// The route-constant map below is intentionally retained rather than gutted:
+// every remaining member is still consumed as `path` / `routerLink` / `title`
+// metadata by preserved, out-of-scope components and services that AAP § 0.7.2
+// forbids editing (the auth guard, the HTTP-response interceptor, the libs/ui
+// assistant, the holding/account detail dialogs, the footer, admin screens, and
+// the API sitemap generator). Removing those members would break compilation of
+// those out-of-scope files. Members with zero remaining references are pruned
+// (e.g. the former `api` entry); in-scope consumers of these constants
+// (`home-overview`, `home-holdings`) have had their stale route links converted
+// to dashboard-native actions.
 export const internalRoutes = {
   account: {
     path: 'account',
@@ -67,12 +79,6 @@ export const internalRoutes = {
     path: 'accounts',
     routerLink: ['/accounts'],
     title: $localize`Accounts`
-  },
-  api: {
-    excludeFromAssistant: true,
-    path: 'api',
-    routerLink: ['/api'],
-    title: 'Ghostfolio API'
   },
   auth: {
     excludeFromAssistant: true,

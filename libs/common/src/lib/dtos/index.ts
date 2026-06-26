@@ -1,4 +1,4 @@
-import { AuthDeviceDto } from './auth-device.dto';
+import type { AuthDeviceDto } from './auth-device.dto';
 import { CreateAccessDto } from './create-access.dto';
 import { CreateAccountBalanceDto } from './create-account-balance.dto';
 import { CreateAccountWithBalancesDto } from './create-account-with-balances.dto';
@@ -24,8 +24,11 @@ import { UpdateTagDto } from './update-tag.dto';
 import { UpdateUserSettingDto } from './update-user-setting.dto';
 import { UpdateUserDashboardLayoutDto } from './user/update-user-dashboard-layout.dto';
 
+// `AuthDeviceDto` is an interface (a type), so under `isolatedModules` it must
+// be re-exported via `export type` rather than the value-export block below.
+export type { AuthDeviceDto };
+
 export {
-  AuthDeviceDto,
   CreateAccessDto,
   CreateAccountBalanceDto,
   CreateAccountDto,
