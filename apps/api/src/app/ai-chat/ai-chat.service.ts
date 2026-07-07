@@ -142,7 +142,7 @@ export class AiChatService {
    * every chat request and satisfies the AAP § 0.7.3 PII minimization
    * requirement.
    */
-  private static readonly AUTHENTICATED_USER_PLACEHOLDER =
+  public static readonly AUTHENTICATED_USER_PLACEHOLDER =
     '<authenticated-user>';
 
   /**

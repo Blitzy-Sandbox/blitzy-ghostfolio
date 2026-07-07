@@ -1,0 +1,36 @@
+<h2 class="catalog-title" mat-dialog-title i18n>Add a module</h2>
+
+<mat-dialog-content class="catalog-content">
+  <mat-form-field appearance="outline" class="catalog-search">
+    <mat-label i18n>Search modules</mat-label>
+    <mat-icon matPrefix>search</mat-icon>
+    <input
+      [ngModel]="searchTerm()"
+      (ngModelChange)="searchTerm.set($event)"
+      [ngModelOptions]="{ standalone: true }"
+      matInput
+      type="text"
+    />
+  </mat-form-field>
+
+  <mat-action-list class="catalog-list">
+    @for (module of filteredModules(); track module.id) {
+      <button
+        (click)="onAddModule(module)"
+        class="catalog-item"
+        mat-list-item
+        type="button"
+      >
+        <mat-icon matListItemIcon>{{ module.icon || 'widgets' }}</mat-icon>
+        <span matListItemTitle>{{ module.name }}</span>
+        <mat-icon class="catalog-item-add" matListItemMeta>add</mat-icon>
+      </button>
+    } @empty {
+      <p class="catalog-empty" i18n>No modules match your search.</p>
+    }
+  </mat-action-list>
+</mat-dialog-content>
+
+<mat-dialog-actions align="end">
+  <button (click)="onClose()" mat-button type="button" i18n>Close</button>
+</mat-dialog-actions>
