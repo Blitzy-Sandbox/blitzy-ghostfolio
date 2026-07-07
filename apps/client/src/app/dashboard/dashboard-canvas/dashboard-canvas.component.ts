@@ -10,7 +10,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
-import { MatIconModule } from '@angular/material/icon';
+import { IonIcon } from '@ionic/angular/standalone';
 import {
   DisplayGrid,
   Gridster,
@@ -19,6 +19,8 @@ import {
   GridsterItemConfig,
   GridType
 } from 'angular-gridster2';
+import { addIcons } from 'ionicons';
+import { addOutline } from 'ionicons/icons';
 
 import { DashboardLayoutStoreService } from '../dashboard-layout-store.service';
 import { GfModuleCatalogComponent } from '../module-catalog/module-catalog.component';
@@ -70,9 +72,9 @@ import { GfModuleShellComponent } from '../module-shell/module-shell.component';
     GfModuleShellComponent,
     Gridster,
     GridsterItem,
+    IonIcon,
     MatButtonModule,
     MatDialogModule,
-    MatIconModule,
     NgComponentOutlet
   ],
   selector: 'gf-dashboard-canvas',
@@ -138,6 +140,14 @@ export class GfDashboardCanvasComponent implements OnDestroy, OnInit {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly dialog = inject(MatDialog);
+
+  public constructor() {
+    // Register the FAB's ionicons glyph (`add-outline`). Ghostfolio standardized
+    // on ionicons (`<ion-icon>` + `addIcons`) rather than the Material Icons
+    // glyph font (not bundled), so the add-module FAB renders a bundled ionicons
+    // SVG for cohesion with the rest of the app.
+    addIcons({ addOutline });
+  }
 
   public ngOnInit() {
     // Rule 10: hydrate the persisted layout, then auto-open the module catalog

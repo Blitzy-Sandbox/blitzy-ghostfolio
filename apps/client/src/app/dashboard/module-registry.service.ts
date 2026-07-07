@@ -1,4 +1,19 @@
 import { Injectable } from '@angular/core';
+import { addIcons } from 'ionicons';
+import {
+  analyticsOutline,
+  chatbubblesOutline,
+  documentTextOutline,
+  eyeOutline,
+  gitCompareOutline,
+  globeOutline,
+  gridOutline,
+  personCircleOutline,
+  scaleOutline,
+  speedometerOutline,
+  trendingUpOutline,
+  walletOutline
+} from 'ionicons/icons';
 
 import { DashboardModuleDefinition } from './dashboard-module.interface';
 import { GfAiChatModuleComponent } from './modules/ai-chat/ai-chat.component';
@@ -28,7 +43,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfPortfolioOverviewModuleComponent,
     defaultCols: 6,
     defaultRows: 4,
-    icon: 'dashboard',
+    icon: 'grid-outline',
     id: 'portfolio-overview',
     minCols: 2,
     minRows: 2,
@@ -38,7 +53,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfHoldingsModuleComponent,
     defaultCols: 6,
     defaultRows: 6,
-    icon: 'account_balance_wallet',
+    icon: 'wallet-outline',
     id: 'holdings',
     minCols: 2,
     minRows: 2,
@@ -48,7 +63,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfPerformanceModuleComponent,
     defaultCols: 6,
     defaultRows: 4,
-    icon: 'trending_up',
+    icon: 'trending-up-outline',
     id: 'performance',
     minCols: 2,
     minRows: 2,
@@ -58,7 +73,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfSummaryModuleComponent,
     defaultCols: 4,
     defaultRows: 6,
-    icon: 'summarize',
+    icon: 'document-text-outline',
     id: 'summary',
     minCols: 2,
     minRows: 2,
@@ -68,7 +83,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfInvestmentChartModuleComponent,
     defaultCols: 8,
     defaultRows: 4,
-    icon: 'show_chart',
+    icon: 'analytics-outline',
     id: 'investment-chart',
     minCols: 2,
     minRows: 2,
@@ -78,7 +93,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfMarketOverviewModuleComponent,
     defaultCols: 4,
     defaultRows: 3,
-    icon: 'public',
+    icon: 'globe-outline',
     id: 'market-overview',
     minCols: 2,
     minRows: 2,
@@ -88,7 +103,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfWatchlistModuleComponent,
     defaultCols: 4,
     defaultRows: 4,
-    icon: 'visibility',
+    icon: 'eye-outline',
     id: 'watchlist',
     minCols: 2,
     minRows: 2,
@@ -98,7 +113,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfFearAndGreedModuleComponent,
     defaultCols: 3,
     defaultRows: 3,
-    icon: 'speed',
+    icon: 'speedometer-outline',
     id: 'fear-and-greed',
     minCols: 2,
     minRows: 2,
@@ -108,7 +123,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfBenchmarkModuleComponent,
     defaultCols: 6,
     defaultRows: 4,
-    icon: 'compare_arrows',
+    icon: 'git-compare-outline',
     id: 'benchmark',
     minCols: 2,
     minRows: 2,
@@ -118,7 +133,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfRebalancingModuleComponent,
     defaultCols: 6,
     defaultRows: 6,
-    icon: 'balance',
+    icon: 'scale-outline',
     id: 'rebalancing',
     minCols: 2,
     minRows: 2,
@@ -128,7 +143,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfFinancialProfileModuleComponent,
     defaultCols: 5,
     defaultRows: 6,
-    icon: 'account_circle',
+    icon: 'person-circle-outline',
     id: 'financial-profile',
     minCols: 2,
     minRows: 2,
@@ -138,7 +153,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
     component: GfAiChatModuleComponent,
     defaultCols: 4,
     defaultRows: 6,
-    icon: 'chat',
+    icon: 'chatbubbles-outline',
     id: 'ai-chat',
     minCols: 2,
     minRows: 2,
@@ -153,6 +168,30 @@ export class ModuleRegistryService {
   private readonly registry = new Map<string, DashboardModuleDefinition>();
 
   public constructor() {
+    // Register the ionicons glyphs referenced by every module definition's
+    // `icon` field. Ghostfolio standardized on ionicons (`<ion-icon>` +
+    // `addIcons`); the new dashboard chrome renders these names via
+    // `<ion-icon [name]="definition.icon">` in the module shell header and the
+    // module catalog. Registering them here — in the single source of truth for
+    // module types (Rule 3) — guarantees every catalog row and module header
+    // resolves to a bundled SVG glyph (no icon-font/CDN dependency), matching
+    // the app's existing icon system. Component-specific chrome icons (drag
+    // handle, remove, search, add) are registered in their own components.
+    addIcons({
+      analyticsOutline,
+      chatbubblesOutline,
+      documentTextOutline,
+      eyeOutline,
+      gitCompareOutline,
+      globeOutline,
+      gridOutline,
+      personCircleOutline,
+      scaleOutline,
+      speedometerOutline,
+      trendingUpOutline,
+      walletOutline
+    });
+
     MODULE_DEFINITIONS.forEach((definition) => this.register(definition));
   }
 

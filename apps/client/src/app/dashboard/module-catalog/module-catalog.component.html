@@ -13,7 +13,7 @@
       [ngModel]="searchTerm()"
       (ngModelChange)="searchTerm.set($event)"
     />
-    <mat-icon matSuffix>search</mat-icon>
+    <ion-icon matSuffix name="search-outline" />
   </mat-form-field>
 
   @if (filteredModules().length === 0) {
@@ -33,16 +33,20 @@
           (cdkDragEnded)="onModuleDragEnded(module, $event)"
           (click)="onAddModule(module)"
         >
-          <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
+          <ion-icon matListItemIcon [name]="module.icon" />
           <span matListItemTitle>{{ module.name }}</span>
-          <mat-icon class="catalog-item-add" matListItemMeta>add</mat-icon>
+          <ion-icon
+            class="catalog-item-add"
+            matListItemMeta
+            name="add-outline"
+          />
 
           <div
             *cdkDragPreview
             class="catalog-item-drag-preview"
             [attr.data-testid]="'module-catalog-drag-preview-' + module.id"
           >
-            <mat-icon>{{ module.icon }}</mat-icon>
+            <ion-icon [name]="module.icon" />
             <span>{{ module.name }}</span>
           </div>
         </button>

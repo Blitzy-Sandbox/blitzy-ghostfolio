@@ -101,7 +101,7 @@ describe('ModuleRegistryService', () => {
       expect(definition).toBeDefined();
       expect(definition?.id).toBe('ai-chat');
       expect(definition?.name).toBe('AI Chat');
-      expect(definition?.icon).toBe('chat');
+      expect(definition?.icon).toBe('chatbubbles-outline');
     });
 
     it('should resolve the portfolio-overview default geometry', () => {
@@ -140,7 +140,7 @@ describe('ModuleRegistryService', () => {
         component: StubModuleComponent,
         defaultCols: 3,
         defaultRows: 4,
-        icon: 'extension',
+        icon: 'extension-puzzle-outline',
         id: 'custom-module',
         minCols: 3,
         minRows: 4,

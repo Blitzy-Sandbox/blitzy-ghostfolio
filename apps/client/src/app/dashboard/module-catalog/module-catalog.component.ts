@@ -10,9 +10,11 @@ import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { addOutline, searchOutline } from 'ionicons/icons';
 
 import { DashboardLayoutStoreService } from '../dashboard-layout-store.service';
 import { DashboardModuleDefinition } from '../dashboard-module.interface';
@@ -41,10 +43,10 @@ import { ModuleRegistryService } from '../module-registry.service';
   imports: [
     DragDropModule,
     FormsModule,
+    IonIcon,
     MatButtonModule,
     MatDialogModule,
     MatFormFieldModule,
-    MatIconModule,
     MatInputModule,
     MatListModule
   ],
@@ -74,6 +76,16 @@ export class GfModuleCatalogComponent {
     inject<MatDialogRef<GfModuleCatalogComponent>>(MatDialogRef);
   private readonly registry = inject(ModuleRegistryService);
   private readonly store = inject(DashboardLayoutStoreService);
+
+  public constructor() {
+    // Register the catalog's own chrome glyphs: the search-field suffix
+    // (`search-outline`) and the per-row add action (`add-outline`). The 12
+    // per-module leading glyphs bound via `[name]="module.icon"` are registered
+    // centrally by the injected `ModuleRegistryService`, so they resolve as soon
+    // as this component (which injects the registry) is constructed. Ghostfolio
+    // uses ionicons app-wide; the Material Icons glyph font is not bundled.
+    addIcons({ addOutline, searchOutline });
+  }
 
   /**
    * Append the selected module to the grid at the next free position.

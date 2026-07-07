@@ -45,6 +45,14 @@
   right: 1.5rem;
   z-index: 1000;
 
+  // The FAB glyph is an `<ion-icon>` (Ghostfolio's icon system) rather than the
+  // Material Icons glyph font (which is not bundled). ion-icon renders at 1em by
+  // default, so pin it to 1.5rem (24px) to match the standard Material FAB icon
+  // footprint; its color inherits from the FAB via ion-icon's `currentColor`.
+  ion-icon {
+    font-size: 1.5rem;
+  }
+
   &:hover {
     // Rule 7 / D-020: stay within the documented CP1 token set
     // (primary-container / on-primary-container). A darker container fallback
@@ -61,6 +69,23 @@
       --mat-sys-surface-container,
       rgba(255, 255, 255, 0.06)
     );
+  }
+
+  // Dark-mode module-surface override (dark-mode chrome parity).
+  //
+  // angular-gridster2 hardcodes `gridster-item { background: #fff }` in its
+  // library stylesheet. The module shell's body is transparent, so in dark mode
+  // that white default showed through as the module body — a white "island" on
+  // the dark canvas. Override the item surface to the dark surface-container
+  // tone so each module cell reads as a dark card consistent with the dark
+  // canvas, catalog, and FAB. `::ng-deep` is required because `gridster-item` is
+  // a library element outside this component's view encapsulation; the
+  // `:host-context(.theme-dark)` + element selector out-specifies the library's
+  // bare `gridster-item` rule, and light mode is left untouched (the library
+  // default `#fff` still applies there — the intended light design). Rule 7:
+  // the `var(--mat-sys-<token>, <fallback>)` pattern is preserved.
+  ::ng-deep gridster-item {
+    background: var(--mat-sys-surface-container, rgba(255, 255, 255, 0.06));
   }
 
   .gf-dashboard-canvas__add-module {

@@ -9,11 +9,11 @@
       matTooltip="Drag to move"
       type="button"
     >
-      <mat-icon>drag_indicator</mat-icon>
+      <ion-icon name="move-outline" />
     </button>
 
     @if (icon) {
-      <mat-icon class="gf-module-shell__icon">{{ icon }}</mat-icon>
+      <ion-icon class="gf-module-shell__icon" [name]="icon" />
     }
 
     <span class="gf-module-shell__title">{{ title }}</span>
@@ -30,7 +30,7 @@
       type="button"
       (click)="remove.emit()"
     >
-      <mat-icon>close</mat-icon>
+      <ion-icon name="close-outline" />
     </button>
   </header>
 

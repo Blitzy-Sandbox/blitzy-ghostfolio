@@ -65,7 +65,7 @@ describe('GfDashboardCanvasComponent', () => {
 
   const testDefinition: DashboardModuleDefinition = {
     component: TestModuleComponent,
-    icon: 'dashboard',
+    icon: 'grid-outline',
     id: 'portfolio-overview',
     minCols: 2,
     minRows: 2,
@@ -274,14 +274,16 @@ describe('GfDashboardCanvasComponent', () => {
 
     expect(addButton).not.toBeNull();
 
-    // F7: the affordance is an Angular Material FAB (`mat-fab`) that renders a
-    // `mat-icon` "add" glyph — not a raw <button> + inline SVG. Using the
-    // Material component gives the built-in focus-visible ring, ripple, and
-    // elevation for free (AAP § 0.3.2 component mapping).
+    // F7: the affordance is an Angular Material FAB (`mat-fab`) that renders an
+    // `ion-icon` "add-outline" glyph — not a raw <button> + inline SVG. Using
+    // the Material component gives the built-in focus-visible ring, ripple, and
+    // elevation for free (AAP § 0.3.2 component mapping), while the glyph itself
+    // is an Ionicon to match the app-wide icon system (see decision log DL-027;
+    // the Material Icons ligature font is never bundled).
     expect(addButton.classList.contains('mat-mdc-fab')).toBe(true);
-    const addIcon = addButton.querySelector('mat-icon');
+    const addIcon = addButton.querySelector('ion-icon');
     expect(addIcon).not.toBeNull();
-    expect(addIcon?.textContent?.trim()).toBe('add');
+    expect(addIcon?.getAttribute('name')).toBe('add-outline');
 
     addButton.click();
 

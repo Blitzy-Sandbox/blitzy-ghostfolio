@@ -49,6 +49,13 @@
 // module name is easy to reach.
 .catalog-search {
   width: 100%;
+
+  // The trailing search glyph is an `<ion-icon matSuffix>`; ion-icon renders at
+  // 1em by default, so pin it to 1.5rem (24px) to match the Material form-field
+  // suffix icon footprint. Color inherits from the form field via currentColor.
+  ion-icon {
+    font-size: 1.5rem;
+  }
 }
 
 // Empty state shown when the search query matches no registered module. Muted,
@@ -67,7 +74,9 @@
 // (cyan-teal brand) with on-primary-container text, and the icon follows the
 // same accent so the whole row reads as one interactive target. The trailing
 // `.catalog-item-add` icon inherits these colors through the nested
-// `.mat-icon` selector, so it needs no separate rule.
+// `ion-icon` selector, so it needs no separate rule. Ghostfolio standardized
+// on ionicons (`<ion-icon>`), so the leading module glyph and the trailing add
+// glyph are `<ion-icon>` elements colored via `currentColor`.
 .catalog-item {
   color: var(--mat-sys-on-surface, #1a1a1a);
   // Grab cursor signals that the row is draggable (add via drag, Goal 5 /
@@ -75,8 +84,12 @@
   // affordance, not a Material color token, so Rule 7 does not apply.
   cursor: grab;
 
-  .mat-icon {
+  ion-icon {
+    // ion-icon renders at 1em by default; pin it to 1.5rem (24px) so the
+    // leading module glyph and the trailing `add` glyph fill the Material list
+    // icon slot at the footprint the former <mat-icon> occupied.
     color: var(--mat-sys-on-surface-variant, #5f6368);
+    font-size: 1.5rem;
   }
 
   &:hover,
@@ -84,7 +97,7 @@
     background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
     color: var(--mat-sys-on-primary-container, #00504f);
 
-    .mat-icon {
+    ion-icon {
       color: var(--mat-sys-on-primary-container, #00504f);
     }
   }
@@ -113,8 +126,9 @@
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
 
-  .mat-icon {
+  ion-icon {
     color: var(--mat-sys-on-surface-variant, #5f6368);
+    font-size: 1.5rem;
   }
 }
 
@@ -144,7 +158,7 @@
       );
       color: var(--mat-sys-on-primary-container, #6bf7f4);
 
-      .mat-icon {
+      ion-icon {
         color: var(--mat-sys-on-primary-container, #6bf7f4);
       }
     }
@@ -154,7 +168,7 @@
     background-color: var(--mat-sys-surface-container, #2a2a2a);
     color: var(--mat-sys-on-surface, #fff);
 
-    .mat-icon {
+    ion-icon {
       color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
     }
   }

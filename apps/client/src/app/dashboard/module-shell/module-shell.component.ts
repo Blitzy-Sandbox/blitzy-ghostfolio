@@ -6,8 +6,10 @@ import {
   Output
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { IonIcon } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { closeOutline, moveOutline } from 'ionicons/icons';
 
 /**
  * `GfModuleShellComponent` renders the shared, grid-agnostic presentational
@@ -18,15 +20,21 @@ import { MatTooltipModule } from '@angular/material/tooltip';
  *
  * Design-system compliance (AAP § 0.3.2, Decision D-020):
  * - Uses the `gf` selector prefix (`gf-module-shell`).
- * - Header actions are Angular Material `mat-icon-button` + `<mat-icon>` with
- *   `matTooltip` affordances, backed by the three imported Material modules.
+ * - Header actions are Angular Material `mat-icon-button` hosts (Material ripple,
+ *   focus management, ARIA semantics) rendering `<ion-icon>` glyphs with
+ *   `matTooltip` affordances. Ghostfolio standardized on ionicons (`<ion-icon>` +
+ *   `addIcons`) rather than the Material Icons glyph font (which is not bundled),
+ *   so the chrome icons use bundled ionicons SVGs for cohesion with the rest of
+ *   the app; the drag-handle and remove glyphs are registered via `addIcons`
+ *   below, and the leading module glyph (`icon` input) is registered centrally by
+ *   the module registry.
  * - All visual styling lives in the sibling `module-shell.component.scss`, which
  *   applies the mandated `var(--mat-sys-<token>, <fallback>)` pattern (Rule 7).
  *
  * Architectural constraints:
- * - **Rule 1 (isolation):** this component depends only on `@angular/core` and
- *   three `@angular/material/*` modules; it deliberately references nothing from
- *   the grid layer.
+ * - **Rule 1 (isolation):** this component depends only on `@angular/core`, two
+ *   `@angular/material/*` modules, and the Ghostfolio ionicons `IonIcon`; it
+ *   deliberately references nothing from the grid layer.
  * - **Rule 2 (single source of truth):** the shell holds no layout state;
  *   module positions and sizes are owned elsewhere.
  * - **Rule 4 (persistence trigger):** the shell only *emits* the `remove`
@@ -40,7 +48,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
  */
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [MatButtonModule, MatIconModule, MatTooltipModule],
+  imports: [IonIcon, MatButtonModule, MatTooltipModule],
   selector: 'gf-module-shell',
   standalone: true,
   styleUrls: ['./module-shell.component.scss'],
@@ -56,8 +64,10 @@ export class GfModuleShellComponent {
   @Input({ required: true }) public title: string;
 
   /**
-   * Optional Material icon ligature (e.g. `'dashboard'`) shown before the
-   * title. When omitted, the leading icon slot is not rendered.
+   * Optional ionicons glyph name (e.g. `'grid-outline'`) shown before the
+   * title. The name is supplied by the module registry definition and rendered
+   * via `<ion-icon [name]="icon">`; the registry registers all module glyphs
+   * with `addIcons`. When omitted, the leading icon slot is not rendered.
    */
   @Input() public icon?: string;
 
@@ -67,4 +77,12 @@ export class GfModuleShellComponent {
    * subscribes and routes the event to the layout-state owner.
    */
   @Output() public readonly remove = new EventEmitter<void>();
+
+  public constructor() {
+    // Register the two ionicons glyphs this chrome renders directly: the drag
+    // handle (`move-outline`) and the remove action (`close-outline`). The
+    // leading module glyph bound via `[name]="icon"` is registered centrally by
+    // the module registry, so it is available by the time any shell renders.
+    addIcons({ closeOutline, moveOutline });
+  }
 }
