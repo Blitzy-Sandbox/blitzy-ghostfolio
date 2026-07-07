@@ -1,0 +1,73 @@
+// Dashboard canvas grid host styling — Rule 7 (Decision D-020) + host sizing (§0.7.6).
+//
+// The Ghostfolio host theme uses `mat.all-component-themes()`, NOT `mat.theme()`,
+// so the Material 3 `--mat-sys-*` system tokens are NOT generated at runtime and
+// `var(--mat-sys-*, <fallback>)` renders the FALLBACK. Every color below therefore
+// carries a hardcoded cyan-teal brand fallback; a bare `--mat-sys-*` is prohibited.
+// (Same pattern as ../../components/chat-panel/chat-panel.component.scss L126-140.)
+
+:host {
+  display: block;
+  height: 100vh;
+}
+
+.gf-dashboard-canvas__grid {
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+// Best-effort accent for gridster's grid-line overlay shown during drag/resize
+// (DisplayGrid.OnDragAndResize). Class names are gridster internals, reached via
+// ::ng-deep; harmless no-op if the installed version names them differently.
+:host ::ng-deep {
+  .gridster-column,
+  .gridster-row {
+    border-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+  }
+}
+
+// Persistent "add module" affordance, styled as a floating action button.
+.gf-dashboard-canvas__add-module {
+  align-items: center;
+  background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+  border: none;
+  border-radius: 50%;
+  bottom: 1.5rem;
+  box-shadow:
+    0 3px 5px -1px rgba(0, 0, 0, 0.2),
+    0 6px 10px 0 rgba(0, 0, 0, 0.14),
+    0 1px 18px 0 rgba(0, 0, 0, 0.12);
+  color: var(--mat-sys-on-primary-container, #00504f);
+  cursor: pointer;
+  display: flex;
+  height: 3.5rem;
+  justify-content: center;
+  position: fixed;
+  right: 1.5rem;
+  width: 3.5rem;
+  z-index: 1000;
+
+  &:hover {
+    background-color: var(--mat-sys-primary, #00a19f);
+    color: var(--mat-sys-on-primary, #ffffff);
+  }
+}
+
+:host-context(.theme-dark) {
+  .gf-dashboard-canvas__grid {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+  }
+
+  .gf-dashboard-canvas__add-module {
+    background-color: var(
+      --mat-sys-primary-container,
+      rgba(71, 219, 215, 0.16)
+    );
+    color: var(--mat-sys-on-primary-container, #6bf7f4);
+  }
+}

@@ -1,0 +1,40 @@
+<div class="gf-module-shell">
+  <header class="gf-module-shell__header">
+    <button
+      aria-label="Drag to move"
+      class="gf-module-drag-handle"
+      i18n-aria-label
+      i18n-matTooltip
+      mat-icon-button
+      matTooltip="Drag to move"
+      type="button"
+    >
+      <mat-icon>drag_indicator</mat-icon>
+    </button>
+
+    @if (icon) {
+      <mat-icon class="gf-module-shell__icon">{{ icon }}</mat-icon>
+    }
+
+    <span class="gf-module-shell__title">{{ title }}</span>
+
+    <span class="gf-module-shell__spacer"></span>
+
+    <button
+      aria-label="Remove module"
+      class="gf-module-shell__remove"
+      i18n-aria-label
+      i18n-matTooltip
+      mat-icon-button
+      matTooltip="Remove module"
+      type="button"
+      (click)="remove.emit()"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </header>
+
+  <div class="gf-module-shell__body">
+    <ng-content></ng-content>
+  </div>
+</div>

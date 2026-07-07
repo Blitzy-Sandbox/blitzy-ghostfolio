@@ -54,6 +54,7 @@ Ghostfolio is for you if you are...
 - ✅ Dark Mode
 - ✅ Zen Mode
 - ✅ Progressive Web App (PWA) with a mobile-first design
+- ✅ Customizable dashboard: compose your workspace by dragging and dropping feature modules onto a grid
 
 <div align="center">
 
@@ -71,7 +72,18 @@ The backend is based on [NestJS](https://nestjs.com) using [PostgreSQL](https://
 
 ### Frontend
 
-The frontend is built with [Angular](https://angular.dev) and uses [Angular Material](https://material.angular.io) with utility classes from [Bootstrap](https://getbootstrap.com).
+The frontend is built with [Angular](https://angular.dev) and uses [Angular Material](https://material.angular.io) with utility classes from [Bootstrap](https://getbootstrap.com). It uses [angular-gridster2](https://github.com/tiberiuzuld/angular-gridster2) as the drag-and-drop engine for the customizable dashboard grid and Angular's `NgComponentOutlet` for registry-driven, dynamic rendering of dashboard modules.
+
+## Dashboard Architecture
+
+Ghostfolio presents a single, user-composable dashboard rather than a fixed set of navigation screens. You arrange the features you care about as modules on one canvas, and your personal layout is saved to your account. The dashboard is composed from the following building blocks.
+
+- **Single canvas at `/`**: The application renders a single `GfDashboardCanvasComponent` at the root route. The former per-screen routes collapse into this canvas; the Angular Router is preserved but reduced to a single `/` route.
+- **Module registry (plugin pattern)**: A central `ModuleRegistryService` registers the available module types together with their metadata (display name, component reference, icon, and minimum cell dimensions). Adding a new module type is done only through the registry.
+- **Grid modules**: Every feature is a self-contained, independently placeable module — portfolio overview, holdings, performance, summary, investment chart, market overview, watchlist, fear & greed, benchmark, rebalancing, financial profile, and the AI chat panel. Each module wraps an existing feature component and reuses the existing data services unchanged, so the behavior of every feature is preserved.
+- **Grid specification**: The canvas is a 12-column grid with a fixed row height. Modules can be dragged and resized with push behavior and have a minimum size of 2×2 cells.
+- **Module catalog**: A searchable catalog (an overlay or sidebar panel) lists all registered modules. You add a module via drag or click and remove it via an action in the module header. On a first visit, when no saved layout exists, the catalog opens automatically on a blank canvas.
+- **Per-user layout persistence**: Each user's arrangement is persisted through the JWT-protected `GET /api/v1/user/layout` and `PATCH /api/v1/user/layout` endpoints and stored in the `UserDashboardLayout` table (JSONB, one-to-one with `User`). Saves are debounced (~500 ms) and triggered only by grid events such as drag, resize, add, and remove.
 
 ## Self-hosting
 

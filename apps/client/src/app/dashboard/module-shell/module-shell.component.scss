@@ -1,0 +1,73 @@
+// Grid-module chrome styling for GfModuleShellComponent (Rule 7, AAP § 0.3.3).
+//
+// The Ghostfolio host theme uses `mat.all-component-themes()` — NOT
+// `mat.theme()` — so the `--mat-sys-*` system tokens are NOT generated at
+// runtime and `var(--mat-sys-*, <fallback>)` renders the FALLBACK value.
+// Every color below therefore carries a hardcoded fallback (a bare
+// `--mat-sys-*` is prohibited). Primary-brand fallbacks use the Ghostfolio
+// cyan-teal palette (`--gf-theme-primary-500: #36cfcc`; 60 = #00a19f,
+// 80 = #47dbd7, 90 = #6bf7f4), matching
+// ../../components/chat-panel/chat-panel.component.scss (L126-140).
+
+:host {
+  display: block;
+  height: 100%;
+}
+
+.gf-module-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.gf-module-shell__header {
+  align-items: center;
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.gf-module-drag-handle {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  cursor: move;
+
+  &:active,
+  &:hover {
+    background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+    color: var(--mat-sys-on-primary-container, #00504f);
+  }
+}
+
+.gf-module-shell__icon {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  flex-shrink: 0;
+}
+
+.gf-module-shell__title {
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  font-size: 0.875rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gf-module-shell__spacer {
+  flex: 1 1 auto;
+}
+
+.gf-module-shell__remove {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  flex-shrink: 0;
+}
+
+.gf-module-shell__body {
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}

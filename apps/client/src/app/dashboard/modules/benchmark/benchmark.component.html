@@ -1,0 +1,12 @@
+<gf-benchmark-comparator
+  class="h-100"
+  [benchmark]="benchmark"
+  [benchmarkDataItems]="benchmarkDataItems"
+  [benchmarks]="benchmarks"
+  [colorScheme]="user?.settings?.colorScheme"
+  [isLoading]="isLoading"
+  [locale]="user?.settings?.locale"
+  [performanceDataItems]="performanceDataItemsInPercentage"
+  [user]="user"
+  (benchmarkChanged)="onChangeBenchmark($event)"
+/>
