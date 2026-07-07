@@ -1,0 +1,43 @@
+<!--
+  Root single-canvas grid host template for GfDashboardCanvasComponent.
+
+  Renders one angular-gridster2 grid (12-column, constant-px rows — see the
+  component's LOCKED `options`) over the store's canonical item signal (Rule 2).
+  Each grid item is framed by the shared module-shell chrome and mounts its
+  wrapped feature component dynamically via NgComponentOutlet, resolving the
+  component Type from the module registry by module-type key (Rule 3). The
+  floating action button opens the module catalog for returning users; first
+  visits auto-open it from ngOnInit (Rule 10).
+
+  Only symbols already imported by the component are used here (Gridster,
+  GridsterItem, GfModuleShellComponent, NgComponentOutlet); chrome styling and
+  the FAB affordance are defined in the sibling SCSS using the mandated
+  var(--mat-sys-*, <fallback>) pattern (Rule 7).
+-->
+<gridster class="gf-dashboard-canvas__grid" [options]="options">
+  @for (item of store.items(); track item) {
+    <gridster-item [item]="item">
+      @if (registry.resolve(item.type); as definition) {
+        <gf-module-shell
+          [icon]="definition.icon"
+          [title]="definition.name"
+          (remove)="onRemove(item)"
+        >
+          <ng-container
+            *ngComponentOutlet="definition.component"
+          ></ng-container>
+        </gf-module-shell>
+      }
+    </gridster-item>
+  }
+</gridster>
+
+<button
+  aria-label="Add module"
+  class="gf-dashboard-canvas__add-module"
+  i18n-aria-label
+  type="button"
+  (click)="openCatalog()"
+>
+  +
+</button>

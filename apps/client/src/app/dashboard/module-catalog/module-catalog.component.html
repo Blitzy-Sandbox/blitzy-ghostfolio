@@ -1,36 +1,44 @@
-<h2 class="catalog-title" mat-dialog-title i18n>Add a module</h2>
+<h1 class="catalog-title" i18n mat-dialog-title>Add a module</h1>
 
 <mat-dialog-content class="catalog-content">
   <mat-form-field appearance="outline" class="catalog-search">
     <mat-label i18n>Search modules</mat-label>
-    <mat-icon matPrefix>search</mat-icon>
     <input
+      autocomplete="off"
+      data-testid="module-catalog-search"
+      i18n-placeholder
+      matInput
+      placeholder="Search by name"
+      type="text"
       [ngModel]="searchTerm()"
       (ngModelChange)="searchTerm.set($event)"
-      [ngModelOptions]="{ standalone: true }"
-      matInput
-      type="text"
     />
+    <mat-icon matSuffix>search</mat-icon>
   </mat-form-field>
 
-  <mat-action-list class="catalog-list">
-    @for (module of filteredModules(); track module.id) {
-      <button
-        (click)="onAddModule(module)"
-        class="catalog-item"
-        mat-list-item
-        type="button"
-      >
-        <mat-icon matListItemIcon>{{ module.icon || 'widgets' }}</mat-icon>
-        <span matListItemTitle>{{ module.name }}</span>
-        <mat-icon class="catalog-item-add" matListItemMeta>add</mat-icon>
-      </button>
-    } @empty {
-      <p class="catalog-empty" i18n>No modules match your search.</p>
-    }
-  </mat-action-list>
+  @if (filteredModules().length === 0) {
+    <p class="catalog-empty" data-testid="module-catalog-empty" i18n>
+      No modules match your search.
+    </p>
+  } @else {
+    <mat-action-list class="catalog-list" data-testid="module-catalog-list">
+      @for (module of filteredModules(); track module.id) {
+        <button
+          class="catalog-item"
+          mat-list-item
+          type="button"
+          [attr.data-testid]="'module-catalog-item-' + module.id"
+          (click)="onAddModule(module)"
+        >
+          <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
+          <span matListItemTitle>{{ module.name }}</span>
+          <mat-icon class="catalog-item-add" matListItemMeta>add</mat-icon>
+        </button>
+      }
+    </mat-action-list>
+  }
 </mat-dialog-content>
 
 <mat-dialog-actions align="end">
-  <button (click)="onClose()" mat-button type="button" i18n>Close</button>
+  <button i18n mat-button type="button" (click)="onClose()">Close</button>
 </mat-dialog-actions>
