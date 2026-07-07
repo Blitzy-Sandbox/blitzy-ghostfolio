@@ -1,3 +1,5 @@
+import { DASHBOARD_MODULE_TYPES } from '@ghostfolio/common/interfaces';
+
 // Initializes the global `$localize` function used by Angular i18n at runtime.
 // `ModuleRegistryService` statically imports all 12 `modules/*` wrappers, whose
 // transitive feature components (e.g. `chat-panel.component.ts`) declare
@@ -61,6 +63,17 @@ describe('ModuleRegistryService', () => {
         expect(ids).toContain(id);
       });
       expect([...ids].sort()).toEqual([...EXPECTED_IDS].sort());
+    });
+
+    it('should exactly match the shared DASHBOARD_MODULE_TYPES whitelist consumed by the server DTO (CWE-20 drift guard)', () => {
+      const ids = service.list().map((definition) => definition.id);
+
+      // The server DTO validates each PATCH /api/v1/user/layout item `type`
+      // with `@IsIn([...DASHBOARD_MODULE_TYPES])`. If the client registry and
+      // that shared whitelist ever drift, a module addable on the client would
+      // be rejected with HTTP 400 on save, or an unknown persisted `type` would
+      // render a blank grid cell. Pinning both to the same set prevents that.
+      expect([...ids].sort()).toEqual([...DASHBOARD_MODULE_TYPES].sort());
     });
 
     it('should provide a component Type and a display name for every definition (NgComponentOutlet contract)', () => {

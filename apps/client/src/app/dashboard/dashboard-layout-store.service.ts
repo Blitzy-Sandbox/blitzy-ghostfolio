@@ -163,6 +163,25 @@ export class DashboardLayoutStoreService {
   }
 
   /**
+   * Publishes an in-place grid mutation to signal consumers WITHOUT scheduling
+   * persistence. This is the non-persisting counterpart to {@link syncFromGrid}
+   * and exists specifically for gridster's `itemInitCallback`, which fires as
+   * each grid item is initialized during first render / hydration.
+   *
+   * Rule 4 requires layout persistence to be triggered EXCLUSIVELY by genuine
+   * grid state-change events (drag, resize, add, remove). Item initialization
+   * is neither — it is part of rendering a layout the store already holds — so
+   * routing it through {@link syncFromGrid} would schedule a spurious debounced
+   * `PATCH`, re-saving an unchanged layout on every page load and churning
+   * `updatedAt` for returning users. This method therefore refreshes the signal
+   * (so any position gridster resolved at init is reflected to consumers)
+   * without marking the layout dirty or touching the persistence pipeline.
+   */
+  public publishFromGridWithoutPersist(): void {
+    this.itemsSignal.set([...this.itemsSignal()]);
+  }
+
+  /**
    * Removes a module from the canvas and schedules persistence (Rule 4). The
    * canvas maps the module-shell remove action to this method, passing the
    * exact item reference it is currently rendering so identity-based removal

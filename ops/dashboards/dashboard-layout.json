@@ -122,15 +122,6 @@
                 "value": { "mode": "fixed", "fixedColor": "red" }
               }
             ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "unauthorized" },
-            "properties": [
-              {
-                "id": "color",
-                "value": { "mode": "fixed", "fixedColor": "orange" }
-              }
-            ]
           }
         ]
       },
@@ -188,7 +179,7 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Error Rate (incl. 401 unauthorized)",
+      "title": "Error Rate",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
       "fieldConfig": {
@@ -210,7 +201,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(dashboard_layout_requests_total{outcome=~\"error|unauthorized\"}[5m])) / clamp_min(sum(rate(dashboard_layout_requests_total[5m])), 1e-9)",
+          "expr": "sum(rate(dashboard_layout_requests_total{outcome=\"error\"}[5m])) / clamp_min(sum(rate(dashboard_layout_requests_total[5m])), 1e-9)",
           "legendFormat": "error rate"
         }
       ],

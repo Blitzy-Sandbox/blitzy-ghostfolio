@@ -219,3 +219,11 @@ export {
   WatchlistResponse,
   XRayRulesSettings
 };
+
+// Runtime value re-export: `DASHBOARD_MODULE_TYPES` is a runtime constant (the
+// shared module-type whitelist consumed by the server layout DTO's `@IsIn`
+// validation and the client registry drift-guard spec), so it is re-exported
+// with a value `export` rather than through the type-only block above; the
+// companion union type is re-exported with `export type`.
+export { DASHBOARD_MODULE_TYPES } from './dashboard-module-type';
+export type { DashboardModuleType } from './dashboard-module-type';

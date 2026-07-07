@@ -79,6 +79,7 @@ describe('GfDashboardCanvasComponent', () => {
       flush: jest.fn(),
       hydrate: jest.fn(() => of(true)),
       items: itemsSignal,
+      publishFromGridWithoutPersist: jest.fn(),
       removeItem: jest.fn(),
       syncFromGrid: jest.fn()
     };
@@ -218,22 +219,30 @@ describe('GfDashboardCanvasComponent', () => {
     expect(validate({ cols: 6, rows: 4 })).toBe(true);
   });
 
-  it('should route all grid-engine events to the store (Rules 2/4)', () => {
+  it('should persist only on drag/resize/remove and route item-init to the non-persisting path (Rules 2/4)', () => {
     // Render so the gridster grid initializes and tears down cleanly (see the
     // "should create" test for the NG0950 required-input rationale), then clear
-    // any incidental store calls made during init so the assertion below counts
-    // ONLY the four grid-engine callbacks invoked directly by this test.
+    // any incidental store calls made during init so the assertions below count
+    // ONLY the grid-engine callbacks invoked directly by this test.
     fixture.detectChanges();
     storeMock.syncFromGrid.mockClear();
+    storeMock.publishFromGridWithoutPersist.mockClear();
 
     const options = (component as any).options;
 
     options.itemChangeCallback();
     options.itemResizeCallback();
-    options.itemInitCallback();
     options.itemRemovedCallback();
+    options.itemInitCallback();
 
-    expect(storeMock.syncFromGrid).toHaveBeenCalledTimes(4);
+    // Rule 4: persistence is scheduled EXCLUSIVELY by genuine state-change
+    // events (drag/resize/remove), which route to the store's persisting
+    // syncFromGrid(). Item initialization/hydration is NOT a state change, so
+    // it must route to publishFromGridWithoutPersist() (signal refresh only, no
+    // debounced PATCH) — otherwise a returning user re-saves an unchanged
+    // layout on every render (F1).
+    expect(storeMock.syncFromGrid).toHaveBeenCalledTimes(3);
+    expect(storeMock.publishFromGridWithoutPersist).toHaveBeenCalledTimes(1);
   });
 
   it('should remove an item through the store (Rule 4)', () => {

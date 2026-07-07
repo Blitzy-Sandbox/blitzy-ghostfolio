@@ -92,9 +92,12 @@ export class GfDashboardCanvasComponent implements OnDestroy, OnInit {
   //  - Rule 6 minimum 2x2 is enforced redundantly: a global item floor
   //    (minItemCols/minItemRows), per-item minimums carried on each grid item
   //    by the store, AND itemValidateCallback rejecting anything below 2x2.
-  //  - Rules 2/4: every grid-engine event routes to the store, which is the
-  //    single source of truth and owns the debounced persistence. Module
-  //    components never persist directly.
+  //  - Rules 2/4: drag/resize/remove route to the store's syncFromGrid(),
+  //    which is the single source of truth and owns the debounced persistence;
+  //    module components never persist directly. itemInitCallback is the sole
+  //    exception: initialization/hydration is NOT a state-change event, so it
+  //    routes to publishFromGridWithoutPersist() (signal refresh only, no
+  //    PATCH) to satisfy Rule 4 (persist EXCLUSIVELY on drag/resize/add/remove).
   //  - angular-gridster2 v21 mapping (verified against the installed
   //    node_modules types): the grid component is `Gridster` (selector
   //    `gridster`), the item component is `GridsterItem` (selector
@@ -113,7 +116,7 @@ export class GfDashboardCanvasComponent implements OnDestroy, OnInit {
     fixedRowHeight: 40,
     gridType: GridType.VerticalFixed,
     itemChangeCallback: () => this.store.syncFromGrid(),
-    itemInitCallback: () => this.store.syncFromGrid(),
+    itemInitCallback: () => this.store.publishFromGridWithoutPersist(),
     itemRemovedCallback: () => this.store.syncFromGrid(),
     itemResizeCallback: () => this.store.syncFromGrid(),
     itemValidateCallback: (item: GridsterItemConfig) =>

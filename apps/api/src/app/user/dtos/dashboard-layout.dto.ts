@@ -1,7 +1,10 @@
+import { DASHBOARD_MODULE_TYPES } from '@ghostfolio/common/interfaces';
+
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -68,14 +71,20 @@ const DASHBOARD_LAYOUT_MAX_ITEMS = 100;
  * complementing the client-side gridster `minItemCols`/`minItemRows` +
  * `itemValidateCallback` enforcement.
  *
- * Security (CWE-20): `type` is additionally constrained with `@IsNotEmpty()`
- * and `@MaxLength(MODULE_TYPE_MAX_LENGTH)` so it can never be an empty or
- * unbounded free-form string, closing the oversized-string payload vector
- * while the numeric grid fields keep their existing `@Min` bounds.
+ * Security (CWE-20 — Improper Input Validation): `type` is whitelisted with
+ * `@IsIn([...DASHBOARD_MODULE_TYPES])` against the shared module-type contract
+ * from `@ghostfolio/common/interfaces`, so only a registered module-type key is
+ * accepted; an unknown or adversarial `type` is rejected with HTTP 400 at the
+ * `ValidationPipe` boundary rather than being persisted and later rendering as
+ * a blank grid cell the client registry cannot resolve. `@IsNotEmpty()` and
+ * `@MaxLength(MODULE_TYPE_MAX_LENGTH)` remain as defense-in-depth (an empty or
+ * oversized string is rejected even before the whitelist check), while the
+ * numeric grid fields keep their existing `@Min` bounds.
  */
 export class DashboardLayoutItemDto {
   @IsString()
   @IsNotEmpty()
+  @IsIn([...DASHBOARD_MODULE_TYPES])
   @MaxLength(MODULE_TYPE_MAX_LENGTH)
   type: string;
 
