@@ -136,6 +136,15 @@
 // catalog inherits the Ghostfolio brand palette in dark mode: a dark surface,
 // muted white text, and the cyan-teal tone 80/90 accent on hover/focus.
 :host-context(.theme-dark) {
+  // Catalog heading text must flip to the light on-surface tone in dark mode.
+  // Without this override it keeps its light-theme #1a1a1a fallback and renders
+  // (near-)invisibly on the dark surface (QA Issue 2 — dark theme). Mirrors the
+  // `.catalog-item` on-surface dark treatment below (same #fff fallback), so the
+  // whole catalog reads as one dark surface with legible white body text.
+  .catalog-title {
+    color: var(--mat-sys-on-surface, #fff);
+  }
+
   .catalog-content {
     background-color: var(
       --mat-sys-surface-container,

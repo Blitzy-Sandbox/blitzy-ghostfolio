@@ -10,6 +10,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { IonIcon } from '@ionic/angular/standalone';
 import {
   DisplayGrid,
@@ -75,6 +76,7 @@ import { GfModuleShellComponent } from '../module-shell/module-shell.component';
     IonIcon,
     MatButtonModule,
     MatDialogModule,
+    MatProgressBarModule,
     NgComponentOutlet
   ],
   selector: 'gf-dashboard-canvas',

@@ -57,6 +57,7 @@ describe('GfDashboardCanvasComponent', () => {
   let component: GfDashboardCanvasComponent;
   let fixture: ComponentFixture<GfDashboardCanvasComponent>;
   let itemsSignal: WritableSignal<GridsterItemConfig[]>;
+  let loadingSignal: WritableSignal<boolean>;
   // Test doubles are typed `any` (standard for spec test doubles) so partial
   // shapes and jest-mock helpers (mockReturnValue) are ergonomic.
   let storeMock: any;
@@ -74,11 +75,15 @@ describe('GfDashboardCanvasComponent', () => {
 
   beforeEach(async () => {
     itemsSignal = signal<GridsterItemConfig[]>([]);
+    // The canvas template reads `store.loading()` to gate the layout-fetch
+    // MatProgressBar (F-2); back it with a writable signal the tests can flip.
+    loadingSignal = signal<boolean>(false);
 
     storeMock = {
       flush: jest.fn(),
       hydrate: jest.fn(() => of(true)),
       items: itemsSignal,
+      loading: loadingSignal,
       publishFromGridWithoutPersist: jest.fn(),
       removeItem: jest.fn(),
       syncFromGrid: jest.fn()
@@ -299,5 +304,33 @@ describe('GfDashboardCanvasComponent', () => {
     fixture.destroy();
 
     expect(storeMock.flush).toHaveBeenCalledTimes(1);
+  });
+
+  it('should render the layout-fetch loading indicator only while the store is loading (F-2, §0.3.2)', () => {
+    // A returning user hydrates a saved layout (catalog stays closed); the
+    // loading flag is what gates the layout-fetch MatProgressBar, so drive it
+    // directly rather than through the mocked hydrate() observable.
+    storeMock.hydrate.mockReturnValue(of(true));
+    loadingSignal.set(true);
+
+    fixture.detectChanges();
+
+    // While loading: the indeterminate MatProgressBar renders at the top of the
+    // canvas (AAP § 0.3.2 hydration feedback), keyed by its dashboard class.
+    const loadingBar: HTMLElement = fixture.nativeElement.querySelector(
+      '.gf-dashboard-canvas__loading'
+    );
+    expect(loadingBar).not.toBeNull();
+    expect(loadingBar.tagName.toLowerCase()).toBe('mat-progress-bar');
+    expect(loadingBar.getAttribute('mode')).toBe('indeterminate');
+
+    // Once the GET settles the store lowers `loading`, so the bar disappears
+    // and the canvas shows the hydrated grid without a lingering indicator.
+    loadingSignal.set(false);
+    fixture.detectChanges();
+
+    expect(
+      fixture.nativeElement.querySelector('.gf-dashboard-canvas__loading')
+    ).toBeNull();
   });
 });

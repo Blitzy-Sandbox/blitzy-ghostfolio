@@ -1,3 +1,20 @@
+<!--
+  Layout-fetch loading indicator (F-2, AAP § 0.3.2 "Loading state (layout
+  fetch) | MatProgressBar | indeterminate | Hydration feedback"). The store
+  raises `loading` while `GET /api/v1/user/layout` is in flight and lowers it
+  when the request settles, so a slow-network hydration shows a determinate-free
+  progress bar instead of an unindicated blank canvas. Rendered above the grid
+  and pinned to the top of the canvas via `.gf-dashboard-canvas__loading`.
+-->
+@if (store.loading()) {
+  <mat-progress-bar
+    aria-label="Loading dashboard layout"
+    class="gf-dashboard-canvas__loading"
+    i18n-aria-label="@@dashboardCanvasLoadingLayout"
+    mode="indeterminate"
+  />
+}
+
 <gridster class="gf-dashboard-canvas__grid" [options]="options">
   @for (item of store.items(); track item) {
     <gridster-item [item]="item">

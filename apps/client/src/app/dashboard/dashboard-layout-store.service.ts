@@ -10,7 +10,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { GridsterItemConfig } from 'angular-gridster2';
 import { Observable, Subject } from 'rxjs';
-import { debounceTime, map } from 'rxjs/operators';
+import { debounceTime, finalize, map } from 'rxjs/operators';
 
 import { DashboardLayoutService } from './dashboard-layout.service';
 
@@ -83,6 +83,14 @@ export class DashboardLayoutStoreService {
   private readonly dashboardLayoutService = inject(DashboardLayoutService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly itemsSignal = signal<DashboardGridItem[]>([]);
+  /**
+   * `true` while the initial `GET /api/v1/user/layout` hydration request is in
+   * flight. Backs the canvas's layout-fetch loading indicator (a
+   * `MatProgressBar`), the affordance AAP § 0.3.2 anticipates for hydration
+   * feedback. Set on entry to {@link hydrate} and cleared in that observable's
+   * `finalize` (so it is reset on success, error, or unsubscribe).
+   */
+  private readonly loadingSignal = signal<boolean>(false);
   private readonly persistTrigger$ = new Subject<void>();
 
   /**
@@ -94,6 +102,26 @@ export class DashboardLayoutStoreService {
   private hasPendingChange = false;
 
   /**
+   * Serialized snapshot of the layout as the server currently has it — seeded by
+   * {@link hydrate} to the freshly loaded layout and advanced by
+   * {@link persistNow} on a successful save. It is the change-detection baseline
+   * that makes persistence fire EXCLUSIVELY on genuine grid state changes
+   * (Rule 4, AAP § 0.7.2).
+   *
+   * Rationale (fixes the hydration write-amplification, QA F-1): `angular-
+   * gridster2` fires `itemChangeCallback` not only for user drags/resizes but
+   * ALSO while it lays out the hydrated grid on load and whenever it reflows
+   * (e.g. as asynchronous wrapped-module data arrives). Those callbacks carry
+   * the SAME geometry the layout was hydrated with, so routing every one
+   * straight to a debounced PATCH re-saved an unchanged layout on every page
+   * load (churning `updatedAt`, up to ~6 redundant writes per load).
+   * {@link syncFromGrid} now schedules a persist only when the serialized
+   * layout actually differs from this baseline, so hydration/reflow are inert
+   * while real edits (which change `x`/`y`/`cols`/`rows`) still persist.
+   */
+  private lastPersistedLayoutSnapshot: string | null = null;
+
+  /**
    * Read-only view of the canonical grid items for the canvas to iterate and
    * bind to `<gridster-item [item]="...">`. Consumers MUST NOT mutate the
    * array or its items directly — all changes flow through {@link addItem},
@@ -102,6 +130,14 @@ export class DashboardLayoutStoreService {
    * reads it (field initializers run in declaration order).
    */
   public readonly items = this.itemsSignal.asReadonly();
+
+  /**
+   * Read-only view of {@link loadingSignal} for the canvas to bind its
+   * layout-fetch loading indicator to (`@if (store.loading())`). Declared after
+   * `loadingSignal` because the initializer eagerly reads it (field
+   * initializers run in declaration order).
+   */
+  public readonly loading = this.loadingSignal.asReadonly();
 
   public constructor() {
     // Single debounced persistence pipeline: every scheduled grid event pushes
@@ -150,15 +186,34 @@ export class DashboardLayoutStoreService {
    * saved layout (the canvas renders a blank grid and auto-opens the module
    * catalog, Rule 10). Hydration MUST NOT schedule a persist (Rule 4), so a
    * freshly loaded layout is never immediately re-saved.
+   *
+   * While the `GET /api/v1/user/layout` request is in flight, {@link loading}
+   * is `true` so the canvas can render a layout-fetch loading indicator
+   * (AAP § 0.3.2); it is cleared when the request settles (success, error, or
+   * unsubscribe).
    */
   public hydrate(): Observable<boolean> {
+    // F-2: raise the loading flag before the GET and lower it in `finalize`
+    // (fires on success, error, or unsubscribe) so the canvas shows a
+    // MatProgressBar during hydration (AAP § 0.3.2).
+    this.loadingSignal.set(true);
+
     return this.dashboardLayoutService.get().pipe(
       map((layout) => {
         const items = layout?.items ?? [];
         this.itemsSignal.set(items.map((item) => this.toGridsterItem(item)));
+        // Seed the persistence baseline to the freshly hydrated layout so the
+        // `itemChangeCallback` gridster fires while laying out (and later
+        // reflowing) this exact layout is recognized as "no change" and does
+        // NOT schedule a persist (Rule 4, AAP § 0.7.2 — hydration must not
+        // re-save). Genuine later edits change `x`/`y`/`cols`/`rows` and so
+        // diverge from this baseline. Hydration itself still never calls
+        // schedulePersist() (fixes the hydration write-amplification, QA F-1).
+        this.lastPersistedLayoutSnapshot = this.serializeLayout();
 
         return items.length > 0;
-      })
+      }),
+      finalize(() => this.loadingSignal.set(false))
     );
   }
 
@@ -196,26 +251,43 @@ export class DashboardLayoutStoreService {
 
   /**
    * Publishes an in-place grid mutation to signal consumers and schedules
-   * persistence (Rule 4). Called by the canvas from gridster's
-   * `itemChangeCallback` / `itemResizeCallback`.
+   * persistence ONLY when the layout actually changed (Rule 4). Called by the
+   * canvas from gridster's `itemChangeCallback` / `itemResizeCallback` /
+   * `itemRemovedCallback`.
    *
    * gridster mutates the bound item objects in place (updating `x`/`y`/`cols`/
    * `rows` during drag/resize), so a new ARRAY reference is published to
    * notify signal consumers while the SAME item object references are retained
    * — gridster keeps its two-way binding to those exact objects, and removal
    * by reference in {@link removeItem} continues to work.
+   *
+   * Persistence guard (Rule 4, AAP § 0.7.2, QA F-1): gridster fires
+   * `itemChangeCallback` not only for user drags/resizes but ALSO while it lays
+   * out the hydrated grid on load and whenever it reflows (e.g. as asynchronous
+   * wrapped-module data arrives). Those callbacks carry the geometry the layout
+   * was hydrated/last-saved with, so persisting unconditionally re-saved an
+   * unchanged layout on every load. This method therefore schedules a persist
+   * only when the serialized layout diverges from {@link lastPersistedLayoutSnapshot}:
+   * hydration/reflow are inert (identical geometry), while a genuine edit
+   * (changed `x`/`y`/`cols`/`rows`) diverges and persists.
    */
   public syncFromGrid(): void {
     this.itemsSignal.set([...this.itemsSignal()]);
-    this.schedulePersist();
+
+    if (this.serializeLayout() !== this.lastPersistedLayoutSnapshot) {
+      this.schedulePersist();
+    }
   }
 
   /**
    * Sends the current layout to the server. Clears the pending flag optimistically
-   * so concurrent grid events schedule a fresh save, and re-raises it on failure
-   * so the change is retried on the next grid event or flush. HTTP errors are
-   * swallowed here; surfacing them to the user (e.g. a `MatSnackBar`) is the
-   * canvas/shell's concern, not the store's.
+   * so concurrent grid events schedule a fresh save, advances the persistence
+   * baseline ({@link lastPersistedLayoutSnapshot}) on success so later
+   * hydration/reflow callbacks with the same geometry stay inert, and re-raises
+   * the pending flag on failure (leaving the baseline unchanged) so the change
+   * is retried on the next grid event or flush. HTTP errors are swallowed here;
+   * surfacing them to the user (e.g. a `MatSnackBar`) is the canvas/shell's
+   * concern, not the store's.
    */
   private persistNow(): void {
     if (!this.hasPendingChange) {
@@ -223,13 +295,23 @@ export class DashboardLayoutStoreService {
     }
 
     this.hasPendingChange = false;
-    this.dashboardLayoutService
-      .patch({ items: this.toLayoutItems() })
-      .subscribe({
-        error: () => {
-          this.hasPendingChange = true;
-        }
-      });
+    // Build the payload once so the body sent to the server and the snapshot
+    // recorded as the new baseline are guaranteed identical.
+    const items = this.toLayoutItems();
+    const snapshot = JSON.stringify(items);
+    this.dashboardLayoutService.patch({ items }).subscribe({
+      next: () => {
+        // The server now holds this layout — adopt it as the change-detection
+        // baseline so subsequent identical grid callbacks do not re-persist
+        // (Rule 4).
+        this.lastPersistedLayoutSnapshot = snapshot;
+      },
+      error: () => {
+        // Leave the baseline unchanged (the server still holds the previous
+        // layout) and re-flag so a later grid event or flush retries the save.
+        this.hasPendingChange = true;
+      }
+    });
   }
 
   /**
@@ -241,6 +323,19 @@ export class DashboardLayoutStoreService {
   private schedulePersist(): void {
     this.hasPendingChange = true;
     this.persistTrigger$.next();
+  }
+
+  /**
+   * Serializes the current layout to its JSON persistence shape for
+   * change detection. Uses the same {@link toLayoutItems} projection sent in
+   * the `PATCH` body, so the resulting string is directly comparable to
+   * {@link lastPersistedLayoutSnapshot}. The projection emits a stable key
+   * order and gridster mutates only `x`/`y`/`cols`/`rows` on reflow (never the
+   * `type` / min-dimension fields), so two callbacks describing the same
+   * geometry always produce byte-identical strings.
+   */
+  private serializeLayout(): string {
+    return JSON.stringify(this.toLayoutItems());
   }
 
   /**

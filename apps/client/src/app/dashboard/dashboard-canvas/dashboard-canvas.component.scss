@@ -9,6 +9,9 @@
 :host {
   display: block;
   height: 100vh;
+  // Positioning context for the absolutely-positioned layout-fetch loading bar
+  // (`.gf-dashboard-canvas__loading`) so it anchors to the canvas, not the page.
+  position: relative;
 }
 
 .gf-dashboard-canvas__grid {
@@ -16,6 +19,21 @@
   display: block;
   height: 100%;
   width: 100%;
+}
+
+// Layout-fetch loading indicator (F-2, AAP § 0.3.2 hydration feedback). Pinned
+// to the top edge of the canvas, spanning its full width, above the grid. The
+// bar's own color comes from Angular Material's component theme
+// (`mat.all-component-themes`), which resolves to the Ghostfolio primary teal —
+// so no `--mat-sys-*` token is hardcoded here (Rule 7 governs bare grid-chrome
+// color declarations, not a fully themed Material component such as
+// `mat-progress-bar`).
+.gf-dashboard-canvas__loading {
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 1001;
 }
 
 // Best-effort accent for gridster's grid-line overlay shown during drag/resize
