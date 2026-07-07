@@ -50,8 +50,12 @@
   z-index: 1000;
 
   &:hover {
-    background-color: var(--mat-sys-primary, #00a19f);
-    color: var(--mat-sys-on-primary, #ffffff);
+    // Rule 7 / D-020: stay within the documented CP1 token set
+    // (primary-container / on-primary-container). A darker container fallback
+    // (0.24 vs the resting 0.12) gives a visible hover state because the host
+    // theme does not call mat.theme(), so the fallback is what actually renders.
+    background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.24));
+    color: var(--mat-sys-on-primary-container, #00504f);
   }
 }
 
