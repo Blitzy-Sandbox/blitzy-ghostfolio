@@ -15,6 +15,11 @@ import type { BenchmarkProperty } from './benchmark-property.interface';
 import type { Benchmark } from './benchmark.interface';
 import type { ChatMessage, ChatMessageRole } from './chat-message.interface';
 import type { Coupon } from './coupon.interface';
+import type {
+  DashboardLayout,
+  DashboardLayoutItem,
+  DashboardLayoutPatchPayload
+} from './dashboard-layout.interface';
 import type { DataProviderInfo } from './data-provider-info.interface';
 import type { EnhancedSymbolProfile } from './enhanced-symbol-profile.interface';
 import type { FilterGroup } from './filter-group.interface';
@@ -142,6 +147,9 @@ export {
   ChatMessageRole,
   Coupon,
   CreateStripeCheckoutSessionResponse,
+  DashboardLayout,
+  DashboardLayoutItem,
+  DashboardLayoutPatchPayload,
   DataEnhancerHealthResponse,
   DataProviderGhostfolioAssetProfileResponse,
   DataProviderGhostfolioStatusResponse,
