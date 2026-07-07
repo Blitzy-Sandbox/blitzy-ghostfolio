@@ -11,6 +11,7 @@
 // `module-registry.service.spec.ts`. Even though `ModuleRegistryService` is
 // overridden via `useValue` below, the ES `import` statement still evaluates
 // the real module graph, so this bootstrap remains mandatory.
+import { CdkDragEnd } from '@angular/cdk/drag-drop';
 import { Type, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import '@angular/localize/init';
@@ -209,6 +210,47 @@ describe('GfModuleCatalogComponent', () => {
     expect(mockStore.addItem).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'holdings' })
     );
+  });
+
+  it('should add a module via the drag path with the IDENTICAL store shape as click, and snap the row back (Goal 5 / § 0.3.2)', () => {
+    const reset = jest.fn();
+    // Minimal `CdkDragEnd` stub — the handler only touches `event.source.reset`.
+    const dragEndEvent = {
+      source: { reset }
+    } as unknown as CdkDragEnd;
+
+    component.onModuleDragEnded(mockModules[1], dragEndEvent); // holdings (6x6)
+
+    // The free-dragged row is reset to its original list position (this is an
+    // add gesture, not a reorder).
+    expect(reset).toHaveBeenCalledTimes(1);
+
+    // The drag path funnels through `onAddModule`, producing the SAME store
+    // item as the click path (see the click/first-free-position specs above).
+    expect(mockStore.addItem).toHaveBeenCalledTimes(1);
+    expect(mockStore.addItem).toHaveBeenCalledWith({
+      cols: 6,
+      minItemCols: 2,
+      minItemRows: 2,
+      rows: 6,
+      type: 'holdings',
+      x: 0,
+      y: 0
+    });
+  });
+
+  it('should expose a draggable list item (cdkDrag) so modules can be added via drag (Goal 5 / § 0.3.2)', () => {
+    // The rendered catalog row carries the CDK drag directive (`.cdk-drag`
+    // class), providing the drag affordance alongside the accessible click
+    // button. `nativeElement` is cast to a typed `HTMLElement` so the query is
+    // strongly typed (no `any`).
+    const root = fixture.nativeElement as HTMLElement;
+    const holdingsRow = root.querySelector<HTMLButtonElement>(
+      '[data-testid="module-catalog-item-holdings"]'
+    );
+
+    expect(holdingsRow).not.toBeNull();
+    expect(holdingsRow?.classList.contains('cdk-drag')).toBe(true);
   });
 
   it('should close the dialog via onClose', () => {

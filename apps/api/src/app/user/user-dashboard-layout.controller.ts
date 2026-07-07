@@ -92,9 +92,14 @@ export class UserDashboardLayoutController {
     );
 
     if (!layout) {
-      throw new NotFoundException(
-        `Dashboard layout not found for user ${userId}`
-      );
+      // SECURITY (CWE-200 / CWE-209): the 404 message MUST NOT embed the
+      // `userId` (or any request-scoped identifier). The authenticated caller
+      // already knows their own identity, so echoing it back adds no value
+      // while risking information disclosure if the response is logged or
+      // surfaced. The correlation id (returned via the `X-Correlation-ID`
+      // header and emitted in the structured server logs) is the supported
+      // way to tie a specific 404 back to a request during debugging.
+      throw new NotFoundException('Dashboard layout not found');
     }
 
     return layout;

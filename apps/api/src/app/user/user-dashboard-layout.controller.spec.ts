@@ -149,7 +149,7 @@ describe('UserDashboardLayoutController', () => {
     );
   });
 
-  it('returns an HTTP 404 with status NOT_FOUND and a message identifying the user', async () => {
+  it('returns an HTTP 404 with status NOT_FOUND and a generic, PII-safe message (no userId leak — CWE-200/209)', async () => {
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
 
     try {
@@ -160,7 +160,14 @@ describe('UserDashboardLayoutController', () => {
       expect((error as NotFoundException).getStatus()).toBe(
         HttpStatus.NOT_FOUND
       );
-      expect((error as Error).message).toContain(USER_1_ID);
+      // SECURITY (CWE-200 / CWE-209): the 404 message MUST be generic and
+      // MUST NOT embed the authenticated user's id (or any request-scoped
+      // identifier). Requests are correlated via the `X-Correlation-ID`
+      // header + structured server logs, not by leaking the userId into the
+      // client-facing error body. This assertion is a regression guard
+      // against re-introducing the identifier into the message.
+      expect((error as Error).message).toBe('Dashboard layout not found');
+      expect((error as Error).message).not.toContain(USER_1_ID);
     }
   });
 

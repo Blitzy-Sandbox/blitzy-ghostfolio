@@ -1,3 +1,4 @@
+import { CdkDragEnd, DragDropModule } from '@angular/cdk/drag-drop';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -24,10 +25,12 @@ import { ModuleRegistryService } from '../module-registry.service';
  *   the registry is the ONLY source of module types (Rule 3).
  * - The visible list is a `computed` view filtered case-insensitively by the
  *   module `name` against a `signal`-backed search term.
- * - Clicking a module computes the next free grid position (stack at the
- *   bottom) and appends a new grid item to `DashboardLayoutStoreService`, with
- *   the per-module minimum cell dimensions sourced from the registry
- *   definition (Rule 6). The store owns the debounced persistence (Rule 4);
+ * - Adding a module — via click OR via drag (Goal 5 / § 0.3.2, "add via drag
+ *   or click") — computes the next free grid position (stack at the bottom)
+ *   and appends a new grid item to `DashboardLayoutStoreService`, with the
+ *   per-module minimum cell dimensions sourced from the registry definition
+ *   (Rule 6). Both paths funnel through `onAddModule`, so they produce the
+ *   IDENTICAL store item. The store owns the debounced persistence (Rule 4);
  *   this component never calls a save/HTTP API directly.
  *
  * The canvas opens this dialog on init when the hydrated layout is empty
@@ -36,6 +39,7 @@ import { ModuleRegistryService } from '../module-registry.service';
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    DragDropModule,
     FormsModule,
     MatButtonModule,
     MatDialogModule,
@@ -97,6 +101,32 @@ export class GfModuleCatalogComponent {
       x: 0,
       y
     });
+  }
+
+  /**
+   * Add-via-drag path (Goal 5 / § 0.3.2, "add via drag or click").
+   *
+   * The catalog is a modal Material dialog rendered over a backdrop, so a
+   * literal drop onto the canvas behind it is not reachable. The drag is
+   * therefore a self-contained affordance: dragging a catalog row and
+   * releasing it appends the module exactly as a click would. The handler
+   *   1. calls `event.source.reset()` so the free-dragged row snaps back to
+   *      its original list position (this is an add gesture, not a reorder),
+   *      and
+   *   2. delegates to `onAddModule`, producing the IDENTICAL
+   *      `DashboardLayoutStoreService.addItem` shape as the click path.
+   *
+   * A pure click never starts a CDK drag sequence (no pointer movement past
+   * the drag threshold), so `(click)` and `(cdkDragEnded)` are mutually
+   * exclusive and a module is never added twice for a single gesture.
+   */
+  public onModuleDragEnded(
+    definition: DashboardModuleDefinition,
+    event: CdkDragEnd
+  ): void {
+    event.source.reset();
+
+    this.onAddModule(definition);
   }
 
   /** Close the catalog dialog. */

@@ -1,3 +1,4 @@
+import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { Logger } from '@nestjs/common';
@@ -66,12 +67,18 @@ describe('UserDashboardLayoutService', () => {
     };
   };
 
+  let metricsService: MetricsService;
   let prismaService: PrismaService;
   let service: UserDashboardLayoutService;
 
   beforeEach(() => {
+    // The real `MetricsService` is self-contained (native `Map`s + `Logger`,
+    // zero-arg constructor), so it is instantiated directly rather than
+    // mocked — the observability specs below spy on its public surface to
+    // assert emission without stubbing the registry logic.
+    metricsService = new MetricsService();
     prismaService = new PrismaService(null);
-    service = new UserDashboardLayoutService(prismaService);
+    service = new UserDashboardLayoutService(metricsService, prismaService);
   });
 
   afterEach(() => {
@@ -302,5 +309,133 @@ describe('UserDashboardLayoutService', () => {
     // operation stem and the underlying error text.
     expect(message).toContain('Failed to upsert UserDashboardLayout');
     expect(message).toContain('unique constraint violation');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Prometheus metrics emission (observability — AAP § 0.6.1 / § 0.8.4). These
+  // specs assert that every read/upsert call records the
+  // `dashboard_layout_requests_total{operation,outcome}` counter and the
+  // `dashboard_layout_latency_seconds{operation}` histogram consumed by
+  // `ops/dashboards/dashboard-layout.json`, on BOTH the success and error
+  // paths, with fixed-cardinality labels (never the userId/correlationId).
+  // ---------------------------------------------------------------------------
+
+  it('registers # HELP descriptions for both metrics in the constructor', () => {
+    const localMetrics = new MetricsService();
+    const registerHelpSpy = jest.spyOn(localMetrics, 'registerHelp');
+
+    // Constructing the service must register the two metric descriptions so
+    // `/api/v1/metrics` emits proper `# HELP` lines.
+    new UserDashboardLayoutService(localMetrics, prismaService);
+
+    expect(registerHelpSpy).toHaveBeenCalledWith(
+      'dashboard_layout_requests_total',
+      expect.any(String)
+    );
+    expect(registerHelpSpy).toHaveBeenCalledWith(
+      'dashboard_layout_latency_seconds',
+      expect.any(String)
+    );
+  });
+
+  it('emits requests_total{operation:get,outcome:success} + latency histogram on a successful read', async () => {
+    (
+      prismaService.userDashboardLayout.findUnique as jest.Mock
+    ).mockResolvedValueOnce(null);
+    const incrementCounterSpy = jest.spyOn(metricsService, 'incrementCounter');
+    const observeHistogramSpy = jest.spyOn(metricsService, 'observeHistogram');
+
+    await service.findByUserId(USER_1_ID);
+
+    expect(incrementCounterSpy).toHaveBeenCalledTimes(1);
+    expect(incrementCounterSpy).toHaveBeenCalledWith(
+      'dashboard_layout_requests_total',
+      1,
+      { operation: 'get', outcome: 'success' }
+    );
+    expect(observeHistogramSpy).toHaveBeenCalledTimes(1);
+    const [histName, histValue, histLabels] = observeHistogramSpy.mock.calls[0];
+    expect(histName).toBe('dashboard_layout_latency_seconds');
+    expect(typeof histValue).toBe('number');
+    expect(histValue).toBeGreaterThanOrEqual(0);
+    expect(histLabels).toEqual({ operation: 'get' });
+  });
+
+  it('emits requests_total{operation:get,outcome:error} + latency histogram when a read fails', async () => {
+    (
+      prismaService.userDashboardLayout.findUnique as jest.Mock
+    ).mockRejectedValueOnce(new Error('connection reset by peer'));
+    jest.spyOn(Logger, 'error').mockImplementation(() => undefined);
+    const incrementCounterSpy = jest.spyOn(metricsService, 'incrementCounter');
+    const observeHistogramSpy = jest.spyOn(metricsService, 'observeHistogram');
+
+    // The counter/histogram are emitted from the `finally` block, so a thrown
+    // Prisma error is still counted (as outcome=error) before it propagates.
+    await expect(service.findByUserId(USER_1_ID)).rejects.toThrow(
+      'connection reset by peer'
+    );
+
+    expect(incrementCounterSpy).toHaveBeenCalledWith(
+      'dashboard_layout_requests_total',
+      1,
+      { operation: 'get', outcome: 'error' }
+    );
+    expect(observeHistogramSpy).toHaveBeenCalledWith(
+      'dashboard_layout_latency_seconds',
+      expect.any(Number),
+      { operation: 'get' }
+    );
+  });
+
+  it('emits requests_total{operation:patch,outcome:success} + latency histogram on a successful upsert', async () => {
+    const dto = buildDto();
+    (
+      prismaService.userDashboardLayout.upsert as jest.Mock
+    ).mockResolvedValueOnce({
+      createdAt: new Date(),
+      layoutData: dto as any,
+      updatedAt: new Date(),
+      userId: USER_1_ID
+    } as UserDashboardLayout);
+    const incrementCounterSpy = jest.spyOn(metricsService, 'incrementCounter');
+    const observeHistogramSpy = jest.spyOn(metricsService, 'observeHistogram');
+
+    await service.upsertForUser(USER_1_ID, dto);
+
+    expect(incrementCounterSpy).toHaveBeenCalledTimes(1);
+    expect(incrementCounterSpy).toHaveBeenCalledWith(
+      'dashboard_layout_requests_total',
+      1,
+      { operation: 'patch', outcome: 'success' }
+    );
+    expect(observeHistogramSpy).toHaveBeenCalledWith(
+      'dashboard_layout_latency_seconds',
+      expect.any(Number),
+      { operation: 'patch' }
+    );
+  });
+
+  it('emits requests_total{operation:patch,outcome:error} + latency histogram when an upsert fails', async () => {
+    (
+      prismaService.userDashboardLayout.upsert as jest.Mock
+    ).mockRejectedValueOnce(new Error('unique constraint violation'));
+    jest.spyOn(Logger, 'error').mockImplementation(() => undefined);
+    const incrementCounterSpy = jest.spyOn(metricsService, 'incrementCounter');
+    const observeHistogramSpy = jest.spyOn(metricsService, 'observeHistogram');
+
+    await expect(service.upsertForUser(USER_1_ID, buildDto())).rejects.toThrow(
+      'unique constraint violation'
+    );
+
+    expect(incrementCounterSpy).toHaveBeenCalledWith(
+      'dashboard_layout_requests_total',
+      1,
+      { operation: 'patch', outcome: 'error' }
+    );
+    expect(observeHistogramSpy).toHaveBeenCalledWith(
+      'dashboard_layout_latency_seconds',
+      expect.any(Number),
+      { operation: 'patch' }
+    );
   });
 });

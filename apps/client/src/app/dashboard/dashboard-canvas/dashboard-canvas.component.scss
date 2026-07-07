@@ -28,25 +28,21 @@
   }
 }
 
-// Persistent "add module" affordance, styled as a floating action button.
+// Persistent "add module" affordance — an Angular Material `mat-fab` (F7).
+// Material owns the FAB's circular shape, 56px size, elevation, ripple, and
+// focus-visible ring; this rule only supplies the fixed viewport positioning
+// and the Rule 7 brand colors. The Angular view-encapsulation attribute raises
+// this selector's specificity above Material's `.mat-mdc-fab`, so the
+// container/icon colors below win. Colors use the mandated
+// `var(--mat-sys-<token>, <fallback>)` pattern (Rule 7 / D-020); the fallback
+// renders because the host theme uses `mat.all-component-themes()` (not
+// `mat.theme()`), so the `--mat-sys-*` system tokens are absent at runtime.
 .gf-dashboard-canvas__add-module {
-  align-items: center;
   background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
-  border: none;
-  border-radius: 50%;
   bottom: 1.5rem;
-  box-shadow:
-    0 3px 5px -1px rgba(0, 0, 0, 0.2),
-    0 6px 10px 0 rgba(0, 0, 0, 0.14),
-    0 1px 18px 0 rgba(0, 0, 0, 0.12);
   color: var(--mat-sys-on-primary-container, #00504f);
-  cursor: pointer;
-  display: flex;
-  height: 3.5rem;
-  justify-content: center;
   position: fixed;
   right: 1.5rem;
-  width: 3.5rem;
   z-index: 1000;
 
   &:hover {

@@ -8,7 +8,9 @@ import {
   inject
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatIconModule } from '@angular/material/icon';
 import {
   DisplayGrid,
   Gridster,
@@ -68,7 +70,9 @@ import { GfModuleShellComponent } from '../module-shell/module-shell.component';
     GfModuleShellComponent,
     Gridster,
     GridsterItem,
+    MatButtonModule,
     MatDialogModule,
+    MatIconModule,
     NgComponentOutlet
   ],
   selector: 'gf-dashboard-canvas',

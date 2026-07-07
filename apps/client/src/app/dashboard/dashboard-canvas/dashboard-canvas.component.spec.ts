@@ -265,6 +265,15 @@ describe('GfDashboardCanvasComponent', () => {
 
     expect(addButton).not.toBeNull();
 
+    // F7: the affordance is an Angular Material FAB (`mat-fab`) that renders a
+    // `mat-icon` "add" glyph — not a raw <button> + inline SVG. Using the
+    // Material component gives the built-in focus-visible ring, ripple, and
+    // elevation for free (AAP § 0.3.2 component mapping).
+    expect(addButton.classList.contains('mat-mdc-fab')).toBe(true);
+    const addIcon = addButton.querySelector('mat-icon');
+    expect(addIcon).not.toBeNull();
+    expect(addIcon?.textContent?.trim()).toBe('add');
+
     addButton.click();
 
     expect(dialogMock.open).toHaveBeenCalledWith(

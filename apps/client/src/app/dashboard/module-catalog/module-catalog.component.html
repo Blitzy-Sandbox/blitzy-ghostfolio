@@ -24,15 +24,27 @@
     <mat-action-list class="catalog-list" data-testid="module-catalog-list">
       @for (module of filteredModules(); track module.id) {
         <button
+          cdkDrag
           class="catalog-item"
           mat-list-item
           type="button"
           [attr.data-testid]="'module-catalog-item-' + module.id"
+          [cdkDragData]="module"
+          (cdkDragEnded)="onModuleDragEnded(module, $event)"
           (click)="onAddModule(module)"
         >
           <mat-icon matListItemIcon>{{ module.icon }}</mat-icon>
           <span matListItemTitle>{{ module.name }}</span>
           <mat-icon class="catalog-item-add" matListItemMeta>add</mat-icon>
+
+          <div
+            *cdkDragPreview
+            class="catalog-item-drag-preview"
+            [attr.data-testid]="'module-catalog-drag-preview-' + module.id"
+          >
+            <mat-icon>{{ module.icon }}</mat-icon>
+            <span>{{ module.name }}</span>
+          </div>
         </button>
       }
     </mat-action-list>

@@ -70,6 +70,10 @@
 // `.mat-icon` selector, so it needs no separate rule.
 .catalog-item {
   color: var(--mat-sys-on-surface, #1a1a1a);
+  // Grab cursor signals that the row is draggable (add via drag, Goal 5 /
+  // § 0.3.2) in addition to being clickable. `cursor` is an interaction
+  // affordance, not a Material color token, so Rule 7 does not apply.
+  cursor: grab;
 
   .mat-icon {
     color: var(--mat-sys-on-surface-variant, #5f6368);
@@ -83,6 +87,34 @@
     .mat-icon {
       color: var(--mat-sys-on-primary-container, #00504f);
     }
+  }
+
+  // While a drag is in progress the CDK adds `.cdk-drag-dragging`; switch to
+  // the grabbing cursor for tactile feedback.
+  &.cdk-drag-dragging {
+    cursor: grabbing;
+  }
+}
+
+// Custom drag ghost shown while a catalog row is being dragged (the
+// `*cdkDragPreview` element). Rendered by the CDK in an overlay, so it is
+// styled as a compact, elevated chip carrying the module icon + name. Colors
+// use the Rule 7 token + fallback pattern (brand cyan-teal fallbacks matching
+// the surrounding chrome); geometry values are fixed and untokened.
+.catalog-item-drag-preview {
+  align-items: center;
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+  border-radius: 0.5rem;
+  box-shadow:
+    0 3px 6px rgba(0, 0, 0, 0.16),
+    0 3px 6px rgba(0, 0, 0, 0.23);
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+
+  .mat-icon {
+    color: var(--mat-sys-on-surface-variant, #5f6368);
   }
 }
 
@@ -115,6 +147,15 @@
       .mat-icon {
         color: var(--mat-sys-on-primary-container, #6bf7f4);
       }
+    }
+  }
+
+  .catalog-item-drag-preview {
+    background-color: var(--mat-sys-surface-container, #2a2a2a);
+    color: var(--mat-sys-on-surface, #fff);
+
+    .mat-icon {
+      color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
     }
   }
 }
