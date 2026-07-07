@@ -54,7 +54,7 @@ export class UserDashboardLayoutService {
     } catch (error) {
       Logger.error(
         this.formatLogMessage(
-          `Failed to read UserDashboardLayout for user ${userId}: ${
+          `Failed to read UserDashboardLayout: ${
             error instanceof Error ? error.message : String(error)
           }`,
           correlationId
@@ -100,7 +100,7 @@ export class UserDashboardLayoutService {
     } catch (error) {
       Logger.error(
         this.formatLogMessage(
-          `Failed to upsert UserDashboardLayout for user ${userId}: ${
+          `Failed to upsert UserDashboardLayout: ${
             error instanceof Error ? error.message : String(error)
           }`,
           correlationId
