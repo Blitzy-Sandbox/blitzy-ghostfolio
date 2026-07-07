@@ -1,0 +1,14 @@
+<gf-portfolio-summary
+  [baseCurrency]="user?.settings?.baseCurrency"
+  [deviceType]="deviceType"
+  [hasImpersonationId]="hasImpersonationId"
+  [hasPermissionToUpdateUserSettings]="
+    !hasImpersonationId && hasPermissionToUpdateUserSettings
+  "
+  [isLoading]="isLoading"
+  [language]="user?.settings?.language"
+  [locale]="user?.settings?.locale"
+  [summary]="summary"
+  [user]="user"
+  (emergencyFundChanged)="onChangeEmergencyFund($event)"
+/>
