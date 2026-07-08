@@ -1,0 +1,116 @@
+// Dashboard canvas grid host styling — Rule 7 (Decision D-020) + host sizing (§0.7.6).
+//
+// The Ghostfolio host theme uses `mat.all-component-themes()`, NOT `mat.theme()`,
+// so the Material 3 `--mat-sys-*` system tokens are NOT generated at runtime and
+// `var(--mat-sys-*, <fallback>)` renders the FALLBACK. Every color below therefore
+// carries a hardcoded cyan-teal brand fallback; a bare `--mat-sys-*` is prohibited.
+// (Same pattern as ../../components/chat-panel/chat-panel.component.scss L126-140.)
+
+:host {
+  display: block;
+  height: 100vh;
+  // Positioning context for the absolutely-positioned layout-fetch loading bar
+  // (`.gf-dashboard-canvas__loading`) so it anchors to the canvas, not the page.
+  position: relative;
+}
+
+.gf-dashboard-canvas__grid {
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+// Layout-fetch loading indicator (F-2, AAP § 0.3.2 hydration feedback). Pinned
+// to the top edge of the canvas, spanning its full width, above the grid. The
+// bar's own color comes from Angular Material's component theme
+// (`mat.all-component-themes`), which resolves to the Ghostfolio primary teal —
+// so no `--mat-sys-*` token is hardcoded here (Rule 7 governs bare grid-chrome
+// color declarations, not a fully themed Material component such as
+// `mat-progress-bar`).
+.gf-dashboard-canvas__loading {
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 1001;
+}
+
+// Best-effort accent for gridster's grid-line overlay shown during drag/resize
+// (DisplayGrid.OnDragAndResize). Class names are gridster internals, reached via
+// ::ng-deep; harmless no-op if the installed version names them differently.
+:host ::ng-deep {
+  .gridster-column,
+  .gridster-row {
+    border-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+  }
+}
+
+// Persistent "add module" affordance — an Angular Material `mat-fab` (F7).
+// Material owns the FAB's circular shape, 56px size, elevation, ripple, and
+// focus-visible ring; this rule only supplies the fixed viewport positioning
+// and the Rule 7 brand colors. The Angular view-encapsulation attribute raises
+// this selector's specificity above Material's `.mat-mdc-fab`, so the
+// container/icon colors below win. Colors use the mandated
+// `var(--mat-sys-<token>, <fallback>)` pattern (Rule 7 / D-020); the fallback
+// renders because the host theme uses `mat.all-component-themes()` (not
+// `mat.theme()`), so the `--mat-sys-*` system tokens are absent at runtime.
+.gf-dashboard-canvas__add-module {
+  background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+  bottom: 1.5rem;
+  color: var(--mat-sys-on-primary-container, #00504f);
+  position: fixed;
+  right: 1.5rem;
+  z-index: 1000;
+
+  // The FAB glyph is an `<ion-icon>` (Ghostfolio's icon system) rather than the
+  // Material Icons glyph font (which is not bundled). ion-icon renders at 1em by
+  // default, so pin it to 1.5rem (24px) to match the standard Material FAB icon
+  // footprint; its color inherits from the FAB via ion-icon's `currentColor`.
+  ion-icon {
+    font-size: 1.5rem;
+  }
+
+  &:hover {
+    // Rule 7 / D-020: stay within the documented CP1 token set
+    // (primary-container / on-primary-container). A darker container fallback
+    // (0.24 vs the resting 0.12) gives a visible hover state because the host
+    // theme does not call mat.theme(), so the fallback is what actually renders.
+    background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.24));
+    color: var(--mat-sys-on-primary-container, #00504f);
+  }
+}
+
+:host-context(.theme-dark) {
+  .gf-dashboard-canvas__grid {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+  }
+
+  // Dark-mode module-surface override (dark-mode chrome parity).
+  //
+  // angular-gridster2 hardcodes `gridster-item { background: #fff }` in its
+  // library stylesheet. The module shell's body is transparent, so in dark mode
+  // that white default showed through as the module body — a white "island" on
+  // the dark canvas. Override the item surface to the dark surface-container
+  // tone so each module cell reads as a dark card consistent with the dark
+  // canvas, catalog, and FAB. `::ng-deep` is required because `gridster-item` is
+  // a library element outside this component's view encapsulation; the
+  // `:host-context(.theme-dark)` + element selector out-specifies the library's
+  // bare `gridster-item` rule, and light mode is left untouched (the library
+  // default `#fff` still applies there — the intended light design). Rule 7:
+  // the `var(--mat-sys-<token>, <fallback>)` pattern is preserved.
+  ::ng-deep gridster-item {
+    background: var(--mat-sys-surface-container, rgba(255, 255, 255, 0.06));
+  }
+
+  .gf-dashboard-canvas__add-module {
+    background-color: var(
+      --mat-sys-primary-container,
+      rgba(71, 219, 215, 0.16)
+    );
+    color: var(--mat-sys-on-primary-container, #6bf7f4);
+  }
+}

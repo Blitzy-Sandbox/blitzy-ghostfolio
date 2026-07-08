@@ -1,0 +1,170 @@
+import { DASHBOARD_MODULE_TYPES } from '@ghostfolio/common/interfaces';
+
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  ValidateNested
+} from 'class-validator';
+
+/**
+ * Maximum permitted length, in UTF-16 code units, of a module `type` key
+ * accepted by `PATCH /api/v1/user/layout`.
+ *
+ * Rationale (defense-in-depth — CWE-20, mirrors the `@MaxLength` hardening
+ * already applied to `InvestmentGoalDto.label` in
+ * `user-financial-profile/dtos/financial-profile.dto.ts`):
+ *
+ *   `UserDashboardLayout.layoutData` is persisted as a Prisma `Json` (JSONB)
+ *   column whose row-level size is bounded only by the global Express
+ *   body-parser limit (10 MB) and PostgreSQL's per-row TOAST ceiling. A
+ *   module `type` is a machine-generated registry key (kebab-case
+ *   identifiers such as `"portfolio-overview"`, `"fear-and-greed"`,
+ *   `"ai-chat"` — the longest registered key is 18 characters). Without a
+ *   per-field cap, an authenticated client could submit arbitrarily long
+ *   `type` strings, inflating the stored JSONB payload and burdening
+ *   downstream registry look-ups.
+ *
+ *   `64` is a generous ceiling for any conceivable registry key while
+ *   firmly bounding the field. A `type` longer than 64 characters cannot
+ *   match a real module in the client registry, so it is overwhelmingly
+ *   likely to be accidental or adversarial and is rejected with HTTP 400 at
+ *   the `ValidationPipe` boundary before reaching the persistence layer.
+ */
+const MODULE_TYPE_MAX_LENGTH = 64;
+
+/**
+ * Maximum permitted number of grid items in a single persisted layout
+ * accepted by `PATCH /api/v1/user/layout`.
+ *
+ * Rationale (defense-in-depth — CWE-20):
+ *
+ *   The dashboard is composed from a fixed catalog of registered module
+ *   types (12 at present). Even allowing multiple instances of the same
+ *   module type, a realistic user-composed canvas contains at most a few
+ *   dozen items. Without an upper bound, an authenticated client could
+ *   submit an unbounded `items` array, producing an oversized JSONB row
+ *   and degrading storage/serialization performance.
+ *
+ *   `100` is far beyond any plausible hand-composed dashboard yet caps the
+ *   array so an oversized payload fails fast with HTTP 400 at the
+ *   `ValidationPipe` boundary. An empty array remains valid (a new user's
+ *   blank canvas, or a canvas from which every module has been removed), so
+ *   NO minimum-size constraint is applied.
+ */
+const DASHBOARD_LAYOUT_MAX_ITEMS = 100;
+
+/**
+ * A single grid item in a persisted dashboard layout. Mirrors the shared
+ * `DashboardLayoutItem` contract in `@ghostfolio/common/interfaces` and the
+ * `angular-gridster2` `GridsterItem` shape.
+ *
+ * Rule 6 (minimum 2×2): `cols` and `rows` carry `@Min(2)` as server-side
+ * defense-in-depth so a below-minimum module is rejected with HTTP 400,
+ * complementing the client-side gridster `minItemCols`/`minItemRows` +
+ * `itemValidateCallback` enforcement.
+ *
+ * Security (CWE-20 — Improper Input Validation): `type` is whitelisted with
+ * `@IsIn([...DASHBOARD_MODULE_TYPES])` against the shared module-type contract
+ * from `@ghostfolio/common/interfaces`, so only a registered module-type key is
+ * accepted; an unknown or adversarial `type` is rejected with HTTP 400 at the
+ * `ValidationPipe` boundary rather than being persisted and later rendering as
+ * a blank grid cell the client registry cannot resolve. `@IsNotEmpty()` and
+ * `@MaxLength(MODULE_TYPE_MAX_LENGTH)` remain as defense-in-depth (an empty or
+ * oversized string is rejected even before the whitelist check), while the
+ * numeric grid fields keep their existing `@Min` bounds.
+ */
+export class DashboardLayoutItemDto {
+  @IsString()
+  @IsNotEmpty()
+  @IsIn([...DASHBOARD_MODULE_TYPES])
+  @MaxLength(MODULE_TYPE_MAX_LENGTH)
+  type: string;
+
+  @IsInt()
+  @Min(0)
+  x: number;
+
+  @IsInt()
+  @Min(0)
+  y: number;
+
+  @IsInt()
+  @Min(2)
+  cols: number;
+
+  @IsInt()
+  @Min(2)
+  rows: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  minItemCols?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  minItemRows?: number;
+}
+
+/**
+ * Request body for `PATCH /api/v1/user/layout`.
+ *
+ * SECURITY (Rule 8 / AAP § 0.7.3): intentionally has NO `userId` field — the
+ * user id is always sourced from the JWT (`request.user.id`), never the body.
+ *
+ * Shape aligns with `DashboardLayoutPatchPayload` (`{ items: DashboardLayoutItem[] }`)
+ * from `@ghostfolio/common/interfaces`.
+ *
+ * Security (CWE-20): `items` carries `@ArrayMaxSize(DASHBOARD_LAYOUT_MAX_ITEMS)`
+ * so an authenticated client cannot submit an unbounded array that would
+ * produce an oversized JSONB row. An empty array is intentionally permitted
+ * (a new user's blank canvas), so no minimum-size constraint is applied.
+ *
+ * CLIENT-SIDE RECONCILIATION CONTRACT (Rule 2 — Single Source of Truth):
+ *
+ *   This DTO intentionally performs NO cross-item geometry validation — it
+ *   does NOT reject layouts whose items overlap or share a grid coordinate.
+ *   Two items may both declare `{ x: 0, y: 0 }` and the request succeeds; the
+ *   layout is persisted VERBATIM. This is a deliberate design decision, not an
+ *   omission:
+ *
+ *     • Positioning authority lives on the client. The `angular-gridster2`
+ *       engine (`GridsterConfig` with `pushItems`/collision handling) owns all
+ *       coordinate assignment. Per Rule 2, the client grid state is the single
+ *       source of truth; the server is a passive, client-authoritative store.
+ *
+ *     • Overlaps SELF-HEAL on the next hydration round-trip. When a returning
+ *       user's layout is loaded, gridster re-runs its collision/push algorithm
+ *       and any overlapping items are separated to valid, non-overlapping
+ *       cells; the reconciled layout is then re-persisted by the normal
+ *       debounced grid-event → PATCH flow. A transient overlap in the stored
+ *       row is therefore corrected automatically on load.
+ *
+ *     • Server-side overlap detection would DUPLICATE the grid engine's
+ *       geometry logic in a second location, risk diverging from it, and make
+ *       the server — not the client — the arbiter of positioning, directly
+ *       violating the Rule 2 SSOT boundary.
+ *
+ *   Consequently the accepted resolution for the "API accepts overlapping
+ *   items" finding is to DOCUMENT this contract (this block + the server
+ *   service doc + decision-log entry DL-029), NOT to add server-side
+ *   rejection. The per-field hardening that DOES belong on the server — the
+ *   `type` whitelist, the `@Min(2)` Rule-6 minimums, the `@MaxLength` and
+ *   `@ArrayMaxSize` size caps — remains fully enforced above.
+ */
+export class DashboardLayoutDto {
+  @IsArray()
+  @ArrayMaxSize(DASHBOARD_LAYOUT_MAX_ITEMS)
+  @Type(() => DashboardLayoutItemDto)
+  @ValidateNested({ each: true })
+  items: DashboardLayoutItemDto[];
+}

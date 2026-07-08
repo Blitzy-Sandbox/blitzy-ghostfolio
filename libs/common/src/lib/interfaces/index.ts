@@ -15,6 +15,11 @@ import type { BenchmarkProperty } from './benchmark-property.interface';
 import type { Benchmark } from './benchmark.interface';
 import type { ChatMessage, ChatMessageRole } from './chat-message.interface';
 import type { Coupon } from './coupon.interface';
+import type {
+  DashboardLayout,
+  DashboardLayoutItem,
+  DashboardLayoutPatchPayload
+} from './dashboard-layout.interface';
 import type { DataProviderInfo } from './data-provider-info.interface';
 import type { EnhancedSymbolProfile } from './enhanced-symbol-profile.interface';
 import type { FilterGroup } from './filter-group.interface';
@@ -142,6 +147,9 @@ export {
   ChatMessageRole,
   Coupon,
   CreateStripeCheckoutSessionResponse,
+  DashboardLayout,
+  DashboardLayoutItem,
+  DashboardLayoutPatchPayload,
   DataEnhancerHealthResponse,
   DataProviderGhostfolioAssetProfileResponse,
   DataProviderGhostfolioStatusResponse,
@@ -211,3 +219,11 @@ export {
   WatchlistResponse,
   XRayRulesSettings
 };
+
+// Runtime value re-export: `DASHBOARD_MODULE_TYPES` is a runtime constant (the
+// shared module-type whitelist consumed by the server layout DTO's `@IsIn`
+// validation and the client registry drift-guard spec), so it is re-exported
+// with a value `export` rather than through the type-only block above; the
+// companion union type is re-exported with `export type`.
+export { DASHBOARD_MODULE_TYPES } from './dashboard-module-type';
+export type { DashboardModuleType } from './dashboard-module-type';

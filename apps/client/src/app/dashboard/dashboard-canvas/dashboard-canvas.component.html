@@ -1,0 +1,53 @@
+<!--
+  Layout-fetch loading indicator (F-2, AAP § 0.3.2 "Loading state (layout
+  fetch) | MatProgressBar | indeterminate | Hydration feedback"). The store
+  raises `loading` while `GET /api/v1/user/layout` is in flight and lowers it
+  when the request settles, so a slow-network hydration shows a determinate-free
+  progress bar instead of an unindicated blank canvas. Rendered above the grid
+  and pinned to the top of the canvas via `.gf-dashboard-canvas__loading`.
+-->
+@if (store.loading()) {
+  <mat-progress-bar
+    aria-label="Loading dashboard layout"
+    class="gf-dashboard-canvas__loading"
+    i18n-aria-label="@@dashboardCanvasLoadingLayout"
+    mode="indeterminate"
+  />
+}
+
+<!--
+  QA F8 (accessibility): the grid is the dashboard's primary content region, so
+  it carries the `main` landmark. With the global header/footer nav chrome
+  removed (AAP § 0.4.1), the canvas IS the app shell and previously exposed no
+  landmark, so assistive tech had no "skip to main content" target and reported
+  a missing main landmark. `role="main"` is applied to the existing `<gridster>`
+  host (rather than wrapping it in a new `<main>` element) so the fix adds the
+  landmark WITHOUT altering the full-viewport grid host sizing the layout relies
+  on. Exactly one main landmark exists on the page.
+-->
+<gridster class="gf-dashboard-canvas__grid" role="main" [options]="options">
+  @for (item of store.items(); track item) {
+    <gridster-item [item]="item">
+      @if (registry.resolve(item.type); as definition) {
+        <gf-module-shell
+          [icon]="definition.icon"
+          [title]="definition.name"
+          (remove)="onRemove(item)"
+        >
+          <ng-container *ngComponentOutlet="definition.component" />
+        </gf-module-shell>
+      }
+    </gridster-item>
+  }
+</gridster>
+
+<button
+  aria-label="Add module"
+  class="gf-dashboard-canvas__add-module"
+  i18n-aria-label="@@dashboardCanvasAddModule"
+  mat-fab
+  type="button"
+  (click)="openCatalog()"
+>
+  <ion-icon aria-hidden="true" name="add-outline" />
+</button>

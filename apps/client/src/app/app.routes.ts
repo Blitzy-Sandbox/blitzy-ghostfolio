@@ -3,110 +3,33 @@ import { internalRoutes, publicRoutes } from '@ghostfolio/common/routes/routes';
 import { Routes } from '@angular/router';
 
 import { AuthGuard } from './core/auth.guard';
+import { GfDashboardCanvasComponent } from './dashboard/dashboard-canvas/dashboard-canvas.component';
 
 export const routes: Routes = [
   {
-    path: publicRoutes.about.path,
-    loadChildren: () =>
-      import('./pages/about/about-page.routes').then((m) => m.routes)
-  },
-  {
-    path: internalRoutes.account.path,
-    loadChildren: () =>
-      import('./pages/user-account/user-account-page.routes').then(
-        (m) => m.routes
-      )
-  },
-  {
-    path: internalRoutes.accounts.path,
-    loadChildren: () =>
-      import('./pages/accounts/accounts-page.routes').then((m) => m.routes)
-  },
-  {
-    path: internalRoutes.adminControl.path,
-    loadChildren: () =>
-      import('./pages/admin/admin-page.routes').then((m) => m.routes)
-  },
-  {
+    // Single-canvas dashboard root (Rule 5 — the application reduces to one
+    // root route). Protected by the existing Ghostfolio `AuthGuard` to close
+    // CWE-306 (Missing Authorization): an unauthenticated request to `''` is
+    // NOT allowed to instantiate the dashboard canvas — the guard redirects it
+    // to the public `/start` onboarding route instead. Authenticated users
+    // render the canvas here. The guard is reused unchanged (AAP § 0.2.2 keeps
+    // the client auth stack intact).
     canActivate: [AuthGuard],
-    loadComponent: () =>
-      import('./pages/api/api-page.component').then(
-        (c) => c.GfApiPageComponent
-      ),
-    path: internalRoutes.api.path,
-    title: internalRoutes.api.title
+    component: GfDashboardCanvasComponent,
+    path: ''
   },
+  // Public / unauthenticated onboarding routes. These MUST remain reachable
+  // WITHOUT the `AuthGuard` so the guard's redirect target (`/start`) resolves
+  // to a real, ungated page. Removing them would create an infinite redirect
+  // loop: an unauthenticated hit on `''` redirects to `/start`, the wildcard
+  // below would send `/start` back to `''`, and the guard would redirect to
+  // `/start` again. Keeping `start`/`register`/`auth`/`webauthn` as dedicated
+  // ungated routes (matched before the wildcard) breaks that loop and
+  // preserves the full login / registration flow.
   {
-    path: internalRoutes.auth.path,
+    path: publicRoutes.start.path,
     loadChildren: () =>
-      import('./pages/auth/auth-page.routes').then((m) => m.routes),
-    title: internalRoutes.auth.title
-  },
-  {
-    path: publicRoutes.blog.path,
-    loadChildren: () =>
-      import('./pages/blog/blog-page.routes').then((m) => m.routes)
-  },
-  {
-    canActivate: [AuthGuard],
-    loadComponent: () =>
-      import('./pages/demo/demo-page.component').then(
-        (c) => c.GfDemoPageComponent
-      ),
-    path: publicRoutes.demo.path
-  },
-  {
-    path: publicRoutes.faq.path,
-    loadChildren: () =>
-      import('./pages/faq/faq-page.routes').then((m) => m.routes)
-  },
-  {
-    canActivate: [AuthGuard],
-    loadComponent: () =>
-      import('./pages/features/features-page.component').then(
-        (c) => c.GfFeaturesPageComponent
-      ),
-    path: publicRoutes.features.path,
-    title: publicRoutes.features.title
-  },
-  {
-    path: internalRoutes.home.path,
-    loadChildren: () =>
-      import('./pages/home/home-page.routes').then((m) => m.routes)
-  },
-  {
-    canActivate: [AuthGuard],
-    loadComponent: () =>
-      import('./pages/i18n/i18n-page.component').then(
-        (c) => c.GfI18nPageComponent
-      ),
-    path: internalRoutes.i18n.path,
-    title: internalRoutes.i18n.title
-  },
-  {
-    path: publicRoutes.markets.path,
-    loadChildren: () =>
-      import('./pages/markets/markets-page.routes').then((m) => m.routes)
-  },
-  {
-    path: publicRoutes.openStartup.path,
-    loadChildren: () =>
-      import('./pages/open/open-page.routes').then((m) => m.routes)
-  },
-  {
-    path: internalRoutes.portfolio.path,
-    loadChildren: () =>
-      import('./pages/portfolio/portfolio-page.routes').then((m) => m.routes)
-  },
-  {
-    path: publicRoutes.pricing.path,
-    loadChildren: () =>
-      import('./pages/pricing/pricing-page.routes').then((m) => m.routes)
-  },
-  {
-    path: publicRoutes.public.path,
-    loadChildren: () =>
-      import('./pages/public/public-page.routes').then((m) => m.routes)
+      import('./pages/landing/landing-page.routes').then((m) => m.routes)
   },
   {
     path: publicRoutes.register.path,
@@ -114,14 +37,10 @@ export const routes: Routes = [
       import('./pages/register/register-page.routes').then((m) => m.routes)
   },
   {
-    path: publicRoutes.resources.path,
+    path: internalRoutes.auth.path,
     loadChildren: () =>
-      import('./pages/resources/resources-page.routes').then((m) => m.routes)
-  },
-  {
-    path: publicRoutes.start.path,
-    loadChildren: () =>
-      import('./pages/landing/landing-page.routes').then((m) => m.routes)
+      import('./pages/auth/auth-page.routes').then((m) => m.routes),
+    title: internalRoutes.auth.title
   },
   {
     loadComponent: () =>
@@ -132,15 +51,11 @@ export const routes: Routes = [
     title: internalRoutes.webauthn.title
   },
   {
-    path: internalRoutes.zen.path,
-    loadChildren: () =>
-      import('./pages/zen/zen-page.routes').then((m) => m.routes)
-  },
-  {
-    // wildcard, if requested url doesn't match any paths for routes defined
-    // earlier
+    // Wildcard: every former feature deep-link (e.g. `/home`, `/portfolio`,
+    // `/accounts`) collapses onto the single dashboard canvas at `''` (Rule 5).
+    // The `AuthGuard` on `''` then enforces authentication. Declared LAST so it
+    // only matches URLs not claimed by the onboarding routes above.
     path: '**',
-    redirectTo: 'home',
-    pathMatch: 'full'
+    redirectTo: ''
   }
 ];

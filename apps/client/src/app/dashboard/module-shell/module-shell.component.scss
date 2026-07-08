@@ -1,0 +1,138 @@
+// Grid-module chrome styling for GfModuleShellComponent (Rule 7, AAP § 0.3.3).
+//
+// The Ghostfolio host theme uses `mat.all-component-themes()` — NOT
+// `mat.theme()` — so the `--mat-sys-*` system tokens are NOT generated at
+// runtime and `var(--mat-sys-*, <fallback>)` renders the FALLBACK value.
+// Every color below therefore carries a hardcoded fallback (a bare
+// `--mat-sys-*` is prohibited). Primary-brand fallbacks use the Ghostfolio
+// cyan-teal palette (`--gf-theme-primary-500: #36cfcc`; 60 = #00a19f,
+// 80 = #47dbd7, 90 = #6bf7f4), matching
+// ../../components/chat-panel/chat-panel.component.scss (L126-140).
+
+:host {
+  display: block;
+  height: 100%;
+}
+
+.gf-module-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.gf-module-shell__header {
+  align-items: center;
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+}
+
+// The header hosts three ionicons glyphs (the drag handle, the optional leading
+// module glyph, and the remove action). Ghostfolio standardized on ionicons, so
+// the chrome uses `<ion-icon>`; ion-icon renders at 1em by default, so pin it to
+// 1.25rem (20px) to read clearly in the compact header. The glyph color comes
+// from the per-element `color` rules below via ion-icon's `currentColor` fill.
+.gf-module-shell__header ion-icon {
+  font-size: 1.25rem;
+}
+
+.gf-module-drag-handle {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  cursor: move;
+
+  &:active,
+  &:hover {
+    background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+    color: var(--mat-sys-on-primary-container, #00504f);
+  }
+}
+
+.gf-module-shell__icon {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  flex-shrink: 0;
+}
+
+.gf-module-shell__title {
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  font-size: 0.875rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gf-module-shell__spacer {
+  flex: 1 1 auto;
+}
+
+.gf-module-shell__remove {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  flex-shrink: 0;
+}
+
+.gf-module-shell__body {
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+// Dark-theme overrides (dark-mode chrome parity).
+//
+// module-shell was the ONLY new grid-chrome component without a
+// `:host-context(.theme-dark)` block, while dashboard-canvas and module-catalog
+// both have one. Because the host theme uses `mat.all-component-themes()` (NOT
+// `mat.theme()`), the `--mat-sys-*` tokens are absent at runtime and the
+// LIGHT fallbacks above always render — so in dark mode every module rendered as
+// a light-grey header over a white body: a "light island" on the dark canvas.
+//
+// This block supplies dark-tone fallbacks, mirroring the dark pattern already
+// used by module-catalog.component.scss, dashboard-canvas.component.scss, and
+// ../../components/chat-panel/chat-panel.component.scss. Rule 7 is preserved:
+// every color keeps the `var(--mat-sys-<token>, <fallback>)` pattern (only the
+// fallback changes to the dark tone). Flipping the header/title/body color to a
+// light on-surface value also turns the inherited feature-content text
+// light-on-dark, so the wrapped module content reads correctly on the dark
+// module surface supplied by the canvas's `gridster-item` dark override.
+:host-context(.theme-dark) {
+  .gf-module-shell__header {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+    color: var(--mat-sys-on-surface, #fff);
+  }
+
+  .gf-module-drag-handle {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+
+    &:active,
+    &:hover {
+      background-color: var(
+        --mat-sys-primary-container,
+        rgba(71, 219, 215, 0.16)
+      );
+      color: var(--mat-sys-on-primary-container, #6bf7f4);
+    }
+  }
+
+  .gf-module-shell__icon {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .gf-module-shell__title {
+    color: var(--mat-sys-on-surface, #fff);
+  }
+
+  .gf-module-shell__remove {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .gf-module-shell__body {
+    color: var(--mat-sys-on-surface, #fff);
+  }
+}

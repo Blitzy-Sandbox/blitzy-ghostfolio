@@ -1,0 +1,24 @@
+<!--
+  QA F4: the wrapped `gf-fear-and-greed-index` hides its own content via
+  `[hidden]="!fearAndGreedIndex"`, and the global `styles.scss` turns any
+  `[hidden]` element into `display: flex !important; visibility: hidden`. When
+  the Fear & Greed data source is not configured, the authenticated user lacks
+  the `enableFearAndGreedIndex` permission, so this wrapper never fetches a
+  value and `fearAndGreedIndex` stays `undefined` forever. Mounting the child in
+  that state produced a permanently invisible skeleton plus a misleading
+  (hidden) "Extreme Greed" label — content that is present in the DOM but never
+  visible to sighted users. To keep the module honest, only mount the gauge when
+  the index is actually accessible; otherwise render a clearly VISIBLE
+  "unavailable" message. The wrapped component and the global stylesheet are
+  left untouched (Rule 1).
+-->
+@if (hasPermissionToAccessFearAndGreedIndex) {
+  <gf-fear-and-greed-index
+    class="d-flex justify-content-center"
+    [fearAndGreedIndex]="fearAndGreedIndex"
+  />
+} @else {
+  <div class="gf-fear-and-greed-module__unavailable" role="status">
+    <span i18n>The Fear &amp; Greed Index is currently unavailable.</span>
+  </div>
+}

@@ -44,3 +44,10 @@ testem.log
 # System Files
 .DS_Store
 Thumbs.db
+
+# Blitzy QA / platform artifacts (screenshots, screen recordings, perf traces,
+# generated documentation) — collected out-of-band by the platform, never committed
+blitzy/
+
+# Snowflake connector runtime log
+snowflake.log

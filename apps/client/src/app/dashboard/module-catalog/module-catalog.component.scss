@@ -1,0 +1,184 @@
+// =============================================================================
+// GfModuleCatalogComponent — styles
+// =============================================================================
+//
+// Styles for the module catalog overlay (GfModuleCatalogComponent): the
+// searchable panel that lists every module registered with the dashboard
+// module registry and lets the user add a module to the grid canvas via drag
+// or click. It is grid chrome for the single-canvas dashboard subsystem
+// introduced by the route-per-screen -> grid refactor.
+//
+// DESIGN SYSTEM — Rule 7 (Material Design 3, Decision D-020) [MANDATORY]:
+// The Ghostfolio host theme applies Angular Material via
+// `mat.all-component-themes(...)` and NOT `mat.theme(...)`. Consequently the
+// Material 3 system CSS custom properties (the mat-sys-* tokens) are NOT
+// generated at runtime. A bare token reference therefore resolves to nothing;
+// only the hardcoded fallback (the second argument of the CSS `var()`
+// function) is actually rendered. For that reason EVERY color declaration in
+// this file uses the token + fallback pattern, and the fallback reflects the
+// Ghostfolio cyan-teal brand palette (light tone 60 = #00a19f, dark tone
+// 80 = #47dbd7 / 90 = #6bf7f4) rather than Material's default indigo — the
+// exact approach used by
+// apps/client/src/app/components/chat-panel/chat-panel.component.scss.
+//
+// Non-color layout properties (display, width, padding, text-align,
+// font-style) are fixed geometry and intentionally carry no token: Rule 7
+// governs Material Design 3 color/theme tokens only, not layout constants.
+// =============================================================================
+
+// The host renders as a block-level box so the catalog content (title, search
+// field, and module list) stacks and fills the dialog / sidenav surface.
+:host {
+  display: block;
+}
+
+// Catalog heading text — rendered on the surface, so it uses the body-text
+// on-surface token.
+.catalog-title {
+  color: var(--mat-sys-on-surface, #1a1a1a);
+}
+
+// Scrollable catalog body. Painted with the Material 3 surface-container color
+// so the overlay reads as an elevated surface distinct from the page behind
+// it.
+.catalog-content {
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+}
+
+// The search field spans the full width of the catalog body so filtering by
+// module name is easy to reach.
+.catalog-search {
+  width: 100%;
+
+  // The trailing search glyph is an `<ion-icon matSuffix>`; ion-icon renders at
+  // 1em by default, so pin it to 1.5rem (24px) to match the Material form-field
+  // suffix icon footprint. Color inherits from the form field via currentColor.
+  ion-icon {
+    font-size: 1.5rem;
+  }
+}
+
+// Empty state shown when the search query matches no registered module. Muted,
+// italicized, and centered so it reads as secondary guidance rather than an
+// actionable list item.
+.catalog-empty {
+  color: var(--mat-sys-on-surface-variant, #5f6368);
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+}
+
+// A single selectable module row in the catalog list. The leading icon uses
+// the muted on-surface-variant token so it stays visually subordinate to the
+// module name. On hover/focus the row adopts the primary-container accent
+// (cyan-teal brand) with on-primary-container text, and the icon follows the
+// same accent so the whole row reads as one interactive target. The trailing
+// `.catalog-item-add` icon inherits these colors through the nested
+// `ion-icon` selector, so it needs no separate rule. Ghostfolio standardized
+// on ionicons (`<ion-icon>`), so the leading module glyph and the trailing add
+// glyph are `<ion-icon>` elements colored via `currentColor`.
+.catalog-item {
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  // Grab cursor signals that the row is draggable (add via drag, Goal 5 /
+  // § 0.3.2) in addition to being clickable. `cursor` is an interaction
+  // affordance, not a Material color token, so Rule 7 does not apply.
+  cursor: grab;
+
+  ion-icon {
+    // ion-icon renders at 1em by default; pin it to 1.5rem (24px) so the
+    // leading module glyph and the trailing `add` glyph fill the Material list
+    // icon slot at the footprint the former <mat-icon> occupied.
+    color: var(--mat-sys-on-surface-variant, #5f6368);
+    font-size: 1.5rem;
+  }
+
+  &:hover,
+  &:focus {
+    background-color: var(--mat-sys-primary-container, rgba(0, 161, 159, 0.12));
+    color: var(--mat-sys-on-primary-container, #00504f);
+
+    ion-icon {
+      color: var(--mat-sys-on-primary-container, #00504f);
+    }
+  }
+
+  // While a drag is in progress the CDK adds `.cdk-drag-dragging`; switch to
+  // the grabbing cursor for tactile feedback.
+  &.cdk-drag-dragging {
+    cursor: grabbing;
+  }
+}
+
+// Custom drag ghost shown while a catalog row is being dragged (the
+// `*cdkDragPreview` element). Rendered by the CDK in an overlay, so it is
+// styled as a compact, elevated chip carrying the module icon + name. Colors
+// use the Rule 7 token + fallback pattern (brand cyan-teal fallbacks matching
+// the surrounding chrome); geometry values are fixed and untokened.
+.catalog-item-drag-preview {
+  align-items: center;
+  background-color: var(--mat-sys-surface-container, #f1f3f5);
+  border-radius: 0.5rem;
+  box-shadow:
+    0 3px 6px rgba(0, 0, 0, 0.16),
+    0 3px 6px rgba(0, 0, 0, 0.23);
+  color: var(--mat-sys-on-surface, #1a1a1a);
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+
+  ion-icon {
+    color: var(--mat-sys-on-surface-variant, #5f6368);
+    font-size: 1.5rem;
+  }
+}
+
+// Dark-theme overrides. Mirrors the chat-panel dark-mode approach so the
+// catalog inherits the Ghostfolio brand palette in dark mode: a dark surface,
+// muted white text, and the cyan-teal tone 80/90 accent on hover/focus.
+:host-context(.theme-dark) {
+  // Catalog heading text must flip to the light on-surface tone in dark mode.
+  // Without this override it keeps its light-theme #1a1a1a fallback and renders
+  // (near-)invisibly on the dark surface (QA Issue 2 — dark theme). Mirrors the
+  // `.catalog-item` on-surface dark treatment below (same #fff fallback), so the
+  // whole catalog reads as one dark surface with legible white body text.
+  .catalog-title {
+    color: var(--mat-sys-on-surface, #fff);
+  }
+
+  .catalog-content {
+    background-color: var(
+      --mat-sys-surface-container,
+      rgba(255, 255, 255, 0.06)
+    );
+  }
+
+  .catalog-empty {
+    color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+  }
+
+  .catalog-item {
+    color: var(--mat-sys-on-surface, #fff);
+
+    &:hover,
+    &:focus {
+      background-color: var(
+        --mat-sys-primary-container,
+        rgba(71, 219, 215, 0.16)
+      );
+      color: var(--mat-sys-on-primary-container, #6bf7f4);
+
+      ion-icon {
+        color: var(--mat-sys-on-primary-container, #6bf7f4);
+      }
+    }
+  }
+
+  .catalog-item-drag-preview {
+    background-color: var(--mat-sys-surface-container, #2a2a2a);
+    color: var(--mat-sys-on-surface, #fff);
+
+    ion-icon {
+      color: var(--mat-sys-on-surface-variant, rgba(255, 255, 255, 0.6));
+    }
+  }
+}

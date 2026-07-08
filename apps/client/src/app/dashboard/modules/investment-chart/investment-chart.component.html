@@ -1,0 +1,10 @@
+<gf-investment-chart
+  class="h-100"
+  [benchmarkDataItems]="investments"
+  [benchmarkDataLabel]="portfolioEvolutionDataLabel"
+  [currency]="user?.settings?.baseCurrency"
+  [historicalDataItems]="performanceDataItems"
+  [isInPercentage]="hasImpersonationId || user?.settings?.isRestrictedView"
+  [isLoading]="isLoadingInvestmentChart"
+  [locale]="user?.settings?.locale"
+/>
