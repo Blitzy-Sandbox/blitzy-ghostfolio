@@ -81,6 +81,26 @@ export class GfHomeOverviewComponent implements OnInit {
             permissions.createActivity
           );
 
+          // Derive the display flags from the user settings HERE — inside the
+          // `stateChanged` callback where `this.user` is guaranteed populated —
+          // rather than in `ngOnInit`. When this component is mounted as the
+          // `portfolio-overview` dashboard grid module it is created
+          // dynamically via `NgComponentOutlet` during layout hydration, which
+          // can run BEFORE `GET /api/v1/user` populates the user store (cold
+          // load). In that race `stateChanged` replays `null`, so `this.user`
+          // is still undefined when `ngOnInit` runs; computing these there
+          // threw `TypeError: Cannot read properties of undefined (reading
+          // 'settings')`. Computing them on user arrival keeps behavior
+          // identical on the warm (route-mounted) path — where the
+          // BehaviorSubject replays the user synchronously at construction —
+          // and recovers correctly on the cold path once the delayed user
+          // fetch resolves.
+          this.showDetails =
+            !this.user.settings.isRestrictedView &&
+            this.user.settings.viewMode !== 'ZEN';
+
+          this.unit = this.showDetails ? this.user.settings.baseCurrency : '%';
+
           this.update();
         }
       });
@@ -88,12 +108,6 @@ export class GfHomeOverviewComponent implements OnInit {
 
   public ngOnInit() {
     this.deviceType = this.deviceService.getDeviceInfo().deviceType;
-
-    this.showDetails =
-      !this.user.settings.isRestrictedView &&
-      this.user.settings.viewMode !== 'ZEN';
-
-    this.unit = this.showDetails ? this.user.settings.baseCurrency : '%';
 
     this.impersonationStorageService
       .onChangeHasImpersonation()

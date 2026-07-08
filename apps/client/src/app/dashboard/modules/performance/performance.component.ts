@@ -56,6 +56,24 @@ export class GfPerformanceModuleComponent implements OnInit {
         if (state?.user) {
           this.user = state.user;
 
+          // Derive the display flags from the user settings HERE — inside the
+          // `stateChanged` callback where `this.user` is guaranteed populated —
+          // rather than in `ngOnInit`. The canvas mounts this wrapper
+          // dynamically via `NgComponentOutlet` during layout hydration, which
+          // can run BEFORE `GET /api/v1/user` populates the user store (cold
+          // load). In that race `stateChanged` replays `null`, so `this.user`
+          // is still undefined when `ngOnInit` runs; computing these there
+          // threw `TypeError: Cannot read properties of undefined (reading
+          // 'settings')`. Computing them on user arrival keeps behavior
+          // identical on the warm path (the BehaviorSubject replays the user
+          // synchronously at construction) and recovers correctly on the cold
+          // path once the delayed user fetch resolves.
+          this.showDetails =
+            !this.user.settings.isRestrictedView &&
+            this.user.settings.viewMode !== 'ZEN';
+
+          this.unit = this.showDetails ? this.user.settings.baseCurrency : '%';
+
           this.update();
         }
       });
@@ -63,12 +81,6 @@ export class GfPerformanceModuleComponent implements OnInit {
 
   public ngOnInit() {
     this.deviceType = this.deviceService.getDeviceInfo().deviceType;
-
-    this.showDetails =
-      !this.user.settings.isRestrictedView &&
-      this.user.settings.viewMode !== 'ZEN';
-
-    this.unit = this.showDetails ? this.user.settings.baseCurrency : '%';
 
     this.impersonationStorageService
       .onChangeHasImpersonation()
