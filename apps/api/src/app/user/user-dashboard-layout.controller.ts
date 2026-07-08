@@ -12,16 +12,15 @@ import {
   Inject,
   NotFoundException,
   Patch,
-  Res,
   UseGuards
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { UserDashboardLayout } from '@prisma/client';
-import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
 import { DashboardLayoutDto } from './dtos/dashboard-layout.dto';
+import { getCorrelationId } from './user-dashboard-layout.middleware';
 import { UserDashboardLayoutService } from './user-dashboard-layout.service';
 
 /**
@@ -51,11 +50,17 @@ import { UserDashboardLayoutService } from './user-dashboard-layout.service';
  * is auto-validated by the global `ValidationPipe` against `DashboardLayoutDto`
  * (invalid body → HTTP 400 before the method runs).
  *
- * OBSERVABILITY (AAP § 0.6.1 / § 0.8.4): each endpoint generates a fresh
- * per-request correlation id via `node:crypto.randomUUID()`, sets it FIRST as
- * the `X-Correlation-ID` response header (so it is emitted on BOTH the success
- * and thrown-exception paths — Express preserves headers set before a thrown
- * exception), and propagates it into the service for end-to-end log tracing.
+ * OBSERVABILITY (AAP § 0.6.1 / § 0.8.4): the per-request correlation id and
+ * the `X-Correlation-ID` response header are owned by
+ * `UserDashboardLayoutObservabilityMiddleware` (applied to these routes via
+ * `UserModule.configure(...)`), which runs BEFORE the guard/pipe boundary so
+ * the header, metrics, and a structured log line are emitted on EVERY outcome
+ * — including guard-rejected `401`/`403` and pipe-rejected `400` that never
+ * reach this handler. This controller simply reuses the middleware-generated
+ * id (via `getCorrelationId`) and propagates it into the service so the
+ * service-layer Prisma-error logs share the same id. When the middleware did
+ * not run (an isolated unit test constructing the controller directly), it
+ * falls back to a freshly generated id.
  */
 @Controller('user/layout')
 export class UserDashboardLayoutController {
@@ -78,12 +83,8 @@ export class UserDashboardLayoutController {
   @Get()
   @HasPermission(permissions.readDashboardLayout)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
-  public async getDashboardLayout(
-    @Res({ passthrough: true }) response: Response
-  ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
-
-    response.setHeader('X-Correlation-ID', correlationId);
+  public async getDashboardLayout(): Promise<UserDashboardLayout> {
+    const correlationId = this.resolveCorrelationId();
 
     const userId = this.request.user.id;
     const layout = await this.userDashboardLayoutService.findByUserId(
@@ -125,17 +126,25 @@ export class UserDashboardLayoutController {
   @HasPermission(permissions.updateDashboardLayout)
   @UseGuards(AuthGuard('jwt'), HasPermissionGuard)
   public async updateDashboardLayout(
-    @Body() dto: DashboardLayoutDto,
-    @Res({ passthrough: true }) response: Response
+    @Body() dto: DashboardLayoutDto
   ): Promise<UserDashboardLayout> {
-    const correlationId = randomUUID();
-
-    response.setHeader('X-Correlation-ID', correlationId);
+    const correlationId = this.resolveCorrelationId();
 
     return this.userDashboardLayoutService.upsertForUser(
       this.request.user.id,
       dto,
       correlationId
     );
+  }
+
+  /**
+   * Returns the correlation id stamped on the request by
+   * `UserDashboardLayoutObservabilityMiddleware`. Falls back to a freshly
+   * generated id when the middleware did not run (e.g. an isolated unit test
+   * that instantiates the controller directly), so the service always
+   * receives a valid id to tag its logs with.
+   */
+  private resolveCorrelationId(): string {
+    return getCorrelationId(this.request) ?? randomUUID();
   }
 }

@@ -9,7 +9,6 @@ import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { AuthGuard } from '@nestjs/passport';
 import { UserDashboardLayout } from '@prisma/client';
-import type { Response } from 'express';
 
 import { DashboardLayoutDto } from './dtos/dashboard-layout.dto';
 import { UserDashboardLayoutController } from './user-dashboard-layout.controller';
@@ -40,8 +39,16 @@ jest.mock('./user-dashboard-layout.service', () => {
  * record; PATCH persists and returns the row (200); guard wiring so
  * unauthenticated → 401 and unauthorized → 403 (Rule 8); the JWT-derived
  * userId is always used (never a body value); `@HttpCode(HttpStatus.OK)` on
- * PATCH; and the `X-Correlation-ID` header carries a v4 UUID propagated to the
- * service.
+ * PATCH; and a v4-UUID correlation id is propagated to the service.
+ *
+ * The `X-Correlation-ID` response header is emitted by
+ * `UserDashboardLayoutObservabilityMiddleware` (before the guard/pipe
+ * boundary, so it is present on the 401/403/400 paths this handler never
+ * reaches); that behaviour is covered by
+ * `user-dashboard-layout.middleware.spec.ts`. When the middleware has not run
+ * (these isolated unit tests instantiate the controller directly), the
+ * controller falls back to a freshly generated v4 id, which is what these
+ * tests assert is propagated to the service.
  */
 describe('UserDashboardLayoutController', () => {
   const USER_1_ID = 'user-1-uuid';
@@ -76,12 +83,6 @@ describe('UserDashboardLayoutController', () => {
     };
   };
 
-  const buildMockResponse = (): jest.Mocked<Response> => {
-    return {
-      setHeader: jest.fn()
-    } as unknown as jest.Mocked<Response>;
-  };
-
   function buildRequest(userId: string): RequestWithUser {
     return {
       user: {
@@ -114,10 +115,7 @@ describe('UserDashboardLayoutController', () => {
       upsertedRecord
     );
 
-    const result = await controller.updateDashboardLayout(
-      VALID_DTO,
-      buildMockResponse()
-    );
+    const result = await controller.updateDashboardLayout(VALID_DTO);
 
     expect(result).toBe(upsertedRecord);
     expect(userDashboardLayoutService.upsertForUser).toHaveBeenCalledTimes(1);
@@ -138,9 +136,9 @@ describe('UserDashboardLayoutController', () => {
   it('throws NotFoundException (HTTP 404, not 500) when no layout exists', async () => {
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
 
-    await expect(
-      controller.getDashboardLayout(buildMockResponse())
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.getDashboardLayout()).rejects.toBeInstanceOf(
+      NotFoundException
+    );
 
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledTimes(1);
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
@@ -153,7 +151,7 @@ describe('UserDashboardLayoutController', () => {
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
 
     try {
-      await controller.getDashboardLayout(buildMockResponse());
+      await controller.getDashboardLayout();
       fail('Expected NotFoundException to be thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(NotFoundException);
@@ -181,7 +179,7 @@ describe('UserDashboardLayoutController', () => {
       persistedRecord
     );
 
-    const result = await controller.getDashboardLayout(buildMockResponse());
+    const result = await controller.getDashboardLayout();
 
     expect(result).toBe(persistedRecord);
     expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
@@ -191,61 +189,88 @@ describe('UserDashboardLayoutController', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Observability — X-Correlation-ID header (v4 UUID) on both endpoints
+  // Observability — correlation id propagated to the service (v4 UUID).
+  //
+  // The `X-Correlation-ID` response HEADER is now owned by
+  // `UserDashboardLayoutObservabilityMiddleware` (verified in
+  // `user-dashboard-layout.middleware.spec.ts`), because it must be emitted on
+  // guard/pipe-rejected paths (401/403/400) that never reach this handler.
+  // These tests assert the controller's remaining responsibility: sourcing a
+  // v4-UUID correlation id and propagating it to the service. With no
+  // middleware in an isolated unit test, the controller falls back to a fresh
+  // `randomUUID()`.
   // ---------------------------------------------------------------------------
 
-  it('sets an X-Correlation-ID response header (v4 UUID) on GET', async () => {
+  it('propagates a fresh v4-UUID correlation id to the service on GET (fallback)', async () => {
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(
       buildLayoutRecord(USER_1_ID)
     );
-    const httpResponse = buildMockResponse();
 
-    await controller.getDashboardLayout(httpResponse);
+    await controller.getDashboardLayout();
 
-    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
-    expect(httpResponse.setHeader).toHaveBeenCalledWith(
-      'X-Correlation-ID',
-      expect.any(String)
-    );
-    const headerValue = httpResponse.setHeader.mock.calls[0][1] as string;
-    expect(headerValue).toMatch(V4_PATTERN);
+    const correlationId = userDashboardLayoutService.findByUserId.mock
+      .calls[0][1] as string;
+    expect(correlationId).toMatch(V4_PATTERN);
   });
 
-  it('sets an X-Correlation-ID response header (v4 UUID) on PATCH', async () => {
+  it('propagates a fresh v4-UUID correlation id to the service on PATCH (fallback)', async () => {
     userDashboardLayoutService.upsertForUser.mockResolvedValueOnce(
       buildLayoutRecord(USER_1_ID)
     );
-    const httpResponse = buildMockResponse();
 
-    await controller.updateDashboardLayout(VALID_DTO, httpResponse);
+    await controller.updateDashboardLayout(VALID_DTO);
 
-    expect(httpResponse.setHeader).toHaveBeenCalledTimes(1);
-    expect(httpResponse.setHeader).toHaveBeenCalledWith(
-      'X-Correlation-ID',
-      expect.any(String)
-    );
-    const headerValue = httpResponse.setHeader.mock.calls[0][1] as string;
-    expect(headerValue).toMatch(V4_PATTERN);
+    const correlationId = userDashboardLayoutService.upsertForUser.mock
+      .calls[0][2] as string;
+    expect(correlationId).toMatch(V4_PATTERN);
   });
 
-  it('emits a fresh, distinct X-Correlation-ID per request (also on the 404 path)', async () => {
+  it('reuses the middleware-supplied correlation id when present on the request', async () => {
+    const middlewareCorrelationId = '11111111-2222-4333-8444-555555555555';
+    const requestWithId = {
+      correlationId: middlewareCorrelationId,
+      user: {
+        id: USER_1_ID,
+        permissions: [
+          permissions.readDashboardLayout,
+          permissions.updateDashboardLayout
+        ]
+      }
+    } as unknown as RequestWithUser;
+    const controllerWithId = new UserDashboardLayoutController(
+      requestWithId,
+      userDashboardLayoutService
+    );
+    userDashboardLayoutService.findByUserId.mockResolvedValueOnce(
+      buildLayoutRecord(USER_1_ID)
+    );
+
+    await controllerWithId.getDashboardLayout();
+
+    expect(userDashboardLayoutService.findByUserId).toHaveBeenCalledWith(
+      USER_1_ID,
+      middlewareCorrelationId
+    );
+  });
+
+  it('emits a fresh, distinct correlation id per request (also on the 404 path)', async () => {
     userDashboardLayoutService.findByUserId.mockResolvedValue(null);
-    const firstResponse = buildMockResponse();
-    const secondResponse = buildMockResponse();
 
     try {
-      await controller.getDashboardLayout(firstResponse);
+      await controller.getDashboardLayout();
     } catch {
-      /* expected NotFoundException — header still emitted */
+      /* expected NotFoundException — id still propagated to the service */
     }
     try {
-      await controller.getDashboardLayout(secondResponse);
+      await controller.getDashboardLayout();
     } catch {
-      /* expected NotFoundException — header still emitted */
+      /* expected NotFoundException — id still propagated to the service */
     }
 
-    const firstId = firstResponse.setHeader.mock.calls[0][1] as string;
-    const secondId = secondResponse.setHeader.mock.calls[0][1] as string;
+    const firstId = userDashboardLayoutService.findByUserId.mock
+      .calls[0][1] as string;
+    const secondId = userDashboardLayoutService.findByUserId.mock
+      .calls[1][1] as string;
     expect(firstId).toMatch(V4_PATTERN);
     expect(secondId).toMatch(V4_PATTERN);
     expect(firstId).not.toBe(secondId);
@@ -318,7 +343,7 @@ describe('UserDashboardLayoutController', () => {
     userDashboardLayoutService.findByUserId.mockResolvedValueOnce(null);
 
     try {
-      await controller.getDashboardLayout(buildMockResponse());
+      await controller.getDashboardLayout();
     } catch {
       /* expected NotFoundException */
     }
@@ -341,7 +366,7 @@ describe('UserDashboardLayoutController', () => {
       buildLayoutRecord(USER_2_ID)
     );
 
-    await user2Controller.updateDashboardLayout(VALID_DTO, buildMockResponse());
+    await user2Controller.updateDashboardLayout(VALID_DTO);
 
     const upsertArgs = userDashboardLayoutService.upsertForUser.mock.calls[0];
     expect(upsertArgs[0]).toBe(USER_2_ID);
