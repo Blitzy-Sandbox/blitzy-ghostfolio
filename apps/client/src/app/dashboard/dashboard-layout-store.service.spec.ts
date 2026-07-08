@@ -29,8 +29,13 @@ import { DashboardLayoutService } from './dashboard-layout.service';
 describe('DashboardLayoutStoreService', () => {
   let service: DashboardLayoutStoreService;
   // Test double typed loosely so jest-mock helpers (mockReturnValue etc.) are
-  // ergonomic; the store only calls get()/patch() on this collaborator.
-  let layoutServiceMock: { get: jest.Mock; patch: jest.Mock };
+  // ergonomic; the store calls get()/patch()/persistOnTeardown() on this
+  // collaborator.
+  let layoutServiceMock: {
+    get: jest.Mock;
+    patch: jest.Mock;
+    persistOnTeardown: jest.Mock;
+  };
   // The most recent payload the store handed to patch(), captured (typed) by the
   // mock implementation so assertions read the persisted geometry without
   // reaching into the untyped `mock.calls`.
@@ -82,7 +87,11 @@ describe('DashboardLayoutStoreService', () => {
           items: payload.items,
           updatedAt: '2024-01-03T00:00:00.000Z'
         });
-      })
+      }),
+      // Teardown transport (keepalive fetch) — returns true by default to model
+      // a successfully dispatched request (an authenticated browser). Tests that
+      // need the no-op path override this per-call with mockReturnValueOnce(false).
+      persistOnTeardown: jest.fn(() => true)
     };
 
     TestBed.configureTestingModule({
@@ -308,6 +317,131 @@ describe('DashboardLayoutStoreService', () => {
       tick(DEBOUNCE_MS);
 
       expect(layoutServiceMock.patch).not.toHaveBeenCalled();
+    }));
+  });
+
+  /**
+   * Browser-teardown persistence (fixes QA CP4-Issue1, the flush-on-destroy
+   * data-loss bug): a grid change made inside the ~500 ms debounce window before
+   * a hard reload / tab close was lost because the Angular destroy hooks do not
+   * run on browser unload and the async `HttpClient` PATCH is cancelled by the
+   * unload. `flushOnUnload()` (wired to `pagehide` / `visibilitychange`) routes
+   * the pending change through the `keepalive` teardown transport instead.
+   */
+  describe('flushOnUnload() / browser teardown (QA CP4-Issue1)', () => {
+    // Applies a genuine in-place geometry change and marks it pending WITHOUT
+    // letting the debounce elapse — the exact "edit inside the debounce window"
+    // precondition of the data-loss bug.
+    function makePendingChange(): void {
+      const item = service.items()[0] as { x: number; y: number };
+      item.x = 4;
+      item.y = 8;
+      service.syncFromGrid();
+    }
+
+    it('persists a pending change via the keepalive teardown transport (not the async patch) and advances the baseline so the trailing debounce does not double-save', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+      layoutServiceMock.patch.mockClear();
+
+      makePendingChange();
+      service.flushOnUnload();
+
+      // Sent via the keepalive transport carrying the mutated geometry — the
+      // regular async patch (which the browser would cancel on unload) is NOT used.
+      expect(layoutServiceMock.persistOnTeardown).toHaveBeenCalledTimes(1);
+      const sent = layoutServiceMock.persistOnTeardown.mock
+        .calls[0][0] as DashboardLayoutPatchPayload;
+      expect(sent.items[0]).toEqual(expect.objectContaining({ x: 4, y: 8 }));
+      expect(layoutServiceMock.patch).not.toHaveBeenCalled();
+
+      // Pending cleared + baseline advanced: draining the still-armed debounce
+      // must NOT produce a duplicate save.
+      tick(DEBOUNCE_MS);
+      expect(layoutServiceMock.patch).not.toHaveBeenCalled();
+      expect(layoutServiceMock.persistOnTeardown).toHaveBeenCalledTimes(1);
+    }));
+
+    it('is a no-op when nothing is pending (e.g. a zero-interaction load)', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+
+      service.flushOnUnload();
+
+      expect(layoutServiceMock.persistOnTeardown).not.toHaveBeenCalled();
+    }));
+
+    it('leaves the change pending when the teardown transport reports a no-op (e.g. unauthenticated), so a later flush retries it', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+      layoutServiceMock.patch.mockClear();
+
+      makePendingChange();
+
+      // Transport could not dispatch (no token / no fetch): the change must
+      // remain pending rather than being silently dropped.
+      layoutServiceMock.persistOnTeardown.mockReturnValueOnce(false);
+      service.flushOnUnload();
+      expect(layoutServiceMock.persistOnTeardown).toHaveBeenCalledTimes(1);
+
+      // A subsequent in-app flush retries the still-pending change via patch().
+      service.flush();
+      expect(layoutServiceMock.patch).toHaveBeenCalledTimes(1);
+      expect(lastPatchPayload?.items[0]).toEqual(
+        expect.objectContaining({ x: 4, y: 8 })
+      );
+    }));
+
+    it('flushes a pending change on the window "pagehide" event (hard reload / tab close)', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+      layoutServiceMock.patch.mockClear();
+
+      makePendingChange();
+
+      // pagehide fires before the debounce window elapses.
+      window.dispatchEvent(new Event('pagehide'));
+
+      expect(layoutServiceMock.persistOnTeardown).toHaveBeenCalledTimes(1);
+      expect(layoutServiceMock.patch).not.toHaveBeenCalled();
+
+      // The still-armed debounce must not double-persist.
+      tick(DEBOUNCE_MS);
+      expect(layoutServiceMock.patch).not.toHaveBeenCalled();
+    }));
+
+    it('flushes a pending change when the tab is backgrounded (visibilitychange -> hidden)', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+
+      makePendingChange();
+
+      // Shadow the prototype getter so the store sees the tab as hidden.
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden'
+      });
+      try {
+        document.dispatchEvent(new Event('visibilitychange'));
+        expect(layoutServiceMock.persistOnTeardown).toHaveBeenCalledTimes(1);
+      } finally {
+        // Revert to the jsdom prototype getter ('visible') for other tests.
+        delete (document as unknown as { visibilityState?: unknown })
+          .visibilityState;
+      }
+    }));
+
+    it('does NOT flush on visibilitychange while the document is still visible', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+
+      makePendingChange();
+
+      // visibilityState defaults to 'visible' in jsdom — a tab-focus change, not
+      // a teardown, must not trigger a teardown persist.
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      expect(layoutServiceMock.persistOnTeardown).not.toHaveBeenCalled();
     }));
   });
 });

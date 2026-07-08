@@ -1,3 +1,5 @@
+import { TokenStorageService } from '@ghostfolio/client/services/token-storage.service';
+import { HEADER_KEY_TOKEN } from '@ghostfolio/common/config';
 import { DashboardLayout } from '@ghostfolio/common/interfaces';
 
 import { provideHttpClient } from '@angular/common/http';
@@ -12,6 +14,13 @@ import { DashboardLayoutService } from './dashboard-layout.service';
 describe('DashboardLayoutService', () => {
   let httpMock: HttpTestingController;
   let service: DashboardLayoutService;
+  // Controllable token source for persistOnTeardown()'s manual Authorization
+  // header (the raw keepalive fetch bypasses the AuthInterceptor).
+  let tokenStorageMock: { getToken: jest.Mock };
+  // Spy over the global `fetch` used by the keepalive teardown transport,
+  // restored after each test.
+  let fetchMock: jest.Mock;
+  let originalFetch: typeof globalThis.fetch;
 
   const layoutUrl = '/api/v1/user/layout';
 
@@ -28,9 +37,18 @@ describe('DashboardLayoutService', () => {
   };
 
   beforeEach(() => {
+    tokenStorageMock = { getToken: jest.fn(() => 'test-jwt-token') };
+
+    // Install a fetch spy for the keepalive teardown transport. jsdom does not
+    // implement fetch, so this both provides it and lets us assert on it.
+    originalFetch = globalThis.fetch;
+    fetchMock = jest.fn(() => Promise.resolve({ ok: true } as Response));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
     TestBed.configureTestingModule({
       providers: [
         DashboardLayoutService,
+        { provide: TokenStorageService, useValue: tokenStorageMock },
         provideHttpClient(),
         provideHttpClientTesting()
       ]
@@ -42,6 +60,7 @@ describe('DashboardLayoutService', () => {
 
   afterEach(() => {
     httpMock.verify();
+    globalThis.fetch = originalFetch;
   });
 
   describe('get()', () => {
@@ -107,6 +126,51 @@ describe('DashboardLayoutService', () => {
         items: mockItems,
         updatedAt: mockRow.updatedAt
       });
+    });
+  });
+
+  describe('persistOnTeardown()', () => {
+    it('dispatches a keepalive PATCH carrying the bearer token and returns true (fixes QA CP4-Issue1)', () => {
+      const dispatched = service.persistOnTeardown({ items: mockItems });
+
+      expect(dispatched).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(layoutUrl);
+      expect(init.method).toBe('PATCH');
+      // `keepalive` is what lets the request outlive the unloading document.
+      expect(init.keepalive).toBe(true);
+
+      // The AuthInterceptor does not run for a raw fetch, so the token must be
+      // attached manually under the same header the interceptor uses.
+      const headers = init.headers as Record<string, string>;
+      expect(headers[HEADER_KEY_TOKEN]).toBe('Bearer test-jwt-token');
+      expect(headers['Content-Type']).toBe('application/json');
+
+      // Body is the same `{ items }` shape patch() sends.
+      expect(JSON.parse(init.body as string)).toEqual({ items: mockItems });
+
+      // Crucially, it must NOT go through HttpClient (which the browser would
+      // cancel on unload) — no XHR is issued.
+      httpMock.expectNone(layoutUrl);
+    });
+
+    it('is a no-op returning false when unauthenticated (no token)', () => {
+      tokenStorageMock.getToken.mockReturnValue(null);
+
+      const dispatched = service.persistOnTeardown({ items: mockItems });
+
+      expect(dispatched).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op returning false when fetch is unavailable (non-browser environment)', () => {
+      globalThis.fetch = undefined as unknown as typeof globalThis.fetch;
+
+      const dispatched = service.persistOnTeardown({ items: mockItems });
+
+      expect(dispatched).toBe(false);
     });
   });
 });

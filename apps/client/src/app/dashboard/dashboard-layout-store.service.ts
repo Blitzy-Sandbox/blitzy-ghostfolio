@@ -61,9 +61,15 @@ type DashboardGridItem = GridsterItemConfig & { type: string };
  *   re-save it.
  * - Flushes any pending change on teardown so the final edit of a drag/resize
  *   burst is not lost when the user navigates away before the debounce window
- *   elapses (AAP § 0.7.2). The canvas additionally calls {@link flush} from
- *   its own `ngOnDestroy`; the root `DestroyRef` backstop here covers
- *   application teardown.
+ *   elapses (AAP § 0.7.2). Two teardown paths are covered:
+ *     - In-app teardown (Angular destroy hooks) via {@link flush}: the canvas
+ *       calls it from its own `ngOnDestroy` and the root `DestroyRef` backstop
+ *       here calls it too. This issues the regular `HttpClient` `PATCH`.
+ *     - Browser teardown (hard reload, tab close, bfcache eviction, tab
+ *       backgrounding) via {@link flushOnUnload}, wired to `pagehide` /
+ *       `visibilitychange` in {@link registerTeardownFlush}. The Angular hooks
+ *       do NOT run in these cases, so this path uses a `keepalive` transport
+ *       that survives the unloading document (fixes QA CP4-Issue1).
  *
  * The store is part of the grid layer (not a module wrapper), so importing the
  * gridster item type here is permitted — Rule 1 only forbids gridster imports
@@ -153,6 +159,14 @@ export class DashboardLayoutStoreService {
     // debounce window is not lost; the canvas also flushes from its own
     // ngOnDestroy for component-level teardown / navigation (AAP § 0.7.2).
     this.destroyRef.onDestroy(() => this.flush());
+
+    // Browser-teardown backstop (fixes QA CP4-Issue1). The Angular hooks above
+    // do NOT fire on a hard browser reload or tab close, and the canvas is
+    // hard-mounted so it is never destroyed in-app; a change made inside the
+    // final debounce window before such an unload was therefore lost. Listen
+    // for the browser lifecycle events that DO fire at teardown and flush via
+    // a keepalive transport that survives the unload (see {@link flushOnUnload}).
+    this.registerTeardownFlush();
   }
 
   /**
@@ -175,6 +189,48 @@ export class DashboardLayoutStoreService {
   public flush(): void {
     if (this.hasPendingChange) {
       this.persistNow();
+    }
+  }
+
+  /**
+   * Persists any pending change during page teardown (hard reload, tab close,
+   * bfcache eviction, or the tab being backgrounded) using a transport that
+   * survives the unloading document (fixes QA CP4-Issue1).
+   *
+   * Unlike {@link flush} — which issues the regular asynchronous `HttpClient`
+   * `PATCH` the browser cancels the moment the document starts unloading — this
+   * routes through {@link DashboardLayoutService.persistOnTeardown}, a
+   * `keepalive fetch` the browser is allowed to complete after the page is
+   * gone. It is invoked from the `pagehide` / `visibilitychange` listeners
+   * registered in {@link registerTeardownFlush}.
+   *
+   * A no-op when nothing is pending. When a change is pending, the pending flag
+   * is cleared and the persistence baseline advanced OPTIMISTICALLY (the
+   * response cannot be observed during unload, so success is assumed) — but
+   * ONLY if the request was actually dispatched. If `persistOnTeardown` reports
+   * a no-op (e.g. unauthenticated), the change is left pending so the debounced
+   * pipeline or a later flush still retries it. This mirrors the
+   * clear-optimistically / re-raise-on-failure contract of {@link persistNow}.
+   */
+  public flushOnUnload(): void {
+    if (!this.hasPendingChange) {
+      return;
+    }
+
+    // Build the payload once so the body sent to the server and the snapshot
+    // recorded as the new baseline are guaranteed identical (mirrors
+    // `persistNow`).
+    const items = this.toLayoutItems();
+    const snapshot = JSON.stringify(items);
+
+    if (this.dashboardLayoutService.persistOnTeardown({ items })) {
+      // The keepalive request is in flight and will complete during unload;
+      // adopt the sent layout as the baseline and clear the pending flag so a
+      // subsequent teardown event (e.g. `visibilitychange` then `pagehide`)
+      // and the still-pending debounce timer both become no-ops — avoiding a
+      // duplicate save.
+      this.hasPendingChange = false;
+      this.lastPersistedLayoutSnapshot = snapshot;
     }
   }
 
@@ -311,6 +367,43 @@ export class DashboardLayoutStoreService {
         // layout) and re-flag so a later grid event or flush retries the save.
         this.hasPendingChange = true;
       }
+    });
+  }
+
+  /**
+   * Registers the browser-lifecycle listeners that trigger a teardown flush
+   * (fixes QA CP4-Issue1). Called once from the constructor. The listeners are
+   * detached via the root `DestroyRef` so they never leak (e.g. across test
+   * runs). No-op outside a browser (guards the DOM globals for SSR/unit tests).
+   */
+  private registerTeardownFlush(): void {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    // `pagehide` is the reliable modern teardown signal: it fires on hard
+    // reload, tab/window close, and bfcache eviction — the cases where the
+    // Angular destroy hooks do NOT run. (`beforeunload` is unreliable and a
+    // legacy `unload` listener would disqualify the page from the bfcache.)
+    const onPageHide = () => this.flushOnUnload();
+
+    // `visibilitychange` -> hidden covers backgrounding / app-switch teardown
+    // (notably on mobile, where `pagehide` may not fire). It also fires just
+    // before `pagehide` on a reload, which is harmless: `flushOnUnload` is
+    // guarded by `hasPendingChange` and clears it on dispatch, so the paired
+    // `pagehide` becomes a no-op rather than a duplicate save.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        this.flushOnUnload();
+      }
+    };
+
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    this.destroyRef.onDestroy(() => {
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     });
   }
 
