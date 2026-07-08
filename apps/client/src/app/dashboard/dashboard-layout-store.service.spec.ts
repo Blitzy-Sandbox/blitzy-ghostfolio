@@ -282,6 +282,34 @@ describe('DashboardLayoutStoreService', () => {
       tick(DEBOUNCE_MS);
       expect(layoutServiceMock.patch).toHaveBeenCalledTimes(2);
     }));
+
+    it('emits saveError$ when a save fails (and not when it succeeds) so the shell can surface it (QA F7)', fakeAsync(() => {
+      service.hydrate().subscribe();
+      tick(DEBOUNCE_MS);
+
+      let saveErrorCount = 0;
+      service.saveError$.subscribe(() => (saveErrorCount += 1));
+
+      const item = service.items()[0] as { cols: number; rows: number };
+
+      // A successful save must NOT emit saveError$.
+      item.cols = 9;
+      service.syncFromGrid();
+      tick(DEBOUNCE_MS);
+      expect(layoutServiceMock.patch).toHaveBeenCalledTimes(1);
+      expect(saveErrorCount).toBe(0);
+
+      // A failing save MUST emit saveError$ exactly once (the store notifies;
+      // it never shows UI itself — Rule 2 headless single source of truth).
+      item.rows = 7;
+      layoutServiceMock.patch.mockReturnValueOnce(
+        throwError(() => new Error('network'))
+      );
+      service.syncFromGrid();
+      tick(DEBOUNCE_MS);
+      expect(layoutServiceMock.patch).toHaveBeenCalledTimes(2);
+      expect(saveErrorCount).toBe(1);
+    }));
   });
 
   describe('flush()', () => {

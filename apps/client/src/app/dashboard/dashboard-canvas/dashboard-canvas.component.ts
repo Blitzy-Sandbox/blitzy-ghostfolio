@@ -11,6 +11,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { IonIcon } from '@ionic/angular/standalone';
 import {
   DisplayGrid,
@@ -22,6 +23,7 @@ import {
 } from 'angular-gridster2';
 import { addIcons } from 'ionicons';
 import { addOutline } from 'ionicons/icons';
+import ms from 'ms';
 
 import { DashboardLayoutStoreService } from '../dashboard-layout-store.service';
 import { GfModuleCatalogComponent } from '../module-catalog/module-catalog.component';
@@ -143,12 +145,32 @@ export class GfDashboardCanvasComponent implements OnDestroy, OnInit {
 
   private readonly dialog = inject(MatDialog);
 
+  private readonly snackBar = inject(MatSnackBar);
+
   public constructor() {
     // Register the FAB's ionicons glyph (`add-outline`). Ghostfolio standardized
     // on ionicons (`<ion-icon>` + `addIcons`) rather than the Material Icons
     // glyph font (not bundled), so the add-module FAB renders a bundled ionicons
     // SVG for cohesion with the rest of the app.
     addIcons({ addOutline });
+
+    // QA F7: surface layout-save failures to the user. The store is a headless
+    // single source of truth (Rule 2) that only NOTIFIES via `saveError$`;
+    // showing the notification is the canvas/shell's concern (AAP § 0.3.2 maps
+    // save-error feedback to `MatSnackBar`). This covers the offline / status-0
+    // network loss the global `HttpResponseInterceptor` stays silent on (it
+    // reacts only to 401/403/429/500 HTTP statuses). `MatSnackBar` shows one
+    // snackbar at a time, so this never stacks with the interceptor.
+    // `takeUntilDestroyed()` is called here in the injection context (no
+    // explicit `DestroyRef` argument required) so the subscription is torn down
+    // with the component.
+    this.store.saveError$.pipe(takeUntilDestroyed()).subscribe(() => {
+      this.snackBar.open(
+        $localize`Couldn't save your dashboard layout. Your latest changes may not be saved.`,
+        $localize`Okay`,
+        { duration: ms('6 seconds') }
+      );
+    });
   }
 
   public ngOnInit() {

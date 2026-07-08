@@ -100,6 +100,19 @@ export class DashboardLayoutStoreService {
   private readonly persistTrigger$ = new Subject<void>();
 
   /**
+   * Fires once each time a layout `PATCH` fails (from {@link persistNow}). The
+   * store deliberately performs NO UI of its own — surfacing the failure to the
+   * user (per AAP § 0.3.2, via a `MatSnackBar`) is the canvas/shell's concern,
+   * keeping the store a headless single source of truth (Rule 2). The canvas
+   * (`GfDashboardCanvasComponent`) subscribes and shows the notification (QA
+   * F7). The `void` payload is intentional: consumers only need to know that a
+   * save failed, not the HTTP particulars — status-specific handling (401/403/
+   * 429/500) remains the global `HttpResponseInterceptor`'s job, while this
+   * covers the offline / status-0 network loss the interceptor stays silent on.
+   */
+  private readonly saveErrorSubject = new Subject<void>();
+
+  /**
    * `true` once a grid event has mutated the layout but the debounced persist
    * has not yet completed. Guards {@link flush} / {@link persistNow} so that a
    * teardown flush is a no-op when nothing changed, and is re-raised if a save
@@ -144,6 +157,17 @@ export class DashboardLayoutStoreService {
    * initializers run in declaration order).
    */
   public readonly loading = this.loadingSignal.asReadonly();
+
+  /**
+   * Read-only stream that fires whenever a layout save fails, for the canvas /
+   * shell to surface to the user (a `MatSnackBar`, AAP § 0.3.2). See
+   * {@link saveErrorSubject} for why the store notifies but never shows UI
+   * itself (Rule 2 — headless single source of truth). Declared after
+   * `saveErrorSubject` because this initializer eagerly reads it (field
+   * initializers run in declaration order).
+   */
+  public readonly saveError$: Observable<void> =
+    this.saveErrorSubject.asObservable();
 
   public constructor() {
     // Single debounced persistence pipeline: every scheduled grid event pushes
@@ -341,9 +365,10 @@ export class DashboardLayoutStoreService {
    * baseline ({@link lastPersistedLayoutSnapshot}) on success so later
    * hydration/reflow callbacks with the same geometry stay inert, and re-raises
    * the pending flag on failure (leaving the baseline unchanged) so the change
-   * is retried on the next grid event or flush. HTTP errors are swallowed here;
-   * surfacing them to the user (e.g. a `MatSnackBar`) is the canvas/shell's
-   * concern, not the store's.
+   * is retried on the next grid event or flush. On failure it ALSO emits
+   * {@link saveError$} so the canvas/shell can surface the problem to the user
+   * (a `MatSnackBar`, AAP § 0.3.2, QA F7) — the store notifies but never shows
+   * UI itself (Rule 2, headless single source of truth).
    */
   private persistNow(): void {
     if (!this.hasPendingChange) {
@@ -366,6 +391,14 @@ export class DashboardLayoutStoreService {
         // Leave the baseline unchanged (the server still holds the previous
         // layout) and re-flag so a later grid event or flush retries the save.
         this.hasPendingChange = true;
+        // Surface the failure to the shell (QA F7). The store performs no UI
+        // itself; it only notifies. The canvas subscribes to `saveError$` and
+        // shows a MatSnackBar so the user knows their change may not have been
+        // saved — notably the offline / status-0 network loss the global
+        // HttpResponseInterceptor stays silent on (it reacts only to 401/403/
+        // 429/500). MatSnackBar shows one snackbar at a time, so this never
+        // stacks with the interceptor.
+        this.saveErrorSubject.next();
       }
     });
   }

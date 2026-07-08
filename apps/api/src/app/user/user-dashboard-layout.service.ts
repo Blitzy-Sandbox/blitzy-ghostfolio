@@ -93,6 +93,18 @@ export class UserDashboardLayoutService {
    *
    * Rule 8 compliance: every component of the upsert (`where`, `create`,
    * `update`) is scoped to the `userId` parameter (JWT-derived).
+   *
+   * CLIENT-AUTHORITATIVE PERSISTENCE (Rule 2 — SSOT): the validated `dto` is
+   * written to `layoutData` VERBATIM. This service deliberately performs NO
+   * geometry reconciliation — it does not detect, reject, or rewrite items
+   * that overlap or share a grid coordinate. Positioning authority belongs to
+   * the client `angular-gridster2` engine (single source of truth); the server
+   * is a passive store. Any transient overlap self-heals on the next hydration
+   * round-trip when gridster re-runs its collision/push algorithm and the
+   * reconciled layout is re-persisted by the normal debounced grid-event flow.
+   * See `DashboardLayoutDto`'s class doc and decision-log entry DL-029 for the
+   * full rationale behind accepting overlapping layouts instead of rejecting
+   * them server-side (which would duplicate grid logic and violate Rule 2).
    */
   public async upsertForUser(
     userId: string,

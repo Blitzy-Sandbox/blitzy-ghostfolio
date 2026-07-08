@@ -7,7 +7,9 @@ import {
   CORRELATION_ID_HEADER,
   METRIC_LATENCY_SECONDS,
   METRIC_REQUESTS_TOTAL,
+  SECURITY_RESPONSE_HEADERS,
   UserDashboardLayoutObservabilityMiddleware,
+  X_POWERED_BY_HEADER,
   getCorrelationId
 } from './user-dashboard-layout.middleware';
 
@@ -83,6 +85,7 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
 
     const response = {
       setHeader: jest.fn(),
+      removeHeader: jest.fn(),
       statusCode: statusCode ?? 200,
       on: jest.fn((event: string, listener: () => void) => {
         if (event === 'finish') {
@@ -163,6 +166,52 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
     expect(response.setHeader).toHaveBeenCalledWith(
       CORRELATION_ID_HEADER,
       expect.stringMatching(V4_PATTERN)
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // F5 — defense-in-depth security headers set before the guard/pipe boundary
+  // ---------------------------------------------------------------------------
+
+  it('sets all defense-in-depth security headers and strips X-Powered-By', () => {
+    const { response } = run({ method: 'GET', fireFinish: false });
+
+    for (const [headerName, headerValue] of Object.entries(
+      SECURITY_RESPONSE_HEADERS
+    )) {
+      expect(response.setHeader).toHaveBeenCalledWith(headerName, headerValue);
+    }
+    expect(response.removeHeader).toHaveBeenCalledWith(X_POWERED_BY_HEADER);
+  });
+
+  it('exposes the expected hardened header values', () => {
+    expect(SECURITY_RESPONSE_HEADERS['X-Content-Type-Options']).toBe('nosniff');
+    expect(SECURITY_RESPONSE_HEADERS['X-Frame-Options']).toBe('DENY');
+    expect(SECURITY_RESPONSE_HEADERS['Referrer-Policy']).toBe('no-referrer');
+    expect(SECURITY_RESPONSE_HEADERS['Cache-Control']).toBe('no-store');
+  });
+
+  it('sets the security headers even on the 401 (guard-rejected) path', () => {
+    const { response } = run({ method: 'GET', statusCode: 401 });
+
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'X-Content-Type-Options',
+      'nosniff'
+    );
+    expect(response.setHeader).toHaveBeenCalledWith('X-Frame-Options', 'DENY');
+    expect(response.removeHeader).toHaveBeenCalledWith(X_POWERED_BY_HEADER);
+  });
+
+  it('sets the security headers on a non-get/patch verb (e.g. OPTIONS) too', () => {
+    const { response } = run({ method: 'OPTIONS', statusCode: 204 });
+
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'Cache-Control',
+      'no-store'
+    );
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'Referrer-Policy',
+      'no-referrer'
     );
   });
 

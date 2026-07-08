@@ -13,9 +13,10 @@ import { Component, WritableSignal, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import '@angular/localize/init';
 import { MatDialog } from '@angular/material/dialog';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import type { GridsterItemConfig } from 'angular-gridster2';
-import { of } from 'rxjs';
+import { Subject, of } from 'rxjs';
 
 import { DashboardLayoutStoreService } from '../dashboard-layout-store.service';
 import { DashboardModuleDefinition } from '../dashboard-module.interface';
@@ -63,6 +64,10 @@ describe('GfDashboardCanvasComponent', () => {
   let storeMock: any;
   let registryStub: any;
   let dialogMock: any;
+  let snackBarMock: any;
+  // Drives the store mock's `saveError$`; tests emit on it to simulate a failed
+  // layout save and assert the canvas surfaces a MatSnackBar (QA F7).
+  let saveErrorSubject: Subject<void>;
 
   const testDefinition: DashboardModuleDefinition = {
     component: TestModuleComponent,
@@ -79,6 +84,10 @@ describe('GfDashboardCanvasComponent', () => {
     // MatProgressBar (F-2); back it with a writable signal the tests can flip.
     loadingSignal = signal<boolean>(false);
 
+    // Real Subject so tests can emit a save failure and assert the snackbar
+    // (QA F7). The canvas subscribes to `store.saveError$` in its constructor.
+    saveErrorSubject = new Subject<void>();
+
     storeMock = {
       flush: jest.fn(),
       hydrate: jest.fn(() => of(true)),
@@ -86,8 +95,15 @@ describe('GfDashboardCanvasComponent', () => {
       loading: loadingSignal,
       publishFromGridWithoutPersist: jest.fn(),
       removeItem: jest.fn(),
+      saveError$: saveErrorSubject.asObservable(),
       syncFromGrid: jest.fn()
     };
+
+    // MatSnackBar is providedIn root and the canvas injects the service directly
+    // (it does not import MatSnackBarModule into its own standalone imports), so
+    // a root-level provider override is injected without needing a
+    // component-level override (unlike MatDialog above).
+    snackBarMock = { open: jest.fn() };
 
     registryStub = {
       getMinDimensions: jest.fn(() => ({ minCols: 2, minRows: 2 })),
@@ -102,6 +118,7 @@ describe('GfDashboardCanvasComponent', () => {
       imports: [GfDashboardCanvasComponent, NoopAnimationsModule],
       providers: [
         { provide: DashboardLayoutStoreService, useValue: storeMock },
+        { provide: MatSnackBar, useValue: snackBarMock },
         { provide: ModuleRegistryService, useValue: registryStub }
       ]
     })
@@ -332,5 +349,41 @@ describe('GfDashboardCanvasComponent', () => {
     expect(
       fixture.nativeElement.querySelector('.gf-dashboard-canvas__loading')
     ).toBeNull();
+  });
+
+  it('should surface a MatSnackBar when the store reports a failed layout save (QA F7)', () => {
+    fixture.detectChanges();
+
+    // Nothing has failed yet, so no snackbar is shown.
+    expect(snackBarMock.open).not.toHaveBeenCalled();
+
+    // The store notifies of a failed save (e.g. an offline PATCH). The canvas
+    // subscribed to `saveError$` in its constructor and must surface it — the
+    // store itself performs no UI (Rule 2). Subject emission is synchronous, so
+    // the snackbar is opened immediately.
+    saveErrorSubject.next();
+
+    expect(snackBarMock.open).toHaveBeenCalledTimes(1);
+    const [message, action] = snackBarMock.open.mock.calls[0];
+    expect(typeof message).toBe('string');
+    expect(message.toLowerCase()).toContain('layout');
+    // An acknowledge action ("Okay") is provided so the message is dismissible.
+    expect(action).toBeTruthy();
+  });
+
+  it('should expose the grid as the single main landmark for accessibility (QA F8)', () => {
+    fixture.detectChanges();
+
+    // With the global header/footer removed, the canvas is the app shell; the
+    // grid carries the sole `main` landmark so assistive tech has a primary
+    // content region.
+    const mainLandmarks = fixture.nativeElement.querySelectorAll(
+      'main, [role="main"]'
+    );
+    expect(mainLandmarks.length).toBe(1);
+
+    const grid: HTMLElement = fixture.nativeElement.querySelector('gridster');
+    expect(grid).not.toBeNull();
+    expect(grid.getAttribute('role')).toBe('main');
   });
 });

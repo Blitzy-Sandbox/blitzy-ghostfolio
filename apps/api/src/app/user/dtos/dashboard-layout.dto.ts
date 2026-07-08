@@ -128,6 +128,38 @@ export class DashboardLayoutItemDto {
  * so an authenticated client cannot submit an unbounded array that would
  * produce an oversized JSONB row. An empty array is intentionally permitted
  * (a new user's blank canvas), so no minimum-size constraint is applied.
+ *
+ * CLIENT-SIDE RECONCILIATION CONTRACT (Rule 2 — Single Source of Truth):
+ *
+ *   This DTO intentionally performs NO cross-item geometry validation — it
+ *   does NOT reject layouts whose items overlap or share a grid coordinate.
+ *   Two items may both declare `{ x: 0, y: 0 }` and the request succeeds; the
+ *   layout is persisted VERBATIM. This is a deliberate design decision, not an
+ *   omission:
+ *
+ *     • Positioning authority lives on the client. The `angular-gridster2`
+ *       engine (`GridsterConfig` with `pushItems`/collision handling) owns all
+ *       coordinate assignment. Per Rule 2, the client grid state is the single
+ *       source of truth; the server is a passive, client-authoritative store.
+ *
+ *     • Overlaps SELF-HEAL on the next hydration round-trip. When a returning
+ *       user's layout is loaded, gridster re-runs its collision/push algorithm
+ *       and any overlapping items are separated to valid, non-overlapping
+ *       cells; the reconciled layout is then re-persisted by the normal
+ *       debounced grid-event → PATCH flow. A transient overlap in the stored
+ *       row is therefore corrected automatically on load.
+ *
+ *     • Server-side overlap detection would DUPLICATE the grid engine's
+ *       geometry logic in a second location, risk diverging from it, and make
+ *       the server — not the client — the arbiter of positioning, directly
+ *       violating the Rule 2 SSOT boundary.
+ *
+ *   Consequently the accepted resolution for the "API accepts overlapping
+ *   items" finding is to DOCUMENT this contract (this block + the server
+ *   service doc + decision-log entry DL-029), NOT to add server-side
+ *   rejection. The per-field hardening that DOES belong on the server — the
+ *   `type` whitelist, the `@Min(2)` Rule-6 minimums, the `@MaxLength` and
+ *   `@ArrayMaxSize` size caps — remains fully enforced above.
  */
 export class DashboardLayoutDto {
   @IsArray()

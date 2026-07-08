@@ -42,7 +42,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   {
     component: GfPortfolioOverviewModuleComponent,
     defaultCols: 6,
-    defaultRows: 4,
+    defaultRows: 6,
     icon: 'grid-outline',
     id: 'portfolio-overview',
     minCols: 2,
@@ -72,7 +72,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   {
     component: GfSummaryModuleComponent,
     defaultCols: 4,
-    defaultRows: 6,
+    defaultRows: 8,
     icon: 'document-text-outline',
     id: 'summary',
     minCols: 2,
@@ -91,8 +91,8 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   },
   {
     component: GfMarketOverviewModuleComponent,
-    defaultCols: 4,
-    defaultRows: 3,
+    defaultCols: 6,
+    defaultRows: 4,
     icon: 'globe-outline',
     id: 'market-overview',
     minCols: 2,
@@ -101,8 +101,8 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   },
   {
     component: GfWatchlistModuleComponent,
-    defaultCols: 4,
-    defaultRows: 4,
+    defaultCols: 6,
+    defaultRows: 5,
     icon: 'eye-outline',
     id: 'watchlist',
     minCols: 2,
@@ -122,7 +122,7 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   {
     component: GfBenchmarkModuleComponent,
     defaultCols: 6,
-    defaultRows: 4,
+    defaultRows: 5,
     icon: 'git-compare-outline',
     id: 'benchmark',
     minCols: 2,
@@ -141,8 +141,8 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   },
   {
     component: GfFinancialProfileModuleComponent,
-    defaultCols: 5,
-    defaultRows: 6,
+    defaultCols: 6,
+    defaultRows: 8,
     icon: 'person-circle-outline',
     id: 'financial-profile',
     minCols: 2,
@@ -151,8 +151,8 @@ const MODULE_DEFINITIONS: DashboardModuleDefinition[] = [
   },
   {
     component: GfAiChatModuleComponent,
-    defaultCols: 4,
-    defaultRows: 6,
+    defaultCols: 5,
+    defaultRows: 8,
     icon: 'chatbubbles-outline',
     id: 'ai-chat',
     minCols: 2,

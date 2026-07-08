@@ -15,7 +15,17 @@
   />
 }
 
-<gridster class="gf-dashboard-canvas__grid" [options]="options">
+<!--
+  QA F8 (accessibility): the grid is the dashboard's primary content region, so
+  it carries the `main` landmark. With the global header/footer nav chrome
+  removed (AAP § 0.4.1), the canvas IS the app shell and previously exposed no
+  landmark, so assistive tech had no "skip to main content" target and reported
+  a missing main landmark. `role="main"` is applied to the existing `<gridster>`
+  host (rather than wrapping it in a new `<main>` element) so the fix adds the
+  landmark WITHOUT altering the full-viewport grid host sizing the layout relies
+  on. Exactly one main landmark exists on the page.
+-->
+<gridster class="gf-dashboard-canvas__grid" role="main" [options]="options">
   @for (item of store.items(); track item) {
     <gridster-item [item]="item">
       @if (registry.resolve(item.type); as definition) {

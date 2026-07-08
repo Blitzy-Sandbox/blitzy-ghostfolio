@@ -108,7 +108,7 @@ describe('ModuleRegistryService', () => {
       const definition = service.resolve('portfolio-overview');
 
       expect(definition?.defaultCols).toBe(6);
-      expect(definition?.defaultRows).toBe(4);
+      expect(definition?.defaultRows).toBe(6);
     });
 
     it('should return undefined for an unknown module-type key', () => {

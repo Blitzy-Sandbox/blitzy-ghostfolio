@@ -39,6 +39,52 @@ export const METRIC_REQUESTS_TOTAL = 'dashboard_layout_requests_total';
 export const METRIC_LATENCY_SECONDS = 'dashboard_layout_latency_seconds';
 
 /**
+ * HTTP response header advertising the server technology. Express sets
+ * `X-Powered-By: Express` by default; the {@link CACHE_CONTROL_HEADER} block
+ * below strips it from every dashboard-layout response so the endpoint does
+ * not leak its implementation stack to a would-be attacker.
+ */
+export const X_POWERED_BY_HEADER = 'X-Powered-By';
+
+/**
+ * `Cache-Control` response header name. Per-user dashboard layouts are private,
+ * authenticated data that must never be persisted by a shared/browser cache,
+ * so the header is set to `no-store` (see {@link SECURITY_RESPONSE_HEADERS}).
+ */
+export const CACHE_CONTROL_HEADER = 'Cache-Control';
+
+/**
+ * Defense-in-depth security response headers applied to EVERY dashboard-layout
+ * response by {@link UserDashboardLayoutObservabilityMiddleware}.
+ *
+ * WHY HERE (AAP § 0.2.1 scope): the global Helmet middleware in
+ * `apps/api/src/main.ts` is gated behind `ENABLE_FEATURE_SUBSCRIPTION` and that
+ * file is OUT of the refactor's AAP scope, so it cannot be enabled here. This
+ * route-scoped middleware — which already owns the `X-Correlation-ID` header
+ * for the two layout routes and is the FIRST lifecycle stage (running before
+ * the guard/pipe boundary) — is the correct in-scope seam to harden the
+ * endpoints the QA finding exercised. The headers are set alongside the
+ * correlation id so they are present on ALL terminal outcomes (200/400/401/
+ * 403/404/500), exactly like the correlation id.
+ *
+ * Header rationale:
+ *   - `X-Content-Type-Options: nosniff` — forbids MIME-type sniffing, so the
+ *     JSON payload can never be reinterpreted as executable content.
+ *   - `X-Frame-Options: DENY` — the JSON API must never be framed; blocks
+ *     click-jacking / UI-redress attempts.
+ *   - `Referrer-Policy: no-referrer` — never leak the authenticated request URL
+ *     (or any query string) to a third-party via the `Referer` header.
+ *   - `Cache-Control: no-store` — private, per-user layout data must not be
+ *     retained by any intermediary or browser cache.
+ */
+export const SECURITY_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  [CACHE_CONTROL_HEADER]: 'no-store'
+};
+
+/**
  * Shape of the Express request after this middleware has run: the generated
  * correlation id is attached under {@link CORRELATION_ID_REQUEST_KEY}. Kept as
  * a small, exported structural type so the controller can read the id in a
@@ -92,7 +138,10 @@ type RequestOutcome = 'success' | 'error' | 'unauthorized';
  *   1. Generate one correlation id per request and set the
  *      `X-Correlation-ID` response header immediately (present on 200, 404,
  *      401, 403 and 400 alike — Express keeps headers set before a later
- *      exception is serialized).
+ *      exception is serialized). At the same pre-guard point it also applies
+ *      the defense-in-depth {@link SECURITY_RESPONSE_HEADERS} and strips the
+ *      `X-Powered-By` fingerprint, hardening the two layout routes without
+ *      touching the out-of-AAP-scope global Helmet config in `main.ts`.
  *   2. Record the two dashboard-layout metrics from a single `finish`
  *      listener that observes the FINAL status code — the only vantage point
  *      that also sees guard-rejected `401`/`403` (recorded as
@@ -147,6 +196,18 @@ export class UserDashboardLayoutObservabilityMiddleware implements NestMiddlewar
     // present even when a guard (401/403) or the ValidationPipe (400) ends the
     // request before the controller runs.
     response.setHeader(CORRELATION_ID_HEADER, correlationId);
+
+    // (1b) Apply the defense-in-depth security headers at the same pre-guard
+    // point so they too are present on ALL terminal outcomes, and strip the
+    // Express `X-Powered-By` fingerprint from the layout responses (the global
+    // Helmet middleware in main.ts is out of AAP scope — see
+    // SECURITY_RESPONSE_HEADERS doc for the full rationale).
+    for (const [headerName, headerValue] of Object.entries(
+      SECURITY_RESPONSE_HEADERS
+    )) {
+      response.setHeader(headerName, headerValue);
+    }
+    response.removeHeader(X_POWERED_BY_HEADER);
 
     // (2) Expose the id to the request-scoped controller (which injects
     // REQUEST) so the header, the finish-log below, and the service-layer
