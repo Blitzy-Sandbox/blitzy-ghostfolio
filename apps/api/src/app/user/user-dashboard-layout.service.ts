@@ -1,4 +1,3 @@
-import { MetricsService } from '@ghostfolio/api/app/metrics/metrics.service';
 import { PrismaService } from '@ghostfolio/api/services/prisma/prisma.service';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -16,8 +15,7 @@ import { DashboardLayoutDto } from './dtos/dashboard-layout.dto';
  * `UserDashboardLayoutController` (HTTP `GET`/`PATCH /api/v1/user/layout`).
  *
  * The service is intentionally stateless beyond its injected `PrismaService`
- * and `MetricsService` dependencies and is transport-agnostic: it reads NO
- * HTTP request context.
+ * dependency and is transport-agnostic: it reads NO HTTP request context.
  *
  * SECURITY (AAP § 0.7.3 — Rule 8): Every Prisma operation is scoped by
  * `where: { userId }` using the JWT-verified user identifier supplied by the
@@ -30,63 +28,22 @@ import { DashboardLayoutDto } from './dtos/dashboard-layout.dto';
  * request can be traced end-to-end. When omitted (e.g. a unit test), log
  * lines are emitted without the `[<correlationId>]` prefix.
  *
- * In addition to structured logging, both public methods register
- * Prometheus counters and latency histograms in the shared, process-wide
- * {@link MetricsService} (injected from the exported `MetricsModule`),
- * exactly as the sibling `RebalancingService` / `AiChatService` /
- * `SnowflakeSyncService` do. This backs the `ops/dashboards/dashboard-layout.json`
- * Grafana template (which queries `dashboard_layout_requests_total{operation,outcome}`
- * and `dashboard_layout_latency_seconds_bucket{operation}`) and the
- * `GET /api/v1/metrics` scrape endpoint. Emission happens in a `finally`
- * block so every return path — success or thrown error — is counted exactly
- * once. Labels are deliberately fixed-cardinality (`operation ∈ { get, patch }`,
- * `outcome ∈ { success, error }`); the request-scoped `userId` / `correlationId`
- * are NEVER used as label values, keeping the series count well within the
- * registry's `MAX_LABEL_CARDINALITY_PER_METRIC` guard.
+ * METRIC OWNERSHIP (AAP § 0.6.1 / § 0.8.4 — single source of truth): this
+ * service deliberately does NOT emit Prometheus metrics and stays single-arg
+ * (`PrismaService` only), matching its file specification and the sibling
+ * `UserFinancialProfileService`. The `dashboard_layout_requests_total{operation,outcome}`
+ * counter and `dashboard_layout_latency_seconds{operation}` histogram consumed
+ * by `ops/dashboards/dashboard-layout.json` are owned SOLELY by
+ * `UserDashboardLayoutObservabilityMiddleware`, which runs before the
+ * guard/pipe boundary and is therefore the only vantage point that observes
+ * every terminal outcome — including guard-rejected `401`/`403`
+ * (`outcome=unauthorized`) that never reach this service. Emitting the same
+ * series here as well would double-count every successful request, so metric
+ * emission is intentionally centralized in the middleware.
  */
 @Injectable()
 export class UserDashboardLayoutService {
-  /**
-   * Prometheus counter name for total dashboard-layout persistence requests.
-   * Labeled with `operation ∈ { get, patch }` and `outcome ∈ { success,
-   * error }` — a small, fixed cardinality set safe under the metrics
-   * registry's `MAX_LABEL_CARDINALITY_PER_METRIC` guard. Matches the
-   * `dashboard_layout_requests_total{operation,outcome}` series consumed by
-   * `ops/dashboards/dashboard-layout.json`.
-   */
-  private static readonly METRIC_REQUESTS_TOTAL =
-    'dashboard_layout_requests_total';
-
-  /**
-   * Prometheus histogram name for dashboard-layout persistence wall-clock
-   * latency. Recorded in seconds (consistent with Prometheus conventions and
-   * with `rebalancing_latency_seconds`). Labeled only by
-   * `operation ∈ { get, patch }` so the `dashboard_layout_latency_seconds_bucket{operation}`
-   * panels can break latency down by read vs. write while keeping cardinality
-   * minimal.
-   */
-  private static readonly METRIC_LATENCY_SECONDS =
-    'dashboard_layout_latency_seconds';
-
-  public constructor(
-    private readonly metricsService: MetricsService,
-    private readonly prismaService: PrismaService
-  ) {
-    // Register the two Prometheus metric descriptions so `/api/v1/metrics`
-    // emits proper `# HELP` lines (per the Observability rule). Registration
-    // is idempotent — the registry keeps the first description seen.
-    this.metricsService.registerHelp(
-      UserDashboardLayoutService.METRIC_REQUESTS_TOTAL,
-      'Total per-user dashboard layout persistence requests handled by ' +
-        'UserDashboardLayoutService, labeled by operation (get | patch) and ' +
-        'outcome (success | error).'
-    );
-    this.metricsService.registerHelp(
-      UserDashboardLayoutService.METRIC_LATENCY_SECONDS,
-      'Wall-clock latency of UserDashboardLayoutService read/upsert Prisma ' +
-        'operations in seconds, labeled by operation (get | patch).'
-    );
-  }
+  public constructor(private readonly prismaService: PrismaService) {}
 
   /**
    * Reads the dashboard layout for the given authenticated user.
@@ -103,16 +60,11 @@ export class UserDashboardLayoutService {
     userId: string,
     correlationId?: string
   ): Promise<UserDashboardLayout | null> {
-    const startTime = Date.now();
-    let outcome: 'error' | 'success' = 'success';
-
     try {
       return await this.prismaService.userDashboardLayout.findUnique({
         where: { userId }
       });
     } catch (error) {
-      outcome = 'error';
-
       Logger.error(
         this.formatLogMessage(
           `Failed to read UserDashboardLayout: ${
@@ -124,11 +76,6 @@ export class UserDashboardLayoutService {
       );
 
       throw error;
-    } finally {
-      // Emit the request counter and latency histogram exactly once per
-      // call, regardless of return path. A first-visit `null` result is a
-      // successful read (not an error) and is counted with outcome=success.
-      this.emitMetrics('get', outcome, startTime);
     }
   }
 
@@ -152,9 +99,6 @@ export class UserDashboardLayoutService {
     dto: DashboardLayoutDto,
     correlationId?: string
   ): Promise<UserDashboardLayout> {
-    const startTime = Date.now();
-    let outcome: 'error' | 'success' = 'success';
-
     try {
       return await this.prismaService.userDashboardLayout.upsert({
         create: {
@@ -167,8 +111,6 @@ export class UserDashboardLayoutService {
         where: { userId }
       });
     } catch (error) {
-      outcome = 'error';
-
       Logger.error(
         this.formatLogMessage(
           `Failed to upsert UserDashboardLayout: ${
@@ -180,10 +122,6 @@ export class UserDashboardLayoutService {
       );
 
       throw error;
-    } finally {
-      // Emit the request counter and latency histogram exactly once per
-      // upsert call, regardless of return path (created, updated, or thrown).
-      this.emitMetrics('patch', outcome, startTime);
     }
   }
 
@@ -198,38 +136,5 @@ export class UserDashboardLayoutService {
     correlationId: string | undefined
   ): string {
     return correlationId ? `[${correlationId}] ${message}` : message;
-  }
-
-  /**
-   * Records the terminal-outcome counter and the latency histogram for a
-   * single dashboard-layout persistence operation.
-   *
-   * Centralizes the emission so both `findByUserId` (`operation = 'get'`) and
-   * `upsertForUser` (`operation = 'patch'`) share identical label semantics.
-   * Called from each method's `finally` block, so it runs exactly once per
-   * invocation regardless of success or thrown error.
-   *
-   * Labels are fixed-cardinality only (`operation`, `outcome`); the latency
-   * histogram carries just `operation`. No `userId` / `correlationId` is ever
-   * used as a label value, so the metrics registry's
-   * `MAX_LABEL_CARDINALITY_PER_METRIC` guard can never silently drop a series.
-   */
-  private emitMetrics(
-    operation: 'get' | 'patch',
-    outcome: 'error' | 'success',
-    startTime: number
-  ): void {
-    const elapsedSeconds = (Date.now() - startTime) / 1000;
-
-    this.metricsService.incrementCounter(
-      UserDashboardLayoutService.METRIC_REQUESTS_TOTAL,
-      1,
-      { operation, outcome }
-    );
-    this.metricsService.observeHistogram(
-      UserDashboardLayoutService.METRIC_LATENCY_SECONDS,
-      elapsedSeconds,
-      { operation }
-    );
   }
 }

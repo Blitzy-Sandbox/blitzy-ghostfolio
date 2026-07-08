@@ -277,7 +277,9 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
   // ---------------------------------------------------------------------------
 
   it('logs a warn line carrying the correlation id on a 401', () => {
-    const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => {});
+    const warnSpy = jest
+      .spyOn(Logger, 'warn')
+      .mockImplementation(() => undefined);
 
     const { response } = run({ method: 'GET', statusCode: 401 });
 
@@ -291,7 +293,9 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
   });
 
   it('logs a warn line carrying the correlation id on a 400', () => {
-    const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => {});
+    const warnSpy = jest
+      .spyOn(Logger, 'warn')
+      .mockImplementation(() => undefined);
 
     run({ method: 'PATCH', statusCode: 400 });
 
@@ -302,7 +306,9 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
   });
 
   it('logs an error line on a 500', () => {
-    const errorSpy = jest.spyOn(Logger, 'error').mockImplementation(() => {});
+    const errorSpy = jest
+      .spyOn(Logger, 'error')
+      .mockImplementation(() => undefined);
 
     run({ method: 'PATCH', statusCode: 500 });
 
@@ -311,7 +317,9 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
   });
 
   it('logs an info line on a 200 success', () => {
-    const logSpy = jest.spyOn(Logger, 'log').mockImplementation(() => {});
+    const logSpy = jest
+      .spyOn(Logger, 'log')
+      .mockImplementation(() => undefined);
 
     run({ method: 'GET', statusCode: 200 });
 
@@ -320,7 +328,9 @@ describe('UserDashboardLayoutObservabilityMiddleware', () => {
   });
 
   it('never logs sensitive request data (Authorization header / body)', () => {
-    const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => {});
+    const warnSpy = jest
+      .spyOn(Logger, 'warn')
+      .mockImplementation(() => undefined);
 
     run({
       method: 'PATCH',
